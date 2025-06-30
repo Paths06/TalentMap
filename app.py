@@ -5,555 +5,587 @@ import json
 import uuid
 from datetime import datetime, date
 import time
+import os
+from pathlib import Path
 
 # Configure page
 st.set_page_config(
-    page_title="Hedge Fund Talent Map - SAFE MODE",
-    page_icon="🏢",
+    page_title="Hedge Fund Talent Intelligence",
+    page_icon="🎯",
     layout="wide"
 )
 
-st.title("🏢 Hedge Fund Talent Map - STABLE VERSION")
+# Database setup
+DATA_DIR = Path("talent_data")
+DATA_DIR.mkdir(exist_ok=True)
 
-# Quick mode comparison
-with st.container():
-    st.success("""
-    ✅ **CRASH-PROOF EXTRACTION:**
-    • **🛡️ Safe Mode**: Process first 15K chars instantly (good for testing)
-    • **⚡ Chunked Mode**: Process full file safely in 12K chunks (complete extraction)
-    • **🔄 Progress Tracking**: See exactly what's happening
-    • **🚫 No Crashes**: File size limits and error recovery
-    """)
+EXTRACTIONS_FILE = DATA_DIR / "extractions.json"
+PEOPLE_FILE = DATA_DIR / "people.json"
+FIRMS_FILE = DATA_DIR / "firms.json"
+
+# Persistent data functions
+def load_data():
+    """Load data from JSON files"""
+    try:
+        extractions = json.load(open(EXTRACTIONS_FILE, 'r', encoding='utf-8')) if EXTRACTIONS_FILE.exists() else []
+        people = json.load(open(PEOPLE_FILE, 'r', encoding='utf-8')) if PEOPLE_FILE.exists() else []
+        firms = json.load(open(FIRMS_FILE, 'r', encoding='utf-8')) if FIRMS_FILE.exists() else []
+        return extractions, people, firms
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return [], [], []
+
+def save_data(extractions=None, people=None, firms=None):
+    """Save data to JSON files"""
+    try:
+        if extractions is not None:
+            json.dump(extractions, open(EXTRACTIONS_FILE, 'w', encoding='utf-8'), indent=2, default=str)
+        if people is not None:
+            json.dump(people, open(PEOPLE_FILE, 'w', encoding='utf-8'), indent=2, default=str)
+        if firms is not None:
+            json.dump(firms, open(FIRMS_FILE, 'w', encoding='utf-8'), indent=2, default=str)
+        return True
+    except Exception as e:
+        st.error(f"Save error: {e}")
+        return False
+
+def auto_save():
+    """Auto-save current session state"""
+    return save_data(
+        extractions=st.session_state.extractions,
+        people=st.session_state.people,
+        firms=st.session_state.firms
+    )
+
+# Initialize session state
+def init_session_state():
+    extractions, people, firms = load_data()
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info("**🛡️ Safe Mode:** Fast • 15K chars • ~8 people")
-    with col2:
-        st.info("**⚡ Chunked Mode:** Complete • 50K chars • ~20+ people")
-    with col3:
-        st.info("**🔍 Debug Mode:** Shows chunk details & AI responses")
+    if 'extractions' not in st.session_state:
+        st.session_state.extractions = extractions
+    if 'people' not in st.session_state:
+        st.session_state.people = people
+    if 'firms' not in st.session_state:
+        st.session_state.firms = firms
+    if 'current_view' not in st.session_state:
+        st.session_state.current_view = 'extractions'
+    if 'edit_person_id' not in st.session_state:
+        st.session_state.edit_person_id = None
 
-# Initialize minimal session state
-if 'extractions' not in st.session_state:
-    st.session_state.extractions = []
+init_session_state()
 
-if 'people' not in st.session_state:
-    st.session_state.people = []
-
-# Simple Gemini setup
+# AI setup
 @st.cache_resource
 def setup_gemini_safe(api_key):
     try:
         genai.configure(api_key=api_key)
         return genai.GenerativeModel('gemini-2.0-flash')
     except Exception as e:
-        st.error(f"Gemini setup failed: {e}")
+        st.error(f"AI setup failed: {e}")
         return None
 
-# Safe file reading function
-def read_file_safely(uploaded_file, max_size_kb=100):
-    """Safely read uploaded file with size limits"""
+# File reading
+def read_file_safely(uploaded_file, max_size_kb=200):
     try:
-        # Check file size
-        file_size = uploaded_file.size if hasattr(uploaded_file, 'size') else len(uploaded_file.getvalue())
-        
+        file_size = len(uploaded_file.getvalue())
         if file_size > max_size_kb * 1024:
-            st.error(f"❌ File too large: {file_size/1024:.1f}KB. Max allowed: {max_size_kb}KB")
+            st.error(f"File too large: {file_size/1024:.1f}KB. Max: {max_size_kb}KB")
             return None
             
-        st.info(f"📁 File size: {file_size/1024:.1f}KB")
-        
-        # Read file content
         raw_data = uploaded_file.getvalue()
-        
-        # Try different encodings
         for encoding in ['utf-8', 'latin-1', 'cp1252']:
             try:
-                content = raw_data.decode(encoding)
-                st.success(f"✅ File decoded with {encoding}")
-                return content
+                return raw_data.decode(encoding)
             except UnicodeDecodeError:
                 continue
-                
-        st.error("❌ Could not decode file with any encoding")
         return None
-        
     except Exception as e:
-        st.error(f"❌ File reading error: {e}")
+        st.error(f"File error: {e}")
         return None
 
-# Safe chunked extraction function with debugging
-def extract_chunked_safe(text, model, chunk_size=12000, max_chunks=5):
-    """Process large text in safe chunks with detailed debugging"""
+# AI extraction functions
+def extract_simple(text, model):
     try:
-        total_chars = len(text)
-        st.info(f"📄 Processing {total_chars:,} characters in chunks of {chunk_size:,}")
+        if len(text) > 15000:
+            text = text[:15000]
+            
+        prompt = f"""Extract people and career movements from this financial newsletter. Return JSON:
+
+{text}
+
+{{"people": [{{"name": "Full Name", "company": "Company", "role": "Position", "type": "hire/promotion/launch"}}]}}
+
+Find ALL people in professional contexts."""
         
+        response = model.generate_content(prompt)
+        if not response or not response.text:
+            return []
+            
+        response_text = response.text
+        json_start = response_text.find('{')
+        json_end = response_text.rfind('}') + 1
+        
+        if json_start == -1:
+            return []
+            
+        result = json.loads(response_text[json_start:json_end])
+        return result.get('people', [])
+        
+    except Exception:
+        return []
+
+def extract_chunked_safe(text, model, chunk_size=12000, max_chunks=5):
+    try:
         all_extractions = []
         processed_chars = 0
         
-        # Create progress containers
         progress_bar = st.progress(0)
         status_text = st.empty()
-        debug_container = st.expander("🐛 Debug Info (Click to see chunk details)")
         
-        # Process in chunks
         chunk_num = 0
-        while processed_chars < total_chars and chunk_num < max_chunks:
+        while processed_chars < len(text) and chunk_num < max_chunks:
             chunk_num += 1
             
-            # Extract chunk with small overlap
-            start_pos = max(0, processed_chars - 500)  # 500 char overlap
-            end_pos = min(start_pos + chunk_size, total_chars)
+            start_pos = max(0, processed_chars - 500)
+            end_pos = min(start_pos + chunk_size, len(text))
             chunk_text = text[start_pos:end_pos]
             
-            with debug_container:
-                st.write(f"**Chunk {chunk_num}:**")
-                st.write(f"- Start: {start_pos:,}, End: {end_pos:,}")
-                st.write(f"- Length: {len(chunk_text):,} chars")
-                st.write(f"- Preview: {chunk_text[:200]}...")
-                
-            status_text.info(f"🔄 Processing chunk {chunk_num} ({len(chunk_text):,} chars)...")
+            status_text.info(f"Processing chunk {chunk_num}/{max_chunks}...")
             
-            # Rate limiting delay
             if chunk_num > 1:
-                status_text.info(f"⏱️ Rate limit delay: 3 seconds...")
-                time.sleep(3)
+                time.sleep(3)  # Rate limiting
             
-            # Process chunk with detailed error handling
             try:
-                with debug_container:
-                    st.write(f"- Sending to AI...")
-                
-                chunk_extractions = extract_simple_debug(chunk_text, model, chunk_num)
-                
-                with debug_container:
-                    st.write(f"- Raw AI result: {len(chunk_extractions)} extractions")
-                    if chunk_extractions:
-                        for ext in chunk_extractions:
-                            st.write(f"  • {ext.get('name', 'NO_NAME')} → {ext.get('company', 'NO_COMPANY')}")
+                chunk_extractions = extract_simple(chunk_text, model)
                 
                 if chunk_extractions:
-                    # Simple deduplication by name (case insensitive)
                     existing_names = {ext.get('name', '').lower().strip() for ext in all_extractions if ext.get('name')}
-                    
-                    new_extractions = []
-                    for ext in chunk_extractions:
-                        name = ext.get('name', '').lower().strip()
-                        if name and name not in existing_names:
-                            new_extractions.append(ext)
-                            existing_names.add(name)
-                    
+                    new_extractions = [ext for ext in chunk_extractions 
+                                     if ext.get('name', '').lower().strip() not in existing_names and ext.get('name')]
                     all_extractions.extend(new_extractions)
-                    
-                    with debug_container:
-                        st.write(f"- After deduplication: {len(new_extractions)} new extractions")
-                        st.write(f"- Total so far: {len(all_extractions)}")
-                    
-                    status_text.success(f"✅ Chunk {chunk_num}: Found {len(chunk_extractions)} people ({len(new_extractions)} new, {len(all_extractions)} total)")
-                else:
-                    with debug_container:
-                        st.write(f"- ❌ No extractions found in this chunk")
-                    status_text.warning(f"⚠️ Chunk {chunk_num}: No extractions found")
                 
-            except Exception as e:
-                with debug_container:
-                    st.write(f"- ❌ ERROR: {e}")
-                status_text.error(f"❌ Chunk {chunk_num} failed: {e}")
-                # Continue with next chunk
+            except Exception:
+                pass  # Continue with next chunk
             
-            # Update progress
             processed_chars = end_pos
-            progress = min(processed_chars / total_chars, 1.0)
-            progress_bar.progress(progress)
-            
-            # Safety break
-            if chunk_num >= max_chunks:
-                status_text.warning(f"⚠️ Stopped at {max_chunks} chunks (safety limit)")
-                break
+            progress_bar.progress(min(processed_chars / len(text), 1.0))
         
-        # Final status
         progress_bar.progress(1.0)
-        status_text.success(f"🎯 **Complete!** Processed {processed_chars:,}/{total_chars:,} chars in {chunk_num} chunks")
-        
-        with debug_container:
-            st.write(f"**FINAL RESULT: {len(all_extractions)} total extractions**")
-            
+        status_text.success(f"Completed: {len(all_extractions)} people found")
         return all_extractions
         
-    except Exception as e:
-        st.error(f"❌ Chunked processing failed: {e}")
+    except Exception:
         return []
 
-# Debug version of extract_simple
-def extract_simple_debug(text, model, chunk_num=0):
-    """Simple extraction with debugging output"""
-    try:
-        # Limit text to prevent API issues
-        original_length = len(text)
-        if len(text) > 15000:
-            text = text[:15000]
-            
-        prompt = f"""
-Extract people and their career movements from this newsletter text. Return as JSON:
+# Main header
+st.title("🎯 Hedge Fund Talent Intelligence")
 
-{text}
+# Navigation
+col1, col2, col3, col4 = st.columns(4)
 
-{{
-  "people": [
-    {{"name": "Full Name", "company": "Company", "role": "Position", "type": "hire/promotion/launch"}}
-  ]
-}}
-
-Find EVERY person mentioned in professional contexts. Look for names like:
-- Harrison Balistreri, Vince Ortiz, Robin Boldt
-- Daniel Crews, Sarah Gray, Neil Chriss  
-- Louis Couronne, Macaire Chue, Grant Leslie
-- Any "X joins Y", "X launches Z", "X promoted to"
-"""
-        
-        response = model.generate_content(prompt)
-            
-        if not response or not response.text:
-            return []
-            
-        # Extract JSON
-        response_text = response.text
-        json_start = response_text.find('{')
-        json_end = response_text.rfind('}') + 1
-        
-        if json_start == -1:
-            # Show AI response for debugging
-            st.error(f"Chunk {chunk_num}: No JSON found in AI response")
-            st.text_area(f"AI Response Chunk {chunk_num}:", response_text, height=150)
-            return []
-            
-        json_text = response_text[json_start:json_end]
-        
-        try:
-            result = json.loads(json_text)
-            return result.get('people', [])
-        except json.JSONDecodeError as e:
-            st.error(f"Chunk {chunk_num}: JSON parsing error: {e}")
-            st.text_area(f"Invalid JSON Chunk {chunk_num}:", json_text, height=150)
-            return []
-        
-    except Exception as e:
-        st.error(f"Chunk {chunk_num}: Extraction error: {e}")
-        return []
-    """Simple extraction without complex processing"""
-    try:
-        # Limit text to prevent API issues
-        if len(text) > 15000:
-            text = text[:15000]
-            st.warning(f"⚠️ Text truncated to 15,000 characters")
-            
-        prompt = f"""
-Extract people and their career movements from this text. Return as JSON:
-
-{text}
-
-{{
-  "people": [
-    {{"name": "Full Name", "company": "Company", "role": "Position", "type": "hire/promotion/launch"}}
-  ]
-}}
-"""
-        
-        with st.spinner("🤖 Processing with AI..."):
-            response = model.generate_content(prompt)
-            
-        if not response or not response.text:
-            st.error("❌ Empty response from AI")
-            return []
-            
-        # Extract JSON
-        response_text = response.text
-        json_start = response_text.find('{')
-        json_end = response_text.rfind('}') + 1
-        
-        if json_start == -1:
-            st.error("❌ No JSON found in response")
-            st.text_area("AI Response:", response_text, height=200)
-            return []
-            
-        json_text = response_text[json_start:json_end]
-        result = json.loads(json_text)
-        
-        return result.get('people', [])
-        
-    except json.JSONDecodeError as e:
-        st.error(f"❌ JSON parsing error: {e}")
-        return []
-    except Exception as e:
-        st.error(f"❌ Extraction error: {e}")
-        return []
-
-# SIDEBAR - Minimal AI Interface
-with st.sidebar:
-    st.header("🤖 AI Extraction")
-    
-    # API Key
-    api_key = None
-    try:
-        api_key = st.secrets["GEMINI_API_KEY"]
-        st.success("✅ API key from secrets")
-    except:
-        api_key = st.text_input("Gemini API Key:", type="password")
-    
-    model = None
-    if api_key:
-        model = setup_gemini_safe(api_key)
-        if model:
-            st.success("✅ Model ready")
-    
-    st.markdown("---")
-    
-    # File Upload with Safety
-    st.subheader("📁 Upload Newsletter")
-    
-    processing_mode = st.radio(
-        "Processing mode:",
-        ["🛡️ Safe (15K chars)", "⚡ Chunked (Full file)", "🔍 Debug Chunked"],
-        help="Safe: Fast single chunk. Chunked: Full file processing. Debug: Shows detailed chunk info."
-    )
-    
-    if processing_mode.startswith("🛡️"):
-        max_file_size = st.selectbox("Max file size:", [50, 100, 200], index=1, format_func=lambda x: f"{x}KB")
-    else:
-        max_file_size = st.selectbox("Max file size:", [100, 200, 500], index=1, format_func=lambda x: f"{x}KB")
-        st.info("🔄 **Chunked mode**: Will process full file in safe 12K chunks with 3s delays")
-    
-    uploaded_file = st.file_uploader(
-        "Choose file:", 
-        type=['txt'], 
-        help=f"Max size: {max_file_size}KB"
-    )
-    
-    newsletter_content = None
-    
-    if uploaded_file is not None:
-        st.write(f"**File:** {uploaded_file.name}")
-        
-        # Safe file processing
-        with st.expander("📊 File Info"):
-            newsletter_content = read_file_safely(uploaded_file, max_file_size)
-            
-            if newsletter_content:
-                char_count = len(newsletter_content)
-                st.write(f"**Characters:** {char_count:,}")
-                st.write(f"**Lines:** {newsletter_content.count(chr(10)) + 1}")
-                
-                # Show preview
-                preview = newsletter_content[:500] + "..." if len(newsletter_content) > 500 else newsletter_content
-                st.text_area("Preview:", preview, height=150)
-    
-    # Manual text input alternative
-    st.markdown("---")
-    st.subheader("✏️ Or Paste Text")
-    manual_text = st.text_area("Newsletter text:", height=150, max_chars=10000)
-    
-    if manual_text:
-        newsletter_content = manual_text
-        st.info(f"📝 Manual text: {len(manual_text):,} characters")
-    
-    # Extract button
-    if st.button("🚀 Extract Talent", use_container_width=True):
-        if not newsletter_content:
-            st.error("❌ No content to process")
-        elif not model:
-            st.error("❌ No API key or model")
-        else:
-            try:
-                st.info("🔄 Starting extraction...")
-                start_time = time.time()
-                
-                # Choose processing method
-                if processing_mode.startswith("🛡️"):
-                    # Safe mode - single chunk
-                    st.info(f"🛡️ **Safe mode**: Processing first 15K characters")
-                    extractions = extract_simple(newsletter_content, model)
-                elif processing_mode.startswith("🔍"):
-                    # Debug chunked mode
-                    st.info(f"🔍 **Debug mode**: Processing full {len(newsletter_content):,} characters with detailed logging")
-                    extractions = extract_chunked_safe(newsletter_content, model)
-                else:
-                    # Regular chunked mode
-                    st.info(f"⚡ **Chunked mode**: Processing full {len(newsletter_content):,} characters")
-                    extractions = extract_chunked_safe(newsletter_content, model)
-                
-                elapsed = time.time() - start_time
-                
-                if extractions:
-                    # Add timestamp and mode
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    mode_icon = processing_mode.split()[0]
-                    
-                    for ext in extractions:
-                        ext['timestamp'] = timestamp
-                        ext['mode'] = mode_icon
-                    
-                    # Add to session state
-                    st.session_state.extractions.extend(extractions)
-                    
-                    st.success(f"✅ Found {len(extractions)} people in {elapsed:.1f}s")
-                    
-                    # Show comparison
-                    if processing_mode.startswith("🛡️"):
-                        estimated_full = int(len(extractions) * (len(newsletter_content) / 15000))
-                        st.info(f"💡 **Estimate**: Full file might contain ~{estimated_full} people. Try chunked mode for complete extraction.")
-                    elif processing_mode.startswith("⚡") or processing_mode.startswith("🔍"):
-                        st.info(f"🎯 **Full file processed**: {len(newsletter_content):,} characters analyzed")
-                    
-                    st.rerun()
-                else:
-                    st.warning("⚠️ No extractions found")
-                    
-                    # Provide debugging help
-                    if processing_mode.startswith("⚡") or processing_mode.startswith("🔍"):
-                        st.error("**Chunked mode found nothing!** This suggests:")
-                        st.write("1. 🔍 Try 'Debug Chunked' mode to see what's happening")
-                        st.write("2. 📄 Check if chunks contain the right content")  
-                        st.write("3. 🤖 Verify AI responses in debug mode")
-                        st.write("4. 🛡️ Safe mode worked, so extraction logic is fine")
-                        
-                        # Quick test suggestion
-                        if st.button("🧪 Test First Chunk Only"):
-                            test_chunk = newsletter_content[:12000]
-                            st.write(f"Testing first 12K characters (same as chunk 1):")
-                            test_extractions = extract_simple_debug(test_chunk, model, "TEST")
-                            if test_extractions:
-                                st.success(f"✅ First chunk test found {len(test_extractions)} people!")
-                                st.write("This means chunking logic has a bug.")
-                            else:
-                                st.error("❌ Even first chunk test failed - check AI responses above")
-                    else:
-                        st.info("💡 **Tip**: Try safe mode if chunked mode fails")
-                    
-            except Exception as e:
-                st.error(f"❌ Processing failed: {e}")
-                st.info("💡 **Tip**: Try safe mode if chunked mode fails")
-    
-    # Debug mode
-    if st.checkbox("🐛 Debug mode"):
-        st.write(f"**Session extractions:** {len(st.session_state.extractions)}")
-        st.write(f"**Model loaded:** {model is not None}")
-        st.write(f"**Content ready:** {newsletter_content is not None}")
-
-# MAIN AREA - Simple Results Display
-st.header("📊 Extraction Results")
-
-if st.session_state.extractions:
-    st.success(f"Found {len(st.session_state.extractions)} total extractions")
-    
-    # Display results
-    for i, ext in enumerate(st.session_state.extractions):
-        mode_badge = ext.get('mode', '🔧')
-        with st.expander(f"{mode_badge} {ext.get('name', 'Unknown')} → {ext.get('company', 'Unknown')}"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write(f"**Name:** {ext.get('name', 'Unknown')}")
-                st.write(f"**Company:** {ext.get('company', 'Unknown')}")
-                st.write(f"**Role:** {ext.get('role', 'Unknown')}")
-            
-            with col2:
-                st.write(f"**Type:** {ext.get('type', 'Unknown')}")
-                st.write(f"**Mode:** {ext.get('mode', 'Unknown')}")
-                st.write(f"**Extracted:** {ext.get('timestamp', 'Unknown')}")
-            
-            # Add to people database
-            if st.button(f"➕ Add to Database", key=f"add_{i}"):
-                new_person = {
-                    "id": str(uuid.uuid4()),
-                    "name": ext.get('name', 'Unknown'),
-                    "current_title": ext.get('role', 'Unknown'),
-                    "current_company_name": ext.get('company', 'Unknown'),
-                    "location": "Unknown",
-                    "email": "",
-                    "phone": "",
-                    "education": "",
-                    "expertise": "",
-                    "aum_managed": ""
-                }
-                st.session_state.people.append(new_person)
-                st.success(f"✅ Added {ext.get('name')} to database")
-                st.rerun()
-    
-    # Export functionality
-    if st.button("📥 Export as CSV"):
-        df = pd.DataFrame(st.session_state.extractions)
-        csv = df.to_csv(index=False)
-        st.download_button(
-            "Download CSV",
-            csv,
-            "extractions.csv",
-            "text/csv"
-        )
-    
-    # Results analysis
-    with st.expander("📊 Results Analysis"):
-        safe_mode_results = [ext for ext in st.session_state.extractions if ext.get('mode') == '🛡️']
-        chunked_mode_results = [ext for ext in st.session_state.extractions if ext.get('mode') == '⚡']
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("🛡️ Safe Mode", len(safe_mode_results))
-        with col2:
-            st.metric("⚡ Chunked Mode", len(chunked_mode_results))
-        
-        if safe_mode_results and chunked_mode_results:
-            st.success("✅ **Chunked mode found more people!** This shows full file processing works.")
-        elif safe_mode_results:
-            st.info("💡 Try chunked mode to process your full file and find more people.")
-    
-    # Clear button
-    if st.button("🗑️ Clear All Extractions"):
-        st.session_state.extractions = []
+with col1:
+    if st.button("🤖 AI Extraction", use_container_width=True, 
+                 type="primary" if st.session_state.current_view == 'extractions' else "secondary"):
+        st.session_state.current_view = 'extractions'
         st.rerun()
 
-else:
-    st.info("👆 Upload a newsletter file or paste text in the sidebar to start extraction")
+with col2:
+    if st.button("👥 People Database", use_container_width=True,
+                 type="primary" if st.session_state.current_view == 'people' else "secondary"):
+        st.session_state.current_view = 'people'
+        st.session_state.edit_person_id = None
+        st.rerun()
+
+with col3:
+    if st.button("📊 Analytics", use_container_width=True,
+                 type="primary" if st.session_state.current_view == 'analytics' else "secondary"):
+        st.session_state.current_view = 'analytics'
+        st.rerun()
+
+with col4:
+    if st.button("⚙️ Settings", use_container_width=True,
+                 type="primary" if st.session_state.current_view == 'settings' else "secondary"):
+        st.session_state.current_view = 'settings'
+        st.rerun()
+
+st.markdown("---")
+
+# VIEW: AI Extraction
+if st.session_state.current_view == 'extractions':
     
-    # Test with sample
-    if st.button("🧪 Test with Sample"):
-        sample = """
-        Harrison Balistreri launches Inevitable Capital Management.
-        Sarah Gray joins Neil Chriss at Edge Peak.
-        Daniel Crews promoted to deputy CIO at Tennessee Treasury.
-        """
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.subheader("📁 Upload Newsletter")
         
-        if model:
-            try:
-                test_extractions = extract_simple(sample, model)
-                if test_extractions:
-                    st.session_state.extractions.extend(test_extractions)
-                    st.success(f"✅ Test successful: {len(test_extractions)} people found")
+        # API Key
+        api_key = None
+        try:
+            api_key = st.secrets["GEMINI_API_KEY"]
+        except:
+            api_key = st.text_input("Gemini API Key:", type="password")
+        
+        model = setup_gemini_safe(api_key) if api_key else None
+        
+        # Processing mode
+        processing_mode = st.selectbox(
+            "Processing mode:",
+            ["🛡️ Safe (15K chars)", "⚡ Chunked (Full file)"],
+            help="Safe: Quick processing. Chunked: Complete file analysis."
+        )
+        
+        # File upload
+        uploaded_file = st.file_uploader("Choose newsletter file:", type=['txt'])
+        
+        newsletter_content = None
+        if uploaded_file:
+            newsletter_content = read_file_safely(uploaded_file)
+            if newsletter_content:
+                st.success(f"File loaded: {len(newsletter_content):,} characters")
+        
+        # Manual input
+        if not newsletter_content:
+            newsletter_content = st.text_area("Or paste newsletter text:", height=200)
+        
+        # Extract button
+        if st.button("🚀 Extract Talent", use_container_width=True, disabled=not (newsletter_content and model)):
+            with st.spinner("Processing..."):
+                start_time = time.time()
+                
+                if processing_mode.startswith("🛡️"):
+                    extractions = extract_simple(newsletter_content, model)
+                else:
+                    extractions = extract_chunked_safe(newsletter_content, model)
+                
+                if extractions:
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    for ext in extractions:
+                        ext.update({
+                            'timestamp': timestamp,
+                            'mode': processing_mode.split()[0],
+                            'id': str(uuid.uuid4())
+                        })
+                    
+                    st.session_state.extractions.extend(extractions)
+                    auto_save()
+                    
+                    elapsed = time.time() - start_time
+                    st.success(f"Found {len(extractions)} people in {elapsed:.1f}s")
                     st.rerun()
                 else:
-                    st.warning("⚠️ Test found no results")
-            except Exception as e:
-                st.error(f"❌ Test failed: {e}")
+                    st.warning("No extractions found")
+    
+    with col2:
+        st.subheader("📊 Recent Extractions")
+        
+        if st.session_state.extractions:
+            # Show recent extractions
+            recent = st.session_state.extractions[-10:]
+            
+            for ext in reversed(recent):
+                with st.expander(f"{ext.get('name', 'Unknown')} → {ext.get('company', 'Unknown')}"):
+                    col_a, col_b, col_c = st.columns([2, 2, 1])
+                    
+                    with col_a:
+                        st.write(f"**Role:** {ext.get('role', 'Unknown')}")
+                        st.write(f"**Type:** {ext.get('type', 'Unknown')}")
+                    
+                    with col_b:
+                        st.write(f"**Date:** {ext.get('timestamp', '')[:10]}")
+                        st.write(f"**Mode:** {ext.get('mode', 'Unknown')}")
+                    
+                    with col_c:
+                        # Check if already in people DB
+                        person_exists = any(p.get('name', '').lower() == ext.get('name', '').lower() 
+                                          for p in st.session_state.people)
+                        
+                        if not person_exists:
+                            if st.button("➕ Add", key=f"add_{ext.get('id')}"):
+                                new_person = {
+                                    "id": str(uuid.uuid4()),
+                                    "name": ext.get('name', 'Unknown'),
+                                    "current_title": ext.get('role', 'Unknown'),
+                                    "current_company_name": ext.get('company', 'Unknown'),
+                                    "location": "",
+                                    "email": "",
+                                    "phone": "",
+                                    "education": "",
+                                    "expertise": "",
+                                    "aum_managed": "",
+                                    "source_extraction_id": ext.get('id', '')
+                                }
+                                st.session_state.people.append(new_person)
+                                auto_save()
+                                st.rerun()
+                        else:
+                            st.success("✓ Added")
         else:
-            st.error("❌ Setup API key first")
+            st.info("No extractions yet. Upload a newsletter to start.")
 
-# Simple People Database View
-if st.session_state.people:
+# VIEW: People Database
+elif st.session_state.current_view == 'people':
+    
+    if st.session_state.edit_person_id:
+        # Edit mode
+        person = next((p for p in st.session_state.people if p['id'] == st.session_state.edit_person_id), None)
+        
+        if person:
+            st.subheader(f"✏️ Edit {person.get('name', 'Person')}")
+            
+            with st.form("edit_person_form"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    name = st.text_input("Full Name", value=person.get('name', ''))
+                    title = st.text_input("Current Title", value=person.get('current_title', ''))
+                    company = st.text_input("Current Company", value=person.get('current_company_name', ''))
+                    location = st.text_input("Location", value=person.get('location', ''))
+                    email = st.text_input("Email", value=person.get('email', ''))
+                
+                with col2:
+                    phone = st.text_input("Phone", value=person.get('phone', ''))
+                    education = st.text_input("Education", value=person.get('education', ''))
+                    expertise = st.text_input("Expertise", value=person.get('expertise', ''))
+                    aum_managed = st.text_input("AUM Managed", value=person.get('aum_managed', ''))
+                
+                col_save, col_cancel, col_delete = st.columns([1, 1, 1])
+                
+                with col_save:
+                    if st.form_submit_button("💾 Save Changes", use_container_width=True):
+                        # Update person
+                        person.update({
+                            'name': name,
+                            'current_title': title,
+                            'current_company_name': company,
+                            'location': location,
+                            'email': email,
+                            'phone': phone,
+                            'education': education,
+                            'expertise': expertise,
+                            'aum_managed': aum_managed
+                        })
+                        auto_save()
+                        st.session_state.edit_person_id = None
+                        st.success("Changes saved!")
+                        st.rerun()
+                
+                with col_cancel:
+                    if st.form_submit_button("❌ Cancel", use_container_width=True):
+                        st.session_state.edit_person_id = None
+                        st.rerun()
+                
+                with col_delete:
+                    if st.form_submit_button("🗑️ Delete", use_container_width=True):
+                        st.session_state.people = [p for p in st.session_state.people if p['id'] != person['id']]
+                        auto_save()
+                        st.session_state.edit_person_id = None
+                        st.success("Person deleted!")
+                        st.rerun()
+    
+    else:
+        # List mode
+        st.subheader("👥 People Database")
+        
+        if st.session_state.people:
+            
+            # Search and filter
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                search_term = st.text_input("🔍 Search people...", placeholder="Name, company, title...")
+            with col2:
+                show_count = st.selectbox("Show", [10, 25, 50, 100], index=1)
+            with col3:
+                if st.button("📥 Export CSV", use_container_width=True):
+                    df = pd.DataFrame(st.session_state.people)
+                    csv = df.to_csv(index=False)
+                    st.download_button("Download", csv, "people.csv", "text/csv", use_container_width=True)
+            
+            # Filter people
+            filtered_people = st.session_state.people
+            if search_term:
+                search_lower = search_term.lower()
+                filtered_people = [
+                    p for p in st.session_state.people
+                    if search_lower in p.get('name', '').lower() or
+                       search_lower in p.get('current_company_name', '').lower() or
+                       search_lower in p.get('current_title', '').lower()
+                ]
+            
+            # Display people in cards
+            people_to_show = filtered_people[:show_count]
+            
+            for person in people_to_show:
+                with st.container():
+                    col_info, col_actions = st.columns([4, 1])
+                    
+                    with col_info:
+                        st.write(f"**{person.get('name', 'Unknown')}**")
+                        st.write(f"{person.get('current_title', 'Unknown')} at {person.get('current_company_name', 'Unknown')}")
+                        
+                        details = []
+                        if person.get('location'):
+                            details.append(f"📍 {person['location']}")
+                        if person.get('email'):
+                            details.append(f"📧 {person['email']}")
+                        if person.get('aum_managed'):
+                            details.append(f"💰 {person['aum_managed']}")
+                        
+                        if details:
+                            st.caption(" • ".join(details))
+                    
+                    with col_actions:
+                        if st.button("✏️ Edit", key=f"edit_{person['id']}"):
+                            st.session_state.edit_person_id = person['id']
+                            st.rerun()
+                    
+                    st.markdown("---")
+            
+            if len(filtered_people) > show_count:
+                st.info(f"Showing {show_count} of {len(filtered_people)} people")
+        
+        else:
+            st.info("No people in database. Add some from AI extractions first.")
+
+# VIEW: Analytics
+elif st.session_state.current_view == 'analytics':
+    st.subheader("📊 Analytics")
+    
+    if st.session_state.extractions and st.session_state.people:
+        # Metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Extractions", len(st.session_state.extractions))
+        
+        with col2:
+            st.metric("People in Database", len(st.session_state.people))
+        
+        with col3:
+            companies = set(ext.get('company', '') for ext in st.session_state.extractions if ext.get('company'))
+            st.metric("Unique Companies", len(companies))
+        
+        with col4:
+            conversion_rate = (len(st.session_state.people) / len(st.session_state.extractions) * 100) if st.session_state.extractions else 0
+            st.metric("Conversion Rate", f"{conversion_rate:.1f}%")
+        
+        # Top companies
+        st.subheader("🏢 Top Companies")
+        company_counts = {}
+        for ext in st.session_state.extractions:
+            company = ext.get('company', '')
+            if company and company != 'Unknown':
+                company_counts[company] = company_counts.get(company, 0) + 1
+        
+        if company_counts:
+            top_companies = sorted(company_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+            
+            company_df = pd.DataFrame(top_companies, columns=['Company', 'Mentions'])
+            st.dataframe(company_df, use_container_width=True, hide_index=True)
+        
+        # Recent activity
+        st.subheader("📈 Recent Activity")
+        recent_extractions = st.session_state.extractions[-10:]
+        
+        activity_data = []
+        for ext in recent_extractions:
+            activity_data.append({
+                'Date': ext.get('timestamp', '')[:10],
+                'Person': ext.get('name', 'Unknown'),
+                'Company': ext.get('company', 'Unknown'),
+                'Type': ext.get('type', 'Unknown')
+            })
+        
+        if activity_data:
+            activity_df = pd.DataFrame(activity_data)
+            st.dataframe(activity_df, use_container_width=True, hide_index=True)
+    
+    else:
+        st.info("No data available for analytics yet.")
+
+# VIEW: Settings
+elif st.session_state.current_view == 'settings':
+    st.subheader("⚙️ Settings & Data Management")
+    
+    # Database status
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("💎 Extractions", len(st.session_state.extractions))
+    with col2:
+        st.metric("👥 People", len(st.session_state.people))
+    with col3:
+        st.metric("🏢 Firms", len(st.session_state.firms))
+    
     st.markdown("---")
-    st.header("👥 People Database")
     
-    people_data = []
-    for person in st.session_state.people:
-        people_data.append({
-            "Name": person.get('name', 'Unknown'),
-            "Title": person.get('current_title', 'Unknown'),
-            "Company": person.get('current_company_name', 'Unknown')
-        })
+    # Data operations
+    col1, col2 = st.columns(2)
     
-    if people_data:
-        df = pd.DataFrame(people_data)
-        st.dataframe(df, use_container_width=True)
+    with col1:
+        st.subheader("📥 Export & Backup")
+        
+        if st.button("📥 Export All Data", use_container_width=True):
+            export_data = {
+                "extractions": st.session_state.extractions,
+                "people": st.session_state.people,
+                "firms": st.session_state.firms,
+                "export_timestamp": datetime.now().isoformat()
+            }
+            
+            export_json = json.dumps(export_data, indent=2, default=str)
+            st.download_button(
+                "Download Database",
+                export_json,
+                f"talent_db_{datetime.now().strftime('%Y%m%d')}.json",
+                "application/json",
+                use_container_width=True
+            )
+    
+    with col2:
+        st.subheader("🧹 Data Management")
+        
+        if st.button("🧹 Remove Duplicates", use_container_width=True):
+            # Remove duplicate extractions
+            original_count = len(st.session_state.extractions)
+            seen = set()
+            unique_extractions = []
+            
+            for ext in st.session_state.extractions:
+                key = f"{ext.get('name', '').lower()}|{ext.get('company', '').lower()}"
+                if key not in seen and ext.get('name') and ext.get('company'):
+                    seen.add(key)
+                    unique_extractions.append(ext)
+            
+            st.session_state.extractions = unique_extractions
+            auto_save()
+            
+            removed = original_count - len(unique_extractions)
+            st.success(f"Removed {removed} duplicate extractions")
+            st.rerun()
+        
+        if st.button("🔄 Force Save", use_container_width=True):
+            if auto_save():
+                st.success("Data saved successfully!")
+        
+        # Danger zone
+        with st.expander("⚠️ Danger Zone"):
+            st.warning("These actions cannot be undone!")
+            
+            if st.button("🗑️ Clear All Extractions"):
+                st.session_state.extractions = []
+                auto_save()
+                st.success("All extractions cleared")
+                st.rerun()
+            
+            if st.button("🗑️ Clear All People"):
+                st.session_state.people = []
+                auto_save()
+                st.success("All people cleared")
+                st.rerun()
 
 # Footer
 st.markdown("---")
-st.info("🔧 **SAFE MODE**: Simplified version to prevent crashes. Limited to basic extraction without complex batching.")
+with st.container():
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.caption("🎯 Hedge Fund Talent Intelligence • Data automatically saved")
