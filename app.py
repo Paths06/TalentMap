@@ -521,46 +521,137 @@ def setup_gemini(api_key, model_id="gemini-1.5-flash"):
         return None
 
 def extract_talent_simple(text, model):
-    """Smart chunking with rate limiting - processes entire newsletter with fallback"""
+    """Crash-proof extraction with minimal UI updates"""
     if not model:
         return []
     
-    # Check if we need chunking
-    max_chunk_size = 15000  # Safe size per chunk
+    # Simple size-based processing decision
+    max_single_chunk = 15000
     
-    if len(text) <= max_chunk_size:
-        # Single chunk processing
-        try:
-            return extract_single_chunk(text, model)
-        except Exception as e:
-            st.error(f"Single chunk extraction failed: {e}")
-            return []
+    if len(text) <= max_single_chunk:
+        # Single chunk - simple and reliable
+        st.info("📄 Processing as single chunk...")
+        return extract_single_chunk_safe(text, model)
     else:
-        # Multi-chunk processing with fallback
-        try:
-            return extract_with_smart_chunking(text, model, max_chunk_size)
-        except Exception as chunking_error:
-            st.error(f"❌ **Chunked processing failed**: {chunking_error}")
-            
-            # Fallback: try with just first part of text
-            st.warning("🔄 **Attempting fallback**: Processing first 20,000 characters only...")
-            
+        # Multi-chunk with crash protection
+        st.info(f"📊 Large file detected ({len(text):,} chars). Using safe chunking...")
+        return extract_multi_chunk_safe(text, model, max_single_chunk)
+
+def extract_single_chunk_safe(text, model):
+    """Safe single chunk extraction with timeout"""
+    try:
+        prompt = f"""Extract hedge fund talent movements from this text. Return JSON only:
+
+{text}
+
+{{"people": [{{"name": "Full Name", "company": "Company", "title": "Position", "movement_type": "hire|promotion|launch|departure", "location": "Location"}}]}}
+
+Find ALL people in professional contexts."""
+        
+        response = model.generate_content(prompt)
+        if not response or not response.text:
+            return []
+        
+        # Parse JSON
+        json_start = response.text.find('{')
+        json_end = response.text.rfind('}') + 1
+        
+        if json_start == -1:
+            return []
+        
+        result = json.loads(response.text[json_start:json_end])
+        people = result.get('people', [])
+        
+        # Filter valid entries
+        return [p for p in people if p.get('name') and p.get('company')]
+        
+    except Exception as e:
+        st.warning(f"Single chunk failed: {str(e)[:100]}")
+        return []
+
+def extract_multi_chunk_safe(text, model, chunk_size):
+    """Crash-proof multi-chunk processing with minimal UI"""
+    
+    try:
+        # Simple chunking without complex overlap logic
+        chunks = []
+        for i in range(0, len(text), chunk_size):
+            chunk = text[i:i + chunk_size]
+            if len(chunk.strip()) > 100:  # Skip tiny chunks
+                chunks.append(chunk)
+        
+        st.info(f"Split into {len(chunks)} chunks. Processing with delays...")
+        
+        # Conservative delay based on model
+        model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
+        if '1.5-pro' in model_id:
+            delay = 40  # Very conservative
+        else:
+            delay = 10  # Conservative for all Flash models
+        
+        # Process chunks with minimal UI updates
+        all_extractions = []
+        successful = 0
+        failed = 0
+        
+        for i, chunk in enumerate(chunks):
             try:
-                fallback_text = text[:20000]
-                fallback_result = extract_single_chunk(fallback_text, model)
+                # Simple status without fancy progress bars
+                if i > 0:
+                    st.info(f"Rate limiting delay: {delay}s...")
+                    time.sleep(delay)
                 
-                if fallback_result:
-                    st.success(f"✅ **Fallback successful**: Found {len(fallback_result)} people from first 20K characters")
-                    st.info(f"⚠️ **Note**: Only processed {len(fallback_text):,} of {len(text):,} total characters")
-                    return fallback_result
-                else:
-                    st.warning("⚠️ **Fallback found no results**")
-                    return []
+                st.info(f"Processing chunk {i+1}/{len(chunks)}...")
+                
+                # Extract from chunk
+                chunk_results = extract_single_chunk_safe(chunk, model)
+                
+                if chunk_results:
+                    # Simple deduplication
+                    for result in chunk_results:
+                        name_company = f"{result.get('name', '').lower()}|{result.get('company', '').lower()}"
+                        
+                        # Check if already exists
+                        exists = any(
+                            f"{existing.get('name', '').lower()}|{existing.get('company', '').lower()}" == name_company 
+                            for existing in all_extractions
+                        )
+                        
+                        if not exists:
+                            all_extractions.append(result)
                     
-            except Exception as fallback_error:
-                st.error(f"❌ **Fallback also failed**: {fallback_error}")
-                st.info("💡 **Final suggestion**: Try copy/pasting a smaller section of the newsletter")
-                return []
+                    successful += 1
+                    st.success(f"✅ Chunk {i+1}: Found {len(chunk_results)} people")
+                else:
+                    failed += 1
+                    st.warning(f"⚠️ Chunk {i+1}: No results")
+                
+                # Safety: Stop if too many failures
+                if failed > 3 and failed > successful:
+                    st.error("Too many chunk failures. Stopping to prevent issues.")
+                    break
+                    
+            except Exception as chunk_error:
+                failed += 1
+                st.error(f"❌ Chunk {i+1} failed: {str(chunk_error)[:100]}")
+                
+                # Stop on API errors
+                if "rate" in str(chunk_error).lower() or "quota" in str(chunk_error).lower():
+                    st.error("Rate limit hit. Stopping processing.")
+                    break
+                
+                # Continue for other errors
+                continue
+        
+        # Final summary
+        st.info(f"Completed: {successful} successful, {failed} failed chunks")
+        st.success(f"Total unique extractions: {len(all_extractions)}")
+        
+        return all_extractions
+        
+    except Exception as e:
+        st.error(f"Multi-chunk processing failed: {e}")
+        return []
 
 def extract_single_chunk(text, model):
     """Extract from a single chunk"""
@@ -993,7 +1084,7 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("📄 Extract from Newsletter")
         
-        # Input method with file size validation
+        # Input method - simplified file handling
         input_method = st.radio("Input method:", ["📝 Text", "📁 File"])
         
         newsletter_text = ""
@@ -1002,47 +1093,31 @@ with st.sidebar:
                                          placeholder="Paste hedge fund newsletter content here...")
         else:
             uploaded_file = st.file_uploader("Upload newsletter:", type=['txt'], 
-                                            help="Max recommended: 100KB for reliable processing")
+                                            help="Recommended: under 50KB for reliable processing")
             if uploaded_file:
                 try:
-                    # Check file size first
+                    # Simple file size check
                     file_size = len(uploaded_file.getvalue())
                     file_size_kb = file_size / 1024
                     
-                    if file_size_kb > 200:  # 200KB limit
-                        st.error(f"❌ File too large: {file_size_kb:.1f}KB. Maximum: 200KB")
-                        st.info("💡 **Tip**: Try splitting large newsletters or use text input with copy/paste")
-                    elif file_size_kb > 100:  # Warning zone
-                        st.warning(f"⚠️ Large file: {file_size_kb:.1f}KB. Processing may take 5-15 minutes depending on model.")
-                        if st.checkbox("✅ I understand this will take time and proceed anyway"):
-                            # Proceed with large file
-                            raw_data = uploaded_file.getvalue()
-                            # Try multiple encodings
-                            for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
-                                try:
-                                    newsletter_text = raw_data.decode(encoding)
-                                    st.success(f"✅ File loaded: {file_size_kb:.1f}KB ({len(newsletter_text):,} characters)")
-                                    break
-                                except UnicodeDecodeError:
-                                    continue
-                            else:
-                                st.error("❌ Could not decode file. Try saving as UTF-8 text file.")
+                    if file_size_kb > 100:  # 100KB limit
+                        st.error(f"File too large: {file_size_kb:.1f}KB. Please use a smaller file.")
                     else:
-                        # Normal processing for reasonable file sizes
+                        # Simple encoding
                         raw_data = uploaded_file.getvalue()
-                        for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                        try:
+                            newsletter_text = raw_data.decode('utf-8')
+                        except:
                             try:
-                                newsletter_text = raw_data.decode(encoding)
-                                st.success(f"✅ File loaded: {file_size_kb:.1f}KB ({len(newsletter_text):,} characters)")
-                                break
-                            except UnicodeDecodeError:
-                                continue
-                        else:
-                            st.error("❌ Could not decode file. Try saving as UTF-8 text file.")
+                                newsletter_text = raw_data.decode('latin-1')
+                            except:
+                                st.error("Could not read file. Try saving as UTF-8 text file.")
+                        
+                        if newsletter_text:
+                            st.success(f"✅ File loaded: {file_size_kb:.1f}KB")
                             
                 except Exception as e:
-                    st.error(f"❌ Error reading file: {e}")
-                    st.info("💡 **Troubleshooting**: Try saving the file as a simple .txt file with UTF-8 encoding")
+                    st.error(f"Error reading file: {e}")
         
         # Show processing info
         if newsletter_text:
@@ -1075,113 +1150,55 @@ with st.sidebar:
                     model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
                     st.info(f"Using {model_id.replace('gemini-', '').replace('-exp', '').title()}")
 
-        # Extract button with safety checks
+        # Extract button - simplified and crash-proof
         if st.button("🚀 Extract Talent", use_container_width=True):
             if not newsletter_text.strip():
-                st.error("❌ Please provide newsletter content")
-                st.stop()
-            
-            if not model:
-                st.error("❌ Please provide a valid API key and select a model")
-                st.stop()
-            
-            char_count = len(newsletter_text)
-            
-            # Safety checks for large files
-            if char_count > 100000:  # > 100K chars
-                st.error(f"❌ Text too large: {char_count:,} characters. Maximum recommended: 100,000")
-                st.info("💡 **Solutions**: Split the newsletter into parts or use copy/paste for key sections")
-                st.stop()
-            elif char_count > 70000:  # > 70K chars - warning zone
-                st.warning(f"⚠️ Very large newsletter: {char_count:,} characters")
-                model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
+                st.error("Please provide newsletter content")
+            elif not model:
+                st.error("Please provide API key")
+            else:
+                char_count = len(newsletter_text)
                 
-                if '1.5-pro' in model_id:
-                    st.error("🚫 **File too large for Gemini Pro**. Switch to Flash model or reduce file size.")
-                    st.stop()
+                # Simple size checks
+                if char_count > 150000:  # 150KB hard limit
+                    st.error(f"File too large: {char_count:,} characters. Try a smaller file or copy/paste sections.")
+                elif char_count > 50000:  # Warning for large files
+                    st.warning(f"Large file: {char_count:,} characters. This may take 5-10 minutes.")
+                    if not st.checkbox("I want to proceed anyway"):
+                        st.stop()
                 
-                # Estimate processing time
-                chunks_needed = max(1, char_count // 15000)
-                if '1.5-flash' in model_id or '2.0-flash' in model_id:
-                    est_minutes = (chunks_needed * 10) // 60
-                elif '2.5-flash' in model_id:
-                    est_minutes = (chunks_needed * 15) // 60
-                
-                st.warning(f"⏰ Estimated time: ~{est_minutes} minutes. Processing {chunks_needed} chunks.")
-                st.info("💡 **Recommendation**: Use 1.5 Flash model for fastest processing")
-                
-                if not st.checkbox("✅ I understand this will take time and may hit rate limits"):
-                    st.stop()
-            
-            # Proceed with extraction
-            try:
-                with st.spinner("🤖 Extracting talent movements..."):
-                    # Add a container for real-time updates
-                    extraction_container = st.container()
-                    
-                    with extraction_container:
-                        extractions = extract_talent_simple(newsletter_text, model)
+                # Simple processing without complex error handling
+                try:
+                    st.info("🤖 Starting extraction...")
+                    extractions = extract_talent_simple(newsletter_text, model)
                     
                     if extractions:
-                        # Add timestamp and IDs
+                        # Add metadata
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         for ext in extractions:
                             ext['timestamp'] = timestamp
                             ext['id'] = str(uuid.uuid4())
                         
+                        # Save results
                         st.session_state.all_extractions.extend(extractions)
-                        save_data()  # Auto-save
+                        save_data()
                         
-                        st.success(f"🎉 **Success!** Found {len(extractions)} people from {char_count:,} characters!")
+                        # Show results
+                        st.success(f"🎉 Found {len(extractions)} people!")
                         
-                        # Show summary
-                        companies = set(ext.get('company', 'Unknown') for ext in extractions)
-                        movements = set(ext.get('movement_type', 'Unknown') for ext in extractions)
+                        # Simple preview
+                        st.write("**Preview:**")
+                        for i, ext in enumerate(extractions[:5]):
+                            st.write(f"{i+1}. {ext['name']} → {ext['company']}")
                         
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("People Found", len(extractions))
-                        with col2:
-                            st.metric("Companies", len(companies))
-                        with col3:
-                            st.metric("Movement Types", len(movements))
-                        
-                        # Show preview
-                        with st.expander("📋 Preview Results", expanded=True):
-                            for i, ext in enumerate(extractions[:5]):  # Show first 5
-                                st.write(f"{i+1}. **{ext['name']}** → {ext['company']} ({ext.get('movement_type', 'Unknown')})")
-                            
-                            if len(extractions) > 5:
-                                st.write(f"... and {len(extractions) - 5} more")
-                                
+                        if len(extractions) > 5:
+                            st.write(f"... and {len(extractions) - 5} more")
                     else:
-                        st.warning("⚠️ No talent movements found")
-                        st.info("💡 **Tips**: Try a different model, check if content contains hedge fund news, or verify API key")
+                        st.warning("No people found. Try a different text or model.")
                         
-            except Exception as e:
-                st.error(f"💥 **Extraction Failed**: {str(e)}")
-                
-                # Provide specific troubleshooting based on error
-                error_msg = str(e).lower()
-                if "rate" in error_msg or "quota" in error_msg:
-                    st.error("🚫 **Rate Limit Exceeded**")
-                    st.info("**Solutions:**")
-                    st.write("• Wait 5-10 minutes before trying again")
-                    st.write("• Switch to a faster model (1.5 Flash)")
-                    st.write("• Reduce file size or split into smaller parts")
-                elif "authentication" in error_msg or "api_key" in error_msg:
-                    st.error("🔑 **API Key Issue**")
-                    st.info("• Check that your Gemini API key is valid")
-                    st.info("• Verify you have quota remaining")
-                elif "timeout" in error_msg:
-                    st.error("⏰ **Processing Timeout**")
-                    st.info("• File may be too large for selected model")
-                    st.info("• Try switching to 1.5 Flash model")
-                else:
-                    st.error("🔧 **General Error**")
-                    st.info("• Try refreshing the page")
-                    st.info("• Check your internet connection")
-                    st.info("• Verify the newsletter text is properly formatted")
+                except Exception as e:
+                    st.error(f"Extraction failed: {e}")
+                    st.info("Try: different model, smaller file, or copy/paste instead of upload")
         
         # Quick test
         if st.button("🧪 Test with Sample", use_container_width=True):
