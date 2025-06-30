@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime, date, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+import time
+import traceback
 
 # Configure page
 st.set_page_config(
@@ -273,8 +275,8 @@ def extract_talent(newsletter_text, model, preprocessing_mode="smart", debug_mod
         cleaned_text = newsletter_text
     
     # Check text length and decide on batching
-    max_chunk_size = 15000  # characters per chunk
-    overlap_size = 1000     # overlap between chunks to avoid missing cross-boundary names
+    max_chunk_size = 12000  # characters per chunk (reduced for reliability)
+    overlap_size = 1500     # overlap between chunks to avoid missing cross-boundary names
     
     if len(cleaned_text) <= max_chunk_size:
         # Single chunk processing
@@ -334,7 +336,7 @@ Find EVERY person with first and last name. Be exhaustive.
         return []
 
 def extract_with_batching(text, model, chunk_size, overlap, debug_mode=False):
-    """Extract from large text using batching with overlap"""
+    """Extract from large text using batching with rate limiting and error handling"""
     
     chunks = []
     start = 0
@@ -367,19 +369,123 @@ def extract_with_batching(text, model, chunk_size, overlap, debug_mode=False):
     
     st.info(f"📊 Processing {len(chunks)} chunks of ~{chunk_size:,} characters each with {overlap:,} char overlap")
     
+    # Rate limiting info
+    rate_limit_info = get_rate_limit_info(model)
+    st.info(f"⚡ **Rate Limits:** {rate_limit_info['rpm']} requests/min, {rate_limit_info['delay']:.1f}s delay between chunks")
+    
     all_extractions = []
     seen_names = set()  # Deduplicate across chunks
     
-    # Process each chunk
-    progress_container = st.empty()
+    # Create containers for progress tracking
+    progress_bar = st.progress(0)
+    status_container = st.empty()
+    error_container = st.empty()
     
+    successful_chunks = 0
+    failed_chunks = 0
+    
+    # Process each chunk with rate limiting
     for i, chunk_info in enumerate(chunks):
-        progress_container.write(f"🔄 Processing chunk {i+1}/{len(chunks)} ({chunk_info['size']:,} chars)...")
-        
-        chunk_prompt = f"""
+        try:
+            # Update progress
+            progress = (i) / len(chunks)
+            progress_bar.progress(progress)
+            status_container.info(f"🔄 Processing chunk {i+1}/{len(chunks)} ({chunk_info['size']:,} chars)...")
+            
+            # Rate limiting delay (except for first chunk)
+            if i > 0:
+                delay = rate_limit_info['delay']
+                status_container.info(f"⏱️ Rate limiting delay: {delay:.1f}s...")
+                time.sleep(delay)
+            
+            # Process chunk with timeout
+            chunk_extractions = process_single_chunk_with_timeout(
+                chunk_info, i+1, len(chunks), model, debug_mode, timeout=30
+            )
+            
+            if chunk_extractions is None:
+                failed_chunks += 1
+                error_container.warning(f"⚠️ Chunk {i+1} failed (timeout or error)")
+                continue
+            
+            # Deduplicate based on name + company combination
+            new_extractions = 0
+            for extraction in chunk_extractions:
+                name = extraction.get('name', '').strip()
+                company = extraction.get('company', '').strip()
+                
+                if name and company:
+                    key = f"{name.lower()}|{company.lower()}"
+                    if key not in seen_names:
+                        seen_names.add(key)
+                        all_extractions.append(extraction)
+                        new_extractions += 1
+            
+            successful_chunks += 1
+            status_container.success(f"✅ Chunk {i+1}/{len(chunks)}: Found {len(chunk_extractions)} movements ({new_extractions} new, {len(all_extractions)} total)")
+            
+        except Exception as e:
+            failed_chunks += 1
+            error_msg = str(e)
+            
+            # Check for specific error types
+            if "rate_limit" in error_msg.lower() or "quota" in error_msg.lower():
+                error_container.error(f"🚫 **Rate Limit Hit on Chunk {i+1}**: {error_msg}")
+                st.error("⚠️ **Rate limit exceeded!** Try increasing delay or reducing chunk size.")
+                break
+            elif "timeout" in error_msg.lower():
+                error_container.warning(f"⏱️ **Timeout on Chunk {i+1}**: Chunk too large or API slow")
+            else:
+                error_container.error(f"❌ **Error on Chunk {i+1}**: {error_msg}")
+            
+            # Continue with next chunk unless it's a critical error
+            if "authentication" in error_msg.lower() or "api_key" in error_msg.lower():
+                st.error("🔑 **API Key Error**: Check your Gemini API key")
+                break
+                
+        except KeyboardInterrupt:
+            st.warning("⏹️ **Processing stopped by user**")
+            break
+    
+    # Final progress update
+    progress_bar.progress(1.0)
+    
+    # Results summary
+    if successful_chunks > 0:
+        status_container.success(f"""
+        🎯 **Batching Complete!**
+        - ✅ Successful chunks: {successful_chunks}/{len(chunks)}
+        - ❌ Failed chunks: {failed_chunks}/{len(chunks)}
+        - 📊 Total extractions: {len(all_extractions)}
+        - 🔄 Success rate: {(successful_chunks/len(chunks)*100):.1f}%
+        """)
+    else:
+        status_container.error("❌ **All chunks failed!** Check rate limits, API key, or reduce chunk size.")
+    
+    return all_extractions
+
+def get_rate_limit_info(model):
+    """Get rate limit info based on model"""
+    model_name = str(model.model_name) if hasattr(model, 'model_name') else 'unknown'
+    
+    if '2.5-flash' in model_name:
+        return {'rpm': 10, 'delay': 6.5}  # 10 RPM = 6s delay, add buffer
+    elif '2.0-flash' in model_name:
+        return {'rpm': 15, 'delay': 4.5}  # 15 RPM = 4s delay, add buffer  
+    elif '1.5-flash' in model_name:
+        return {'rpm': 15, 'delay': 4.5}  # 15 RPM = 4s delay, add buffer
+    elif '1.5-pro' in model_name:
+        return {'rpm': 2, 'delay': 35}    # 2 RPM = 30s delay, add buffer
+    else:
+        return {'rpm': 10, 'delay': 6.5}  # Conservative default
+
+def process_single_chunk_with_timeout(chunk_info, chunk_num, total_chunks, model, debug_mode, timeout=30):
+    """Process a single chunk with timeout and error handling"""
+    
+    chunk_prompt = f"""
 Extract financial talent movements from this newsletter chunk.
 
-CHUNK {i+1}/{len(chunks)} ({chunk_info['size']:,} characters):
+CHUNK {chunk_num}/{total_chunks} ({chunk_info['size']:,} characters):
 {chunk_info['text']}
 
 Extract in JSON format:
@@ -406,37 +512,63 @@ Find EVERY person mentioned in career contexts. Include:
 
 Be thorough - extract everyone mentioned professionally.
 """
-        
-        try:
-            response = model.generate_content(chunk_prompt)
-            response_text = response.text
-            
-            if debug_mode:
-                st.text_area(f"AI Response Chunk {i+1}:", response_text, height=150)
-            
-            chunk_extractions = parse_ai_response(response_text)
-            
-            # Deduplicate based on name + company combination
-            new_extractions = 0
-            for extraction in chunk_extractions:
-                name = extraction.get('name', '').strip()
-                company = extraction.get('company', '').strip()
-                
-                if name and company:
-                    key = f"{name.lower()}|{company.lower()}"
-                    if key not in seen_names:
-                        seen_names.add(key)
-                        all_extractions.append(extraction)
-                        new_extractions += 1
-            
-            progress_container.success(f"✅ Chunk {i+1}/{len(chunks)}: Found {len(chunk_extractions)} movements ({new_extractions} new, {len(all_extractions)} total)")
-            
-        except Exception as e:
-            progress_container.error(f"❌ Error processing chunk {i+1}: {e}")
-            continue
     
-    progress_container.success(f"🎯 **Batching Complete**: Found {len(all_extractions)} total unique movements from {len(chunks)} chunks")
-    return all_extractions
+    try:
+        # Set up timeout handling
+        start_time = time.time()
+        
+        response = model.generate_content(chunk_prompt)
+        response_text = response.text
+        
+        elapsed = time.time() - start_time
+        
+        if debug_mode:
+            st.text_area(f"AI Response Chunk {chunk_num} ({elapsed:.1f}s):", response_text, height=150)
+        
+        chunk_extractions = parse_ai_response(response_text)
+        return chunk_extractions
+        
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Log detailed error for debugging
+        if debug_mode:
+            st.error(f"**Chunk {chunk_num} Error Details:**")
+            st.code(traceback.format_exc())
+        
+        # Re-raise with context
+        raise Exception(f"Chunk {chunk_num} failed: {error_msg}")
+
+def parse_ai_response(response_text):
+    """Parse AI response and extract JSON with better error handling"""
+    if not response_text or not response_text.strip():
+        raise Exception("Empty response from AI")
+    
+    # Try to find JSON in response
+    json_start = response_text.find('{')
+    json_end = response_text.rfind('}') + 1
+    
+    if json_start == -1 or json_end <= json_start:
+        raise Exception("No JSON found in AI response")
+    
+    json_text = response_text[json_start:json_end]
+    
+    try:
+        result = json.loads(json_text)
+        extractions = result.get('extractions', [])
+        
+        # Filter out invalid entries
+        valid_extractions = []
+        for ext in extractions:
+            if isinstance(ext, dict) and ext.get('name') and ext.get('company'):
+                valid_extractions.append(ext)
+        
+        return valid_extractions
+        
+    except json.JSONDecodeError as e:
+        raise Exception(f"JSON parsing error: {e}")
+    except Exception as e:
+        raise Exception(f"Response processing error: {e}")
 
 def parse_ai_response(response_text):
     """Parse AI response and extract JSON"""
@@ -552,15 +684,19 @@ with st.sidebar:
     
     selected_model_id = model_options[selected_model_name]
     
-    # Show model info
+    # Show model info with rate limits
     if "2.5-flash" in selected_model_id:
         st.info("🌟 **Best choice**: Most accurate extraction, latest model")
+        st.caption("⚡ Rate limit: 10 requests/min (6.5s delay between chunks)")
     elif "2.0-flash" in selected_model_id:
         st.info("⚡ **Great choice**: Fast and accurate, good rate limits")
+        st.caption("⚡ Rate limit: 15 requests/min (4.5s delay between chunks)")
     elif "1.5-pro" in selected_model_id:
         st.warning("🧠 **Advanced**: Best reasoning but limited rate (2 RPM)")
+        st.caption("⚠️ Rate limit: 2 requests/min (35s delay between chunks)")
     elif "1.5-flash" in selected_model_id:
         st.info("📊 **Standard**: Basic model, may miss some entries")
+        st.caption("⚡ Rate limit: 15 requests/min (4.5s delay between chunks)")
     
     if api_key:
         model = setup_gemini(api_key, selected_model_id)
@@ -641,17 +777,92 @@ with st.sidebar:
         with col2:
             debug_mode = st.checkbox("🐛 Show AI responses", help="Shows raw AI output for debugging")
             
+        # Rate limit and API diagnostics
+        if st.button("🔍 Test API & Rate Limits", use_container_width=True):
+            if model:
+                st.write("**Testing API connectivity and rate limits...**")
+                
+                # Test 1: Simple API call
+                try:
+                    with st.spinner("Testing basic API connectivity..."):
+                        test_response = model.generate_content("Say 'API test successful'")
+                        if test_response and test_response.text:
+                            st.success("✅ **Basic API**: Working")
+                        else:
+                            st.error("❌ **Basic API**: Failed - No response")
+                            return
+                except Exception as e:
+                    st.error(f"❌ **Basic API**: Failed - {e}")
+                    return
+                
+                # Test 2: JSON response
+                try:
+                    with st.spinner("Testing JSON parsing..."):
+                        json_test = model.generate_content('Return this JSON: {"test": "success", "value": 123}')
+                        parsed = parse_ai_response(json_test.text)
+                        st.success("✅ **JSON Parsing**: Working")
+                except Exception as e:
+                    st.error(f"❌ **JSON Parsing**: Failed - {e}")
+                    return
+                
+                # Test 3: Rate limit behavior
+                rate_info = get_rate_limit_info(model)
+                st.info(f"📊 **Rate Limits for your model:**")
+                st.write(f"• Max requests per minute: {rate_info['rpm']}")
+                st.write(f"• Recommended delay between requests: {rate_info['delay']:.1f}s")
+                
+                # Test 4: Multiple rapid calls to check rate limiting
+                try:
+                    with st.spinner("Testing rapid API calls (rate limit detection)..."):
+                        start_time = time.time()
+                        for i in range(3):
+                            test_call = model.generate_content(f"Quick test {i+1}")
+                            if i < 2:  # Don't delay after last call
+                                time.sleep(1)  # Short delay
+                        
+                        elapsed = time.time() - start_time
+                        st.success(f"✅ **Rapid Calls**: Completed 3 calls in {elapsed:.1f}s")
+                        
+                        if elapsed > 10:
+                            st.warning("⚠️ API responses are slow - increase timeout settings")
+                        
+                except Exception as e:
+                    if "rate" in str(e).lower() or "quota" in str(e).lower():
+                        st.error(f"🚫 **Rate Limit Detected**: {e}")
+                        st.info("💡 **Solution**: Increase delay between chunks or try a different model")
+                    else:
+                        st.error(f"❌ **Rapid Calls**: Failed - {e}")
+                
+                st.success("🎯 **API Diagnostics Complete!** Ready for batching.")
+        
+        # Advanced batching settings
+        with st.expander("⚙️ Advanced Batching Settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                timeout_setting = st.number_input("Timeout per chunk (seconds)", value=30, min_value=10, max_value=120, step=10)
+                max_retries = st.number_input("Max retries per chunk", value=2, min_value=0, max_value=5, step=1)
+            with col2:
+                fail_threshold = st.slider("Stop if >X% chunks fail", value=50, min_value=10, max_value=90, step=10)
+                conservative_mode = st.checkbox("Conservative mode (slower but more reliable)", value=False, 
+                                              help="Doubles delays and reduces chunk size")
+        
         # Batching controls
         st.subheader("⚡ Batching Settings")
         col1, col2, col3 = st.columns(3)
         with col1:
-            chunk_size = st.number_input("Chunk size (chars)", value=15000, min_value=5000, max_value=50000, step=5000, 
-                                       help="Larger chunks = fewer API calls but may hit limits")
+            chunk_size = st.number_input("Chunk size (chars)", value=12000, min_value=5000, max_value=30000, step=2000, 
+                                       help="Smaller chunks = more reliable but slower")
         with col2:
-            overlap_size = st.number_input("Overlap size (chars)", value=1000, min_value=500, max_value=5000, step=500,
+            overlap_size = st.number_input("Overlap size (chars)", value=1500, min_value=500, max_value=3000, step=500,
                                          help="Overlap prevents missing names at boundaries")
         with col3:
             auto_batch = st.checkbox("Auto-batch large files", value=True, help="Automatically split large newsletters")
+            
+        # Conservative mode adjustments
+        if 'conservative_mode' in locals() and conservative_mode:
+            chunk_size = min(chunk_size, 10000)  # Smaller chunks
+            overlap_size = max(overlap_size, 2000)  # More overlap
+            st.info("🐌 **Conservative mode active**: Using smaller chunks and more overlap for reliability")
         
         input_method = st.radio("Input method:", ["📝 Text", "📁 File"])
         
@@ -732,9 +943,26 @@ with st.sidebar:
                         
                         st.write(f"**Found {found_count}/{len(manual_check)} target names in text**")
                     
-                    # Pass batching parameters
+                    # Pass batching parameters with fallback
                     if auto_batch:
-                        extractions = extract_talent_with_batching(newsletter_text, model, preprocessing_mode.split()[0].lower(), debug_mode, chunk_size, overlap_size)
+                        try:
+                            extractions = extract_talent_with_batching(
+                                newsletter_text, model, preprocessing_mode.split()[0].lower(), 
+                                debug_mode, chunk_size, overlap_size
+                            )
+                        except Exception as batch_error:
+                            st.error(f"❌ **Batching failed**: {batch_error}")
+                            st.warning("🔄 **Falling back to single chunk processing**...")
+                            
+                            try:
+                                # Fallback: Try with just the first part of the text
+                                fallback_text = newsletter_text[:20000]  # First 20K chars
+                                st.info(f"📄 Processing first {len(fallback_text):,} characters as fallback")
+                                extractions = extract_talent(fallback_text, model, preprocessing_mode.split()[0].lower(), debug_mode)
+                                st.warning(f"⚠️ **Partial processing**: Only processed {len(fallback_text):,} of {len(newsletter_text):,} total characters")
+                            except Exception as fallback_error:
+                                st.error(f"❌ **Fallback also failed**: {fallback_error}")
+                                extractions = []
                     else:
                         extractions = extract_talent(newsletter_text, model, preprocessing_mode.split()[0].lower(), debug_mode)
                     if extractions:
@@ -780,6 +1008,46 @@ with st.sidebar:
                                 st.write(f"• **{name}** → {company} ({movement})")
                     else:
                         st.error("❌ No movements found in sample - check AI model and prompt")
+        
+        # Quick batching test with smaller sample
+        if st.button("🧪 Quick Batching Test", use_container_width=True):
+            if model:
+                # Create a small test that will trigger batching
+                test_content = """
+                Harrison Balistreri's Inevitable Capital Management will trade l/s strat. Davidson Kempner eyes European strat led by Vince Ortiz.
+                Ex-Marshall Wace healthcare PM Robin Boldt to debut ROCK2 Capital in London. Tennessee Treasury promotes Daniel Crews to deputy CIO.
+                GS vet Sarah Gray joins Neil Chriss on forming Edge Peak. Options Group hires Louis Couronne and Macaire Chue as VPs.
+                """ * 30  # Repeat to make it larger
+                
+                st.write(f"**Quick test with {len(test_content):,} characters** (should create 2-3 small chunks)")
+                
+                try:
+                    with st.spinner("Testing batching mechanism..."):
+                        test_extractions = extract_talent_with_batching(
+                            test_content, model, "raw", debug_mode, 
+                            chunk_size=5000,  # Small chunks for testing
+                            overlap_size=500
+                        )
+                        
+                        if test_extractions:
+                            st.success(f"✅ **Batching test successful!** Found {len(test_extractions)} unique movements")
+                            
+                            # Show deduplication working
+                            all_names = [ext.get('name', 'Unknown') for ext in test_extractions]
+                            unique_names = len(set(all_names))
+                            st.info(f"📊 Deduplication working: {len(test_extractions)} total entries, {unique_names} unique people")
+                            
+                            st.success("🎯 **Ready for full newsletter batching!**")
+                        else:
+                            st.warning("⚠️ Batching test returned no results")
+                            
+                except Exception as e:
+                    st.error(f"❌ **Batching test failed**: {e}")
+                    st.error("**Troubleshooting tips:**")
+                    st.write("• Check your API key is valid")
+                    st.write("• Try running 'Test API & Rate Limits' first") 
+                    st.write("• Reduce chunk size to 5000-8000 characters")
+                    st.write("• Enable conservative mode")
         
         # Batching test
         if st.button("⚡ Test Batching (Large Sample)", use_container_width=True):
@@ -919,6 +1187,41 @@ Return JSON format:
                         
                 except Exception as e:
                     st.error(f"Forced extraction error: {e}")
+        
+        # Troubleshooting guide
+        with st.expander("🛠️ Troubleshooting Guide"):
+            st.markdown("""
+            **If batching crashes or hangs:**
+            
+            **🔍 Step 1: Run Diagnostics**
+            • Click "Test API & Rate Limits" first
+            • Check if basic API calls work
+            
+            **⚡ Step 2: Adjust Rate Limits** 
+            • Use Gemini 2.0 Flash (15 RPM) instead of 2.5 Flash (10 RPM)
+            • Enable "Conservative mode" 
+            • Reduce chunk size to 8000-10000 characters
+            
+            **🧪 Step 3: Test Small First**
+            • Click "Quick Batching Test" before full newsletter
+            • Try "Test Batching (Large Sample)" 
+            
+            **🔧 Step 4: Emergency Fallback**
+            • Turn OFF "Auto-batch large files"
+            • Use "Raw Text" mode
+            • This processes only first 20K characters but won't crash
+            
+            **📊 Expected Processing Time:**
+            • Small newsletter (10-20K chars): 30-60 seconds
+            • Large newsletter (40-60K chars): 2-5 minutes
+            • Rate limited models (Pro): 5-15 minutes
+            
+            **🚨 Common Error Solutions:**
+            • "Rate limit exceeded" → Switch to Flash 2.0 or increase delays
+            • "Timeout" → Reduce chunk size, enable conservative mode
+            • "JSON parsing error" → Enable debug mode to see AI responses
+            • "API key error" → Check your Gemini API key is valid
+            """)
         
         # Export button
         if st.session_state.all_extractions:
