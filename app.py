@@ -423,25 +423,118 @@ Extract:
         return True
     
     def deduplicate_and_validate(self, movements):
-        """Remove duplicates and validate"""
-        seen = set()
-        unique = []
+        """Enhanced deduplication with smart merging"""
+        if not movements:
+            return []
         
+        # First, validate all movements
+        valid_movements = []
         for movement in movements:
-            if not movement.get('name') or not movement.get('company'):
-                continue
-                
-            # Create key for deduplication
-            key = (
-                movement['name'].lower().strip(),
-                movement['company'].lower().strip()
-            )
-            
-            if key not in seen:
-                seen.add(key)
-                unique.append(movement)
+            if (movement.get('name') and movement.get('company') and 
+                self.is_valid_extraction(movement['name'], movement['company'])):
+                valid_movements.append(movement)
         
-        return unique
+        if not valid_movements:
+            return []
+        
+        # Smart deduplication with similarity matching
+        unique_movements = []
+        
+        for movement in valid_movements:
+            is_duplicate = False
+            
+            for existing in unique_movements:
+                if self.is_similar_movement(movement, existing):
+                    # Found duplicate - keep the better one
+                    if self.is_better_movement(movement, existing):
+                        # Replace existing with new movement
+                        unique_movements.remove(existing)
+                        unique_movements.append(movement)
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                unique_movements.append(movement)
+        
+        # Sort by confidence and method preference
+        unique_movements.sort(key=lambda x: (
+            x.get('confidence', 0),
+            self.get_method_priority(x.get('method', ''))
+        ), reverse=True)
+        
+        return unique_movements
+    
+    def is_similar_movement(self, movement1, movement2):
+        """Check if two movements are similar (likely duplicates)"""
+        name1 = movement1.get('name', '').lower().strip()
+        name2 = movement2.get('name', '').lower().strip()
+        company1 = movement1.get('company', '').lower().strip()
+        company2 = movement2.get('company', '').lower().strip()
+        
+        # Exact name match
+        if name1 == name2:
+            # Check if companies are similar
+            if company1 == company2:
+                return True
+            
+            # Check if one company is substring of another
+            if (company1 in company2 or company2 in company1 or
+                self.companies_similar(company1, company2)):
+                return True
+        
+        return False
+    
+    def companies_similar(self, company1, company2):
+        """Check if company names are similar"""
+        # Remove common suffixes for comparison
+        suffixes = ['capital', 'management', 'fund', 'group', 'partners', 'advisors', 'llc', 'inc']
+        
+        clean1 = company1.lower()
+        clean2 = company2.lower()
+        
+        for suffix in suffixes:
+            clean1 = clean1.replace(suffix, '').strip()
+            clean2 = clean2.replace(suffix, '').strip()
+        
+        # Check if core names are same
+        return clean1 == clean2 or clean1 in clean2 or clean2 in clean1
+    
+    def is_better_movement(self, new_movement, existing_movement):
+        """Determine which movement is better quality"""
+        # Priority 1: Higher confidence
+        new_conf = new_movement.get('confidence', 0)
+        existing_conf = existing_movement.get('confidence', 0)
+        
+        if new_conf > existing_conf:
+            return True
+        elif new_conf < existing_conf:
+            return False
+        
+        # Priority 2: Method preference (patterns > llm for reliability)
+        new_method = new_movement.get('method', '')
+        existing_method = existing_movement.get('method', '')
+        
+        method_priority = {
+            'patterns_enhanced': 3,
+            'patterns': 2,
+            'llm_improved': 1,
+            'llm': 0
+        }
+        
+        new_priority = method_priority.get(new_method, 0)
+        existing_priority = method_priority.get(existing_method, 0)
+        
+        return new_priority > existing_priority
+    
+    def get_method_priority(self, method):
+        """Get priority score for sorting"""
+        priorities = {
+            'patterns_enhanced': 3,
+            'patterns': 2, 
+            'llm_improved': 1,
+            'llm': 0
+        }
+        return priorities.get(method, 0)
 
 # =============================================================================
 # STREAMLIT APP
