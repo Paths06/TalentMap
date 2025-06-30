@@ -660,11 +660,16 @@ with st.sidebar:
     
     # API Key Setup
     st.subheader("🔑 Configuration")
+    api_key = None
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
-        st.success("✅ API key loaded")
+        st.success("✅ API key loaded from secrets")
     except:
         api_key = st.text_input("Gemini API Key", type="password", help="Get from: https://makersuite.google.com/app/apikey")
+        if api_key:
+            st.success("✅ API key entered manually")
+        else:
+            st.warning("⚠️ Please enter your Gemini API key to continue")
     
     # Model Selection
     st.subheader("🤖 Model Selection")
@@ -678,28 +683,36 @@ with st.sidebar:
     selected_model_name = st.selectbox(
         "Choose extraction model:",
         options=list(model_options.keys()),
-        index=0,  # Default to 2.5 Flash
-        help="2.5 Flash recommended for best extraction accuracy"
+        index=1,  # Default to 2.0 Flash (better rate limits)
+        help="2.0 Flash recommended for reliability and rate limits"
     )
     
     selected_model_id = model_options[selected_model_name]
     
     # Show model info with rate limits
     if "2.5-flash" in selected_model_id:
-        st.info("🌟 **Best choice**: Most accurate extraction, latest model")
+        st.info("🌟 **Best accuracy**: Most advanced extraction capabilities")
         st.caption("⚡ Rate limit: 10 requests/min (6.5s delay between chunks)")
     elif "2.0-flash" in selected_model_id:
-        st.info("⚡ **Great choice**: Fast and accurate, good rate limits")
+        st.success("⭐ **RECOMMENDED**: Best balance of speed, accuracy, and rate limits")
         st.caption("⚡ Rate limit: 15 requests/min (4.5s delay between chunks)")
     elif "1.5-pro" in selected_model_id:
-        st.warning("🧠 **Advanced**: Best reasoning but limited rate (2 RPM)")
+        st.warning("🧠 **Advanced**: Best reasoning but very limited rate (2 RPM)")
         st.caption("⚠️ Rate limit: 2 requests/min (35s delay between chunks)")
     elif "1.5-flash" in selected_model_id:
-        st.info("📊 **Standard**: Basic model, may miss some entries")
+        st.info("📊 **Basic**: Standard model, may miss some entries")
         st.caption("⚡ Rate limit: 15 requests/min (4.5s delay between chunks)")
     
+    model = None
     if api_key:
-        model = setup_gemini(api_key, selected_model_id)
+        try:
+            model = setup_gemini(api_key, selected_model_id)
+            if model:
+                st.success("✅ Model loaded successfully")
+            else:
+                st.error("❌ Failed to load model")
+        except Exception as e:
+            st.error(f"❌ Model setup error: {e}")
         
         # Model Performance Tips
         with st.expander("📊 Model Performance Guide"):
@@ -782,58 +795,66 @@ with st.sidebar:
             if model:
                 st.write("**Testing API connectivity and rate limits...**")
                 
+                api_test_passed = False
+                
                 # Test 1: Simple API call
                 try:
                     with st.spinner("Testing basic API connectivity..."):
                         test_response = model.generate_content("Say 'API test successful'")
                         if test_response and test_response.text:
                             st.success("✅ **Basic API**: Working")
+                            api_test_passed = True
                         else:
                             st.error("❌ **Basic API**: Failed - No response")
-                            return
                 except Exception as e:
                     st.error(f"❌ **Basic API**: Failed - {e}")
-                    return
                 
-                # Test 2: JSON response
-                try:
-                    with st.spinner("Testing JSON parsing..."):
-                        json_test = model.generate_content('Return this JSON: {"test": "success", "value": 123}')
-                        parsed = parse_ai_response(json_test.text)
-                        st.success("✅ **JSON Parsing**: Working")
-                except Exception as e:
-                    st.error(f"❌ **JSON Parsing**: Failed - {e}")
-                    return
-                
-                # Test 3: Rate limit behavior
-                rate_info = get_rate_limit_info(model)
-                st.info(f"📊 **Rate Limits for your model:**")
-                st.write(f"• Max requests per minute: {rate_info['rpm']}")
-                st.write(f"• Recommended delay between requests: {rate_info['delay']:.1f}s")
-                
-                # Test 4: Multiple rapid calls to check rate limiting
-                try:
-                    with st.spinner("Testing rapid API calls (rate limit detection)..."):
-                        start_time = time.time()
-                        for i in range(3):
-                            test_call = model.generate_content(f"Quick test {i+1}")
-                            if i < 2:  # Don't delay after last call
-                                time.sleep(1)  # Short delay
+                if api_test_passed:
+                    # Test 2: JSON response
+                    json_test_passed = False
+                    try:
+                        with st.spinner("Testing JSON parsing..."):
+                            json_test = model.generate_content('Return this JSON: {"test": "success", "value": 123}')
+                            parsed = parse_ai_response(json_test.text)
+                            st.success("✅ **JSON Parsing**: Working")
+                            json_test_passed = True
+                    except Exception as e:
+                        st.error(f"❌ **JSON Parsing**: Failed - {e}")
+                    
+                    if json_test_passed:
+                        # Test 3: Rate limit behavior
+                        rate_info = get_rate_limit_info(model)
+                        st.info(f"📊 **Rate Limits for your model:**")
+                        st.write(f"• Max requests per minute: {rate_info['rpm']}")
+                        st.write(f"• Recommended delay between requests: {rate_info['delay']:.1f}s")
                         
-                        elapsed = time.time() - start_time
-                        st.success(f"✅ **Rapid Calls**: Completed 3 calls in {elapsed:.1f}s")
+                        # Test 4: Multiple rapid calls to check rate limiting
+                        try:
+                            with st.spinner("Testing rapid API calls (rate limit detection)..."):
+                                start_time = time.time()
+                                for i in range(3):
+                                    test_call = model.generate_content(f"Quick test {i+1}")
+                                    if i < 2:  # Don't delay after last call
+                                        time.sleep(1)  # Short delay
+                                
+                                elapsed = time.time() - start_time
+                                st.success(f"✅ **Rapid Calls**: Completed 3 calls in {elapsed:.1f}s")
+                                
+                                if elapsed > 10:
+                                    st.warning("⚠️ API responses are slow - increase timeout settings")
+                                
+                        except Exception as e:
+                            if "rate" in str(e).lower() or "quota" in str(e).lower():
+                                st.error(f"🚫 **Rate Limit Detected**: {e}")
+                                st.info("💡 **Solution**: Increase delay between chunks or try a different model")
+                            else:
+                                st.error(f"❌ **Rapid Calls**: Failed - {e}")
                         
-                        if elapsed > 10:
-                            st.warning("⚠️ API responses are slow - increase timeout settings")
-                        
-                except Exception as e:
-                    if "rate" in str(e).lower() or "quota" in str(e).lower():
-                        st.error(f"🚫 **Rate Limit Detected**: {e}")
-                        st.info("💡 **Solution**: Increase delay between chunks or try a different model")
-                    else:
-                        st.error(f"❌ **Rapid Calls**: Failed - {e}")
-                
-                st.success("🎯 **API Diagnostics Complete!** Ready for batching.")
+                        st.success("🎯 **API Diagnostics Complete!** Ready for batching.")
+                else:
+                    st.warning("⚠️ **API test failed** - check your API key and internet connection before proceeding")
+            else:
+                st.error("🔑 **No model loaded** - check your API key")
         
         # Advanced batching settings
         with st.expander("⚙️ Advanced Batching Settings"):
@@ -850,18 +871,22 @@ with st.sidebar:
         st.subheader("⚡ Batching Settings")
         col1, col2, col3 = st.columns(3)
         with col1:
-            chunk_size = st.number_input("Chunk size (chars)", value=12000, min_value=5000, max_value=30000, step=2000, 
+            base_chunk_size = 12000 if not 'conservative_mode' in locals() or not conservative_mode else 8000
+            chunk_size = st.number_input("Chunk size (chars)", value=base_chunk_size, min_value=5000, max_value=30000, step=2000, 
                                        help="Smaller chunks = more reliable but slower")
         with col2:
-            overlap_size = st.number_input("Overlap size (chars)", value=1500, min_value=500, max_value=3000, step=500,
+            base_overlap_size = 1500 if not 'conservative_mode' in locals() or not conservative_mode else 2000
+            overlap_size = st.number_input("Overlap size (chars)", value=base_overlap_size, min_value=500, max_value=3000, step=500,
                                          help="Overlap prevents missing names at boundaries")
         with col3:
             auto_batch = st.checkbox("Auto-batch large files", value=True, help="Automatically split large newsletters")
             
         # Conservative mode adjustments
-        if 'conservative_mode' in locals() and conservative_mode:
-            chunk_size = min(chunk_size, 10000)  # Smaller chunks
-            overlap_size = max(overlap_size, 2000)  # More overlap
+        if conservative_mode:
+            if chunk_size > 10000:
+                chunk_size = 10000  # Force smaller chunks
+            if overlap_size < 2000:
+                overlap_size = 2000  # Force more overlap
             st.info("🐌 **Conservative mode active**: Using smaller chunks and more overlap for reliability")
         
         input_method = st.radio("Input method:", ["📝 Text", "📁 File"])
@@ -914,7 +939,7 @@ with st.sidebar:
                         
                         # Show batching info
                         if auto_batch and len(cleaned) > chunk_size:
-                            num_chunks = max(1, (len(cleaned) - overlap_size) // (chunk_size - overlap_size))
+                            num_chunks = max(1, (len(cleaned) + chunk_size - overlap_size - 1) // (chunk_size - overlap_size))
                             st.warning(f"📊 **Large file detected!** Will process in {num_chunks} chunks of ~{chunk_size:,} chars each")
                             st.write(f"**Chunk size:** {chunk_size:,} chars")
                             st.write(f"**Overlap:** {overlap_size:,} chars")
