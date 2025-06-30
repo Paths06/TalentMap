@@ -1,12 +1,19 @@
 import streamlit as st
 import pandas as pd
-import google.generativeai as genai
 import json
 import uuid
 from datetime import datetime, date
 import time
 import os
 from pathlib import Path
+
+# Try to import google.generativeai, handle if not available
+try:
+    import google.generativeai as genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
+    st.error("google-generativeai package not installed. Please run: pip install google-generativeai")
 
 # Configure page
 st.set_page_config(
@@ -27,9 +34,22 @@ FIRMS_FILE = DATA_DIR / "firms.json"
 def load_data():
     """Load data from JSON files"""
     try:
-        extractions = json.load(open(EXTRACTIONS_FILE, 'r', encoding='utf-8')) if EXTRACTIONS_FILE.exists() else []
-        people = json.load(open(PEOPLE_FILE, 'r', encoding='utf-8')) if PEOPLE_FILE.exists() else []
-        firms = json.load(open(FIRMS_FILE, 'r', encoding='utf-8')) if FIRMS_FILE.exists() else []
+        extractions = []
+        people = []
+        firms = []
+        
+        if EXTRACTIONS_FILE.exists():
+            with open(EXTRACTIONS_FILE, 'r', encoding='utf-8') as f:
+                extractions = json.load(f)
+        
+        if PEOPLE_FILE.exists():
+            with open(PEOPLE_FILE, 'r', encoding='utf-8') as f:
+                people = json.load(f)
+                
+        if FIRMS_FILE.exists():
+            with open(FIRMS_FILE, 'r', encoding='utf-8') as f:
+                firms = json.load(f)
+                
         return extractions, people, firms
     except Exception as e:
         st.error(f"Error loading data: {e}")
@@ -39,11 +59,17 @@ def save_data(extractions=None, people=None, firms=None):
     """Save data to JSON files"""
     try:
         if extractions is not None:
-            json.dump(extractions, open(EXTRACTIONS_FILE, 'w', encoding='utf-8'), indent=2, default=str)
+            with open(EXTRACTIONS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(extractions, f, indent=2, default=str)
+        
         if people is not None:
-            json.dump(people, open(PEOPLE_FILE, 'w', encoding='utf-8'), indent=2, default=str)
+            with open(PEOPLE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(people, f, indent=2, default=str)
+        
         if firms is not None:
-            json.dump(firms, open(FIRMS_FILE, 'w', encoding='utf-8'), indent=2, default=str)
+            with open(FIRMS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(firms, f, indent=2, default=str)
+        
         return True
     except Exception as e:
         st.error(f"Save error: {e}")
@@ -51,11 +77,13 @@ def save_data(extractions=None, people=None, firms=None):
 
 def auto_save():
     """Auto-save current session state"""
-    return save_data(
-        extractions=st.session_state.extractions,
-        people=st.session_state.people,
-        firms=st.session_state.firms
-    )
+    if 'extractions' in st.session_state and 'people' in st.session_state and 'firms' in st.session_state:
+        return save_data(
+            extractions=st.session_state.extractions,
+            people=st.session_state.people,
+            firms=st.session_state.firms
+        )
+    return False
 
 # Initialize session state
 def init_session_state():
@@ -72,69 +100,110 @@ def init_session_state():
     if 'edit_person_id' not in st.session_state:
         st.session_state.edit_person_id = None
 
-init_session_state()
-
 # AI setup
 @st.cache_resource
 def setup_gemini_safe(api_key):
+    """Setup Gemini AI model safely"""
+    if not GENAI_AVAILABLE:
+        st.error("Google Generative AI package not available")
+        return None
+    
+    if not api_key:
+        st.error("API key is required")
+        return None
+        
     try:
         genai.configure(api_key=api_key)
-        return genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash')  # Using stable model name
+        return model
     except Exception as e:
         st.error(f"AI setup failed: {e}")
         return None
 
 # File reading
 def read_file_safely(uploaded_file, max_size_kb=200):
+    """Safely read uploaded file with size and encoding checks"""
     try:
+        if uploaded_file is None:
+            return None
+            
         file_size = len(uploaded_file.getvalue())
         if file_size > max_size_kb * 1024:
             st.error(f"File too large: {file_size/1024:.1f}KB. Max: {max_size_kb}KB")
             return None
             
         raw_data = uploaded_file.getvalue()
-        for encoding in ['utf-8', 'latin-1', 'cp1252']:
+        
+        # Try different encodings
+        for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
             try:
                 return raw_data.decode(encoding)
             except UnicodeDecodeError:
                 continue
+                
+        st.error("Could not decode file with any supported encoding")
         return None
     except Exception as e:
-        st.error(f"File error: {e}")
+        st.error(f"File reading error: {e}")
         return None
 
 # AI extraction functions
 def extract_simple(text, model):
+    """Extract people and career movements from text using AI"""
+    if not model:
+        st.error("AI model not available")
+        return []
+        
     try:
         if len(text) > 15000:
             text = text[:15000]
+            st.warning("Text truncated to 15K characters for processing")
             
-        prompt = f"""Extract people and career movements from this financial newsletter. Return JSON:
+        prompt = f"""Extract people and career movements from this financial newsletter. Return JSON only, no other text:
 
 {text}
 
 {{"people": [{{"name": "Full Name", "company": "Company", "role": "Position", "type": "hire/promotion/launch"}}]}}
 
-Find ALL people in professional contexts."""
+Find ALL people mentioned in professional contexts like hires, promotions, launches, moves."""
         
         response = model.generate_content(prompt)
         if not response or not response.text:
+            st.warning("No response from AI model")
             return []
             
-        response_text = response.text
+        response_text = response.text.strip()
+        
+        # Find JSON in response
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1
         
-        if json_start == -1:
+        if json_start == -1 or json_end <= json_start:
+            st.warning("No valid JSON found in AI response")
             return []
             
-        result = json.loads(response_text[json_start:json_end])
-        return result.get('people', [])
+        json_text = response_text[json_start:json_end]
+        result = json.loads(json_text)
         
-    except Exception:
+        people = result.get('people', [])
+        if not people:
+            st.info("No people found in the text")
+            
+        return people
+        
+    except json.JSONDecodeError as e:
+        st.error(f"JSON parsing error: {e}")
+        return []
+    except Exception as e:
+        st.error(f"Extraction error: {e}")
         return []
 
 def extract_chunked_safe(text, model, chunk_size=12000, max_chunks=5):
+    """Extract from large text by processing in chunks"""
+    if not model:
+        st.error("AI model not available")
+        return []
+        
     try:
         all_extractions = []
         processed_chars = 0
@@ -146,11 +215,11 @@ def extract_chunked_safe(text, model, chunk_size=12000, max_chunks=5):
         while processed_chars < len(text) and chunk_num < max_chunks:
             chunk_num += 1
             
-            start_pos = max(0, processed_chars - 500)
+            start_pos = max(0, processed_chars - 500)  # Overlap for context
             end_pos = min(start_pos + chunk_size, len(text))
             chunk_text = text[start_pos:end_pos]
             
-            status_text.info(f"Processing chunk {chunk_num}/{max_chunks}...")
+            status_text.info(f"Processing chunk {chunk_num}/{min(max_chunks, (len(text)//chunk_size) + 1)}...")
             
             if chunk_num > 1:
                 time.sleep(3)  # Rate limiting
@@ -159,23 +228,36 @@ def extract_chunked_safe(text, model, chunk_size=12000, max_chunks=5):
                 chunk_extractions = extract_simple(chunk_text, model)
                 
                 if chunk_extractions:
-                    existing_names = {ext.get('name', '').lower().strip() for ext in all_extractions if ext.get('name')}
+                    # Deduplicate by name (case insensitive)
+                    existing_names = {ext.get('name', '').lower().strip() 
+                                    for ext in all_extractions if ext.get('name')}
+                    
                     new_extractions = [ext for ext in chunk_extractions 
-                                     if ext.get('name', '').lower().strip() not in existing_names and ext.get('name')]
+                                     if (ext.get('name', '').lower().strip() not in existing_names 
+                                         and ext.get('name', '').strip())]
+                    
                     all_extractions.extend(new_extractions)
                 
-            except Exception:
-                pass  # Continue with next chunk
+            except Exception as e:
+                st.warning(f"Error processing chunk {chunk_num}: {e}")
             
             processed_chars = end_pos
             progress_bar.progress(min(processed_chars / len(text), 1.0))
         
         progress_bar.progress(1.0)
-        status_text.success(f"Completed: {len(all_extractions)} people found")
+        status_text.success(f"Completed: {len(all_extractions)} unique people found")
+        time.sleep(1)
+        progress_bar.empty()
+        status_text.empty()
+        
         return all_extractions
         
-    except Exception:
+    except Exception as e:
+        st.error(f"Chunked extraction error: {e}")
         return []
+
+# Initialize session state
+init_session_state()
 
 # Main header
 st.title("🎯 Hedge Fund Talent Intelligence")
@@ -221,9 +303,13 @@ if st.session_state.current_view == 'extractions':
         # API Key
         api_key = None
         try:
-            api_key = st.secrets["GEMINI_API_KEY"]
+            api_key = st.secrets.get("GEMINI_API_KEY")
         except:
-            api_key = st.text_input("Gemini API Key:", type="password")
+            pass
+            
+        if not api_key:
+            api_key = st.text_input("Gemini API Key:", type="password", 
+                                  help="Get your API key from https://makersuite.google.com/app/apikey")
         
         model = setup_gemini_safe(api_key) if api_key else None
         
@@ -231,49 +317,61 @@ if st.session_state.current_view == 'extractions':
         processing_mode = st.selectbox(
             "Processing mode:",
             ["🛡️ Safe (15K chars)", "⚡ Chunked (Full file)"],
-            help="Safe: Quick processing. Chunked: Complete file analysis."
+            help="Safe: Quick processing, truncates long files. Chunked: Complete file analysis with rate limiting."
         )
         
         # File upload
-        uploaded_file = st.file_uploader("Choose newsletter file:", type=['txt'])
+        uploaded_file = st.file_uploader("Choose newsletter file:", type=['txt', 'md'])
         
         newsletter_content = None
         if uploaded_file:
             newsletter_content = read_file_safely(uploaded_file)
             if newsletter_content:
                 st.success(f"File loaded: {len(newsletter_content):,} characters")
+            else:
+                st.error("Failed to read file")
         
         # Manual input
         if not newsletter_content:
-            newsletter_content = st.text_area("Or paste newsletter text:", height=200)
+            newsletter_content = st.text_area("Or paste newsletter text:", height=200, 
+                                            placeholder="Paste your newsletter content here...")
         
         # Extract button
-        if st.button("🚀 Extract Talent", use_container_width=True, disabled=not (newsletter_content and model)):
-            with st.spinner("Processing..."):
-                start_time = time.time()
-                
-                if processing_mode.startswith("🛡️"):
-                    extractions = extract_simple(newsletter_content, model)
-                else:
-                    extractions = extract_chunked_safe(newsletter_content, model)
-                
-                if extractions:
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    for ext in extractions:
-                        ext.update({
-                            'timestamp': timestamp,
-                            'mode': processing_mode.split()[0],
-                            'id': str(uuid.uuid4())
-                        })
+        extraction_disabled = not (newsletter_content and model and newsletter_content.strip())
+        
+        if st.button("🚀 Extract Talent", use_container_width=True, disabled=extraction_disabled):
+            if not GENAI_AVAILABLE:
+                st.error("Please install google-generativeai: pip install google-generativeai")
+            elif not newsletter_content.strip():
+                st.error("Please provide newsletter content")
+            elif not model:
+                st.error("Please provide a valid API key")
+            else:
+                with st.spinner("Processing newsletter..."):
+                    start_time = time.time()
                     
-                    st.session_state.extractions.extend(extractions)
-                    auto_save()
+                    if processing_mode.startswith("🛡️"):
+                        extractions = extract_simple(newsletter_content, model)
+                    else:
+                        extractions = extract_chunked_safe(newsletter_content, model)
                     
-                    elapsed = time.time() - start_time
-                    st.success(f"Found {len(extractions)} people in {elapsed:.1f}s")
-                    st.rerun()
-                else:
-                    st.warning("No extractions found")
+                    if extractions:
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        for ext in extractions:
+                            ext.update({
+                                'timestamp': timestamp,
+                                'mode': processing_mode.split()[0],
+                                'id': str(uuid.uuid4())
+                            })
+                        
+                        st.session_state.extractions.extend(extractions)
+                        auto_save()
+                        
+                        elapsed = time.time() - start_time
+                        st.success(f"✅ Found {len(extractions)} people in {elapsed:.1f}s")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ No people found in the newsletter")
     
     with col2:
         st.subheader("📊 Recent Extractions")
@@ -282,7 +380,10 @@ if st.session_state.current_view == 'extractions':
             # Show recent extractions
             recent = st.session_state.extractions[-10:]
             
-            for ext in reversed(recent):
+            for idx, ext in enumerate(reversed(recent)):
+                # Ensure each extraction has a unique ID
+                ext_id = ext.get('id', f"ext_{len(st.session_state.extractions) - idx}")
+                
                 with st.expander(f"{ext.get('name', 'Unknown')} → {ext.get('company', 'Unknown')}"):
                     col_a, col_b, col_c = st.columns([2, 2, 1])
                     
@@ -300,7 +401,9 @@ if st.session_state.current_view == 'extractions':
                                           for p in st.session_state.people)
                         
                         if not person_exists:
-                            if st.button("➕ Add", key=f"add_{ext.get('id')}"):
+                            # Use a guaranteed unique key
+                            button_key = f"add_{ext_id}_{idx}"
+                            if st.button("➕ Add", key=button_key):
                                 new_person = {
                                     "id": str(uuid.uuid4()),
                                     "name": ext.get('name', 'Unknown'),
@@ -312,7 +415,7 @@ if st.session_state.current_view == 'extractions':
                                     "education": "",
                                     "expertise": "",
                                     "aum_managed": "",
-                                    "source_extraction_id": ext.get('id', '')
+                                    "source_extraction_id": ext_id
                                 }
                                 st.session_state.people.append(new_person)
                                 auto_save()
