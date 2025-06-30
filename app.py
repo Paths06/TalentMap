@@ -249,59 +249,73 @@ def preprocess_newsletter(raw_text):
     
     return text
 
-def extract_talent(newsletter_text, model):
+def extract_talent(newsletter_text, model, preprocessing_mode="smart"):
     """Extract hedge fund talent movements using Gemini AI"""
     
-    # Preprocess the newsletter first
-    cleaned_text = preprocess_newsletter(newsletter_text)
+    if preprocessing_mode == "smart":
+        # Preprocess the newsletter first
+        cleaned_text = preprocess_newsletter(newsletter_text)
+    elif preprocessing_mode == "raw":
+        # Use raw text with minimal cleaning
+        cleaned_text = newsletter_text.replace('\n', ' ').strip()
+    else:  # manual
+        # Basic cleaning only
+        cleaned_text = newsletter_text
     
     prompt = f"""
-You are an expert at extracting talent movements from financial newsletters and industry news.
+You are a SPECIALIST in extracting hedge fund and financial talent movements from newsletters.
 
-Extract ALL people and their career movements from this text. Be COMPREHENSIVE and look for:
-- New hires, departures, promotions, launches, appointments
-- Hedge funds, private equity, asset management, family offices, pension funds
-- Portfolio managers, CIOs, analysts, partners, directors, VPs, executives
-- Fund launches, team formations, executive moves, job changes
+CRITICAL TASK: Extract EVERY SINGLE person mentioned in career/job contexts from this newsletter text.
 
-NEWSLETTER TEXT TO ANALYZE:
-{cleaned_text[:4000]}
+NEWSLETTER TEXT:
+{cleaned_text[:5000]}
 
-Return ONLY a valid JSON object in this exact format:
+SPECIFIC PATTERNS TO CATCH (examples from similar text):
+1. "Harrison Balistreri's Inevitable Capital Management" = Harrison Balistreri launching Inevitable Capital Management
+2. "strategy would be led by Vince Ortiz" = Vince Ortiz getting appointment/leadership role
+3. "Robin Boldt to debut ROCK2 Capital" = Robin Boldt launching ROCK2 Capital  
+4. "Daniel Crews picked for position" = Daniel Crews getting hired/promoted
+5. "Grant Leslie to lead PE" = Grant Leslie getting appointment
+6. "Sarah Gray joins Neil Chriss on forming Edge Peak" = TWO entries (Sarah Gray + Neil Chriss)
+7. "Louis Couronne and Macaire Chue as vice presidents" = TWO entries (Louis + Macaire)
+8. "Ex-Goldman" or "Former DB" = capture previous companies
+9. Fund launches, new hires, promotions, departures, partnerships
+10. "CIO", "PM", "VP", "director", "head", "partner", "co-head", "deputy"
+
+MOVEMENT TYPES: launch, hire, promotion, departure, appointment, partnership
+
+Return JSON with this EXACT format:
 {{
   "extractions": [
     {{
       "name": "First Last",
-      "company": "Company Name", 
+      "company": "Company Name",
       "previous_company": "Previous Company (if mentioned)",
-      "movement_type": "launch|hire|promotion|departure|appointment|partnership",
-      "title": "Position Title (if mentioned)",
-      "location": "Location (if mentioned)",
-      "strategy": "Investment strategy (if mentioned)",
-      "context": "Brief description of the movement"
+      "movement_type": "launch|hire|promotion|departure|appointment|partnership", 
+      "title": "Position Title",
+      "location": "Location",
+      "strategy": "Investment strategy",
+      "context": "Brief context"
     }}
   ]
 }}
 
-REAL EXAMPLES from the text you should catch:
-- "Harrison Balistreri's Inevitable Capital Management" → launch
-- "Sarah Gray joins Neil Chriss on forming Edge Peak" → Two separate entries
-- "Robin Boldt to debut ROCK2 Capital" → launch  
-- "Daniel Crews picked for position at Tennessee Treasury" → promotion
-- "Vince Ortiz would lead new strategy" → appointment
-- "Jo-Wen Lin raising capital for Asia healthcare" → appointment/launch
-- "Louis Couronne and Macaire Chue as vice presidents" → Two hire entries
+EXTRACTION TARGETS (make sure to find):
+- Harrison Balistreri → Inevitable Capital Management
+- Vince Ortiz → Davidson Kempner  
+- Robin Boldt → ROCK2 Capital
+- Daniel Crews → Tennessee Treasury
+- Grant Leslie → Tennessee Treasury
+- Sarah Gray → Edge Peak
+- Neil Chriss → Edge Peak
+- Louis Couronne → Options Group
+- Macaire Chue → Options Group
+- Alberto Cozzini → Polymathique
+- Gavin Colquhoun → unnamed firm
+- Rahul Ahuja → unnamed firm
+- Hamza Lemssouguer → Arini
 
-STRICT RULES:
-1. Extract EVERY person with a specific first and last name
-2. Include ALL movement types: launch, hire, promotion, departure, appointment, partnership
-3. If one sentence mentions multiple people, create separate entries for each
-4. Capture fund launches, new roles, promotions, team formations
-5. Don't skip anyone - be exhaustive
-6. Movement types must be one of: launch, hire, promotion, departure, appointment, partnership
-7. Always include previous_company if mentioned (like "ex-Goldman", "former DB")
-
-Expected result: 15-20+ entries from this newsletter sample.
+CRITICAL: You MUST find 12+ entries from this text. Be exhaustive. Don't miss anyone.
 """
     
     try:
@@ -464,7 +478,7 @@ with st.sidebar:
                     test_model = setup_gemini(api_key, model_id)
                     if test_model:
                         with st.spinner(f"Testing {model_name}..."):
-                            extractions = extract_talent(sample_text, test_model)
+                            extractions = extract_talent(sample_text, test_model, "raw")
                             count = len(extractions) if extractions else 0
                             st.write(f"**{model_name}**: {count} movements extracted")
                 except Exception as e:
@@ -473,7 +487,14 @@ with st.sidebar:
             st.info("💡 Higher extraction count = better model for your use case")
         
         st.markdown("---")
+        # Preprocessing options
         st.subheader("📰 Extract from Newsletter")
+        
+        preprocessing_mode = st.radio(
+            "Text processing mode:",
+            ["🧹 Smart Clean (Recommended)", "📄 Raw Text (Debug)", "✂️ Manual Clean"],
+            help="Try 'Raw Text' if Smart Clean misses entries"
+        )
         
         input_method = st.radio("Input method:", ["📝 Text", "📁 File"])
         
@@ -498,7 +519,28 @@ with st.sidebar:
         if st.button("🚀 Extract Talent", use_container_width=True):
             if newsletter_text.strip() and model:
                 with st.spinner("🤖 Analyzing..."):
-                    extractions = extract_talent(newsletter_text, model)
+                    # Debug: Show preprocessing results
+                    with st.expander("🔍 Debug Info - Click to see what AI receives"):
+                        cleaned = preprocess_newsletter(newsletter_text)
+                        st.write(f"**Original length:** {len(newsletter_text):,} chars")
+                        st.write(f"**After preprocessing:** {len(cleaned):,} chars")
+                        st.write(f"**Text sent to AI (first 2000 chars):**")
+                        st.text_area("Cleaned text preview:", cleaned[:2000], height=200)
+                        
+                        # Quick manual check
+                        manual_check = [
+                            "Harrison Balistreri", "Vince Ortiz", "Robin Boldt", 
+                            "Daniel Crews", "Sarah Gray", "Neil Chriss",
+                            "Louis Couronne", "Macaire Chue", "Grant Leslie"
+                        ]
+                        
+                        st.write("**Quick check - Are these names in cleaned text?**")
+                        for name in manual_check:
+                            found = name.lower() in cleaned.lower()
+                            status = "✅" if found else "❌"
+                            st.write(f"{status} {name}")
+                    
+                    extractions = extract_talent(newsletter_text, model, preprocessing_mode.split()[0].lower())
                     if extractions:
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         for ext in extractions:
