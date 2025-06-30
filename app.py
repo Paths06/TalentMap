@@ -6,6 +6,15 @@ from io import StringIO
 import spacy
 from transformers import pipeline
 import torch
+import subprocess
+
+# ✅ Ensure model is available
+try:
+    nlp = spacy.load("en_core_web_sm")
+except OSError:
+    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
+    nlp = spacy.load("en_core_web_sm")
+
 
 @st.cache_resource
 def load_spacy_ner():
