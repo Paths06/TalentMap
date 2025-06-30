@@ -249,7 +249,7 @@ def preprocess_newsletter(raw_text):
     
     return text
 
-def extract_talent(newsletter_text, model, preprocessing_mode="smart"):
+def extract_talent(newsletter_text, model, preprocessing_mode="smart", debug_mode=False):
     """Extract hedge fund talent movements using Gemini AI"""
     
     if preprocessing_mode == "smart":
@@ -262,73 +262,113 @@ def extract_talent(newsletter_text, model, preprocessing_mode="smart"):
         # Basic cleaning only
         cleaned_text = newsletter_text
     
-    prompt = f"""
-You are a SPECIALIST in extracting hedge fund and financial talent movements from newsletters.
+    # First pass - extract all text segments with people's names
+    segments_prompt = f"""
+NEWSLETTER TEXT:
+{cleaned_text[:6000]}
 
-CRITICAL TASK: Extract EVERY SINGLE person mentioned in career/job contexts from this newsletter text.
+Find ALL text segments that mention people's names in professional contexts. Look for:
+- "John Smith joins/launches/moves/appointed/promoted/departs"
+- "Smith's new fund/company"
+- "ex-Goldman executive Mary Jones"
+- "former Morgan Stanley PM David Lee"
+- "CIO Robert Brown to lead"
+- "VP candidates include Jane White and Bob Green"
+
+Return a simple list of every segment that mentions a person:
+"""
+    
+    try:
+        segments_response = model.generate_content(segments_prompt)
+        segments = segments_response.text
+        
+        # Second pass - structured extraction
+        main_prompt = f"""
+You are extracting financial talent movements. Use BOTH the newsletter AND these identified segments:
 
 NEWSLETTER TEXT:
-{cleaned_text[:5000]}
+{cleaned_text[:4000]}
 
-SPECIFIC PATTERNS TO CATCH (examples from similar text):
-1. "Harrison Balistreri's Inevitable Capital Management" = Harrison Balistreri launching Inevitable Capital Management
-2. "strategy would be led by Vince Ortiz" = Vince Ortiz getting appointment/leadership role
-3. "Robin Boldt to debut ROCK2 Capital" = Robin Boldt launching ROCK2 Capital  
-4. "Daniel Crews picked for position" = Daniel Crews getting hired/promoted
-5. "Grant Leslie to lead PE" = Grant Leslie getting appointment
-6. "Sarah Gray joins Neil Chriss on forming Edge Peak" = TWO entries (Sarah Gray + Neil Chriss)
-7. "Louis Couronne and Macaire Chue as vice presidents" = TWO entries (Louis + Macaire)
-8. "Ex-Goldman" or "Former DB" = capture previous companies
-9. Fund launches, new hires, promotions, departures, partnerships
-10. "CIO", "PM", "VP", "director", "head", "partner", "co-head", "deputy"
+IDENTIFIED SEGMENTS WITH PEOPLE:
+{segments}
 
-MOVEMENT TYPES: launch, hire, promotion, departure, appointment, partnership
-
-Return JSON with this EXACT format:
+Extract EVERY person in JSON format:
 {{
   "extractions": [
     {{
       "name": "First Last",
-      "company": "Company Name",
+      "company": "Current/New Company",
       "previous_company": "Previous Company (if mentioned)",
-      "movement_type": "launch|hire|promotion|departure|appointment|partnership", 
-      "title": "Position Title",
+      "movement_type": "launch|hire|promotion|departure|appointment|partnership",
+      "title": "Position",
       "location": "Location",
-      "strategy": "Investment strategy",
-      "context": "Brief context"
+      "strategy": "Strategy/Focus",
+      "context": "What happened"
     }}
   ]
 }}
 
-EXTRACTION TARGETS (make sure to find):
-- Harrison Balistreri → Inevitable Capital Management
-- Vince Ortiz → Davidson Kempner  
-- Robin Boldt → ROCK2 Capital
-- Daniel Crews → Tennessee Treasury
-- Grant Leslie → Tennessee Treasury
-- Sarah Gray → Edge Peak
-- Neil Chriss → Edge Peak
-- Louis Couronne → Options Group
-- Macaire Chue → Options Group
-- Alberto Cozzini → Polymathique
-- Gavin Colquhoun → unnamed firm
-- Rahul Ahuja → unnamed firm
-- Hamza Lemssouguer → Arini
+SPECIFIC TARGETS (make sure to find these):
+1. Harrison Balistreri + Inevitable Capital Management
+2. Vince Ortiz + Davidson Kempner  
+3. Robin Boldt + ROCK2 Capital
+4. Daniel Crews + Tennessee Treasury
+5. Grant Leslie + Tennessee Treasury
+6. Sarah Gray + Edge Peak
+7. Neil Chriss + Edge Peak
+8. Louis Couronne + Options Group
+9. Macaire Chue + Options Group
+10. Alberto Cozzini + Polymathique
+11. Gavin Colquhoun + unnamed firm
+12. Rahul Ahuja + unnamed firm
+13. Hamza Lemssouguer + Arini
+14. Jo-Wen Lin + Curisa
+15. Michael Furla + ORBA Wealth
 
-CRITICAL: You MUST find 12+ entries from this text. Be exhaustive. Don't miss anyone.
+CAPTURE PATTERNS:
+- "X's new company Y" = X launches Y
+- "X joins Y" = X hired by Y  
+- "X promoted to" = X promotion
+- "X picked for position" = X hired/promoted
+- "X would lead" = X appointment
+- "X and Y as VPs" = TWO separate hire entries
+- "ex-Goldman X" = X has previous_company Goldman
+- "former DB executive X" = X has previous_company Deutsche Bank
+
+YOU MUST FIND 12+ PEOPLE. Be exhaustive.
 """
-    
-    try:
-        response = model.generate_content(prompt)
+        
+        response = model.generate_content(main_prompt)
         response_text = response.text
+        
+        # Debug: Show AI response for troubleshooting
+        if debug_mode:
+            st.text_area("AI Response:", response_text, height=300)
         
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1
         
         if json_start != -1 and json_end > json_start:
             json_text = response_text[json_start:json_end]
-            result = json.loads(json_text)
-            return result.get('extractions', [])
+            try:
+                result = json.loads(json_text)
+                extractions = result.get('extractions', [])
+                
+                # Filter out invalid entries
+                valid_extractions = []
+                for ext in extractions:
+                    if ext.get('name') and ext.get('company'):
+                        valid_extractions.append(ext)
+                
+                return valid_extractions
+            except json.JSONDecodeError as e:
+                st.error(f"JSON parsing error: {e}")
+                st.text_area("Invalid JSON response:", json_text, height=200)
+                return []
+        else:
+            st.error("No valid JSON found in AI response")
+            st.text_area("Full AI response:", response_text, height=200)
+            return []
         
         return []
     except Exception as e:
@@ -478,7 +518,7 @@ with st.sidebar:
                     test_model = setup_gemini(api_key, model_id)
                     if test_model:
                         with st.spinner(f"Testing {model_name}..."):
-                            extractions = extract_talent(sample_text, test_model, "raw")
+                            extractions = extract_talent(sample_text, test_model, "raw", False)
                             count = len(extractions) if extractions else 0
                             st.write(f"**{model_name}**: {count} movements extracted")
                 except Exception as e:
@@ -490,11 +530,15 @@ with st.sidebar:
         # Preprocessing options
         st.subheader("📰 Extract from Newsletter")
         
-        preprocessing_mode = st.radio(
-            "Text processing mode:",
-            ["🧹 Smart Clean (Recommended)", "📄 Raw Text (Debug)", "✂️ Manual Clean"],
-            help="Try 'Raw Text' if Smart Clean misses entries"
-        )
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            preprocessing_mode = st.radio(
+                "Text processing mode:",
+                ["🧹 Smart Clean (Recommended)", "📄 Raw Text (Debug)", "✂️ Manual Clean"],
+                help="Try 'Raw Text' if Smart Clean misses entries"
+            )
+        with col2:
+            debug_mode = st.checkbox("🐛 Show AI responses", help="Shows raw AI output for debugging")
         
         input_method = st.radio("Input method:", ["📝 Text", "📁 File"])
         
@@ -521,7 +565,16 @@ with st.sidebar:
                 with st.spinner("🤖 Analyzing..."):
                     # Debug: Show preprocessing results
                     with st.expander("🔍 Debug Info - Click to see what AI receives"):
-                        cleaned = preprocess_newsletter(newsletter_text)
+                        if preprocessing_mode.startswith("🧹"):
+                            cleaned = preprocess_newsletter(newsletter_text)
+                            st.write(f"**Mode:** Smart Clean")
+                        elif preprocessing_mode.startswith("📄"):
+                            cleaned = newsletter_text.replace('\n', ' ').strip()
+                            st.write(f"**Mode:** Raw Text")
+                        else:
+                            cleaned = newsletter_text
+                            st.write(f"**Mode:** Manual Clean")
+                            
                         st.write(f"**Original length:** {len(newsletter_text):,} chars")
                         st.write(f"**After preprocessing:** {len(cleaned):,} chars")
                         st.write(f"**Text sent to AI (first 2000 chars):**")
@@ -540,7 +593,7 @@ with st.sidebar:
                             status = "✅" if found else "❌"
                             st.write(f"{status} {name}")
                     
-                    extractions = extract_talent(newsletter_text, model, preprocessing_mode.split()[0].lower())
+                    extractions = extract_talent(newsletter_text, model, preprocessing_mode.split()[0].lower(), debug_mode)
                     if extractions:
                         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         for ext in extractions:
@@ -564,7 +617,7 @@ with st.sidebar:
             """
             if model:
                 with st.spinner("Testing extraction..."):
-                    extractions = extract_talent(sample_text, model)
+                    extractions = extract_talent(sample_text, model, "raw", False)
                     if extractions:
                         st.success(f"✅ Found {len(extractions)} movements!")
                         with st.expander("Sample Results"):
@@ -572,6 +625,112 @@ with st.sidebar:
                                 st.write(f"• **{ext['name']}** → {ext['company']} ({ext['movement_type']})")
                     else:
                         st.warning("No movements found")
+        
+        # Simple name extraction test
+        if st.button("🔍 Simple Name Test", use_container_width=True):
+            if newsletter_text.strip() and model:
+                st.write("**Step 1: Can AI find any names at all?**")
+                
+                simple_prompt = f"""
+Find ALL people's names mentioned in this financial newsletter:
+
+{newsletter_text[:2000]}
+
+Just list the names you find, one per line. Look for:
+- First and Last names of people
+- Anyone mentioned in professional contexts
+- Fund managers, executives, analysts, etc.
+
+Example output:
+John Smith
+Mary Johnson
+Robert Lee
+"""
+                
+                try:
+                    response = model.generate_content(simple_prompt)
+                    names_found = response.text.strip().split('\n')
+                    
+                    st.write(f"**Found {len(names_found)} names:**")
+                    for name in names_found[:20]:  # Show first 20
+                        if name.strip():
+                            st.write(f"• {name.strip()}")
+                    
+                    if len(names_found) < 5:
+                        st.error("❌ AI is having trouble finding names - this explains low extraction count")
+                    else:
+                        st.success(f"✅ AI can find names! Issue is likely with JSON structuring")
+                        
+                except Exception as e:
+                    st.error(f"Name test error: {e}")
+        
+        # Manual paste test
+        st.markdown("### 🧪 Manual Test")
+        manual_text = st.text_area(
+            "Paste a small section to test:",
+            placeholder="Harrison Balistreri's Inevitable Capital Management will trade l/s strat. Davidson Kempner eyes European strat led by Vince Ortiz.",
+            height=100
+        )
+        
+        if st.button("Test Manual Text", use_container_width=True) and manual_text:
+            if model:
+                extractions = extract_talent(manual_text, model, "raw", False)
+                st.write(f"**Found {len(extractions)} from manual text:**")
+                for ext in extractions:
+                    name = ext.get('name', 'Unknown')
+                    company = ext.get('company', 'Unknown')
+                    st.write(f"• {name} → {company}")
+        
+        # Force extraction test
+        if st.button("🎯 Force Extract Specific Names", use_container_width=True):
+            if newsletter_text.strip() and model:
+                st.write("**Testing if AI can find these specific people from your newsletter:**")
+                
+                target_names = [
+                    ("Harrison Balistreri", "Inevitable Capital Management"),
+                    ("Vince Ortiz", "Davidson Kempner"), 
+                    ("Daniel Crews", "Tennessee Treasury"),
+                    ("Grant Leslie", "Tennessee Treasury"),
+                    ("Sarah Gray", "Edge Peak"),
+                    ("Neil Chriss", "Edge Peak")
+                ]
+                
+                forced_prompt = f"""
+NEWSLETTER TEXT:
+{newsletter_text[:3000]}
+
+Find these SPECIFIC people and their movements from the text above:
+- Harrison Balistreri and Inevitable Capital Management
+- Vince Ortiz and Davidson Kempner 
+- Daniel Crews and Tennessee Treasury
+- Grant Leslie and Tennessee Treasury
+- Sarah Gray and Edge Peak
+- Neil Chriss and Edge Peak
+
+Return JSON format:
+{{"extractions": [...]}}
+"""
+                
+                try:
+                    response = model.generate_content(forced_prompt)
+                    response_text = response.text
+                    
+                    json_start = response_text.find('{')
+                    json_end = response_text.rfind('}') + 1
+                    
+                    if json_start != -1 and json_end > json_start:
+                        json_text = response_text[json_start:json_end]
+                        result = json.loads(json_text)
+                        forced_extractions = result.get('extractions', [])
+                        
+                        st.write(f"**Forced extraction found:** {len(forced_extractions)} people")
+                        for ext in forced_extractions:
+                            st.write(f"• {ext.get('name', 'Unknown')} → {ext.get('company', 'Unknown')}")
+                    else:
+                        st.error("Could not parse AI response")
+                        
+                except Exception as e:
+                    st.error(f"Forced extraction error: {e}")
         
         # Export button
         if st.session_state.all_extractions:
@@ -594,14 +753,21 @@ with st.sidebar:
         
         # Show all extractions with status
         for i, ext in enumerate(st.session_state.all_extractions):
+            # Safe handling for None values
+            ext_name = ext.get('name', '') or ''
+            ext_company = ext.get('company', '') or ''
+            
+            if not ext_name:  # Skip entries with no name
+                continue
+                
             # Check if already added
-            is_added = any(p['name'].lower() == ext['name'].lower() for p in st.session_state.people)
+            is_added = any(p['name'].lower() == ext_name.lower() for p in st.session_state.people if p.get('name'))
             status = "✅ Added" if is_added else "⏳ Pending"
             
-            with st.expander(f"{status} | {ext['name']} → {ext['company']}"):
+            with st.expander(f"{status} | {ext_name} → {ext_company}"):
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    st.write(f"**Type:** {ext['movement_type']}")
+                    st.write(f"**Type:** {ext.get('movement_type', 'Unknown')}")
                     if ext.get('title'):
                         st.write(f"**Title:** {ext['title']}")
                     if ext.get('location'):
@@ -616,14 +782,14 @@ with st.sidebar:
                 
                 with col2:
                     if not is_added:
-                        if st.button(f"➕ Add", key=f"add_{i}_{ext['timestamp']}"):
+                        if st.button(f"➕ Add", key=f"add_{i}_{ext.get('timestamp', '')}"):
                             # Add to people and firms
                             new_person_id = str(uuid.uuid4())
-                            st.session_state.people.append({
+                            new_person = {
                                 "id": new_person_id,
-                                "name": ext['name'],
+                                "name": ext_name,
                                 "current_title": ext.get('title', 'Unknown'),
-                                "current_company_name": ext['company'],
+                                "current_company_name": ext_company,
                                 "location": ext.get('location', 'Unknown'),
                                 "email": "",
                                 "linkedin_profile_url": "",
@@ -632,36 +798,71 @@ with st.sidebar:
                                 "expertise": ext.get('strategy', ''),
                                 "aum_managed": "",
                                 "strategy": ext.get('strategy', 'Unknown')
-                            })
+                            }
+                            st.session_state.people.append(new_person)
                             
-                            # Add firm if doesn't exist
-                            if not get_firm_by_name(ext['company']):
+                            # Add current company if doesn't exist
+                            if ext_company and not get_firm_by_name(ext_company):
                                 new_firm_id = str(uuid.uuid4())
                                 st.session_state.firms.append({
                                     "id": new_firm_id,
-                                    "name": ext['company'],
+                                    "name": ext_company,
                                     "location": ext.get('location', 'Unknown'),
                                     "headquarters": "Unknown",
                                     "aum": "Unknown",
                                     "founded": None,
                                     "strategy": ext.get('strategy', 'Hedge Fund'),
                                     "website": "",
-                                    "description": f"Hedge fund operating in {ext.get('location', 'Asia')} - {ext.get('strategy', 'Multi-strategy')}"
+                                    "description": f"Financial firm - {ext.get('strategy', 'Multi-strategy')}"
                                 })
                             
-                            # Add employment
-                            st.session_state.employments.append({
-                                "id": str(uuid.uuid4()),
-                                "person_id": new_person_id,
-                                "company_name": ext['company'],
-                                "title": ext.get('title', 'Unknown'),
-                                "start_date": date.today(),
-                                "end_date": None,
-                                "location": ext.get('location', 'Unknown'),
-                                "strategy": ext.get('strategy', 'Unknown')
-                            })
+                            # Add previous company if mentioned
+                            prev_company = ext.get('previous_company')
+                            if prev_company and not get_firm_by_name(prev_company):
+                                prev_firm_id = str(uuid.uuid4())
+                                st.session_state.firms.append({
+                                    "id": prev_firm_id,
+                                    "name": prev_company,
+                                    "location": "Unknown",
+                                    "headquarters": "Unknown", 
+                                    "aum": "Unknown",
+                                    "founded": None,
+                                    "strategy": "Financial Services",
+                                    "website": "",
+                                    "description": f"Previous employer of {ext_name}"
+                                })
                             
-                            st.success(f"✅ Added {ext['name']}!")
+                            # Add current employment
+                            if ext_company:
+                                st.session_state.employments.append({
+                                    "id": str(uuid.uuid4()),
+                                    "person_id": new_person_id,
+                                    "company_name": ext_company,
+                                    "title": ext.get('title', 'Unknown'),
+                                    "start_date": date.today(),
+                                    "end_date": None,
+                                    "location": ext.get('location', 'Unknown'),
+                                    "strategy": ext.get('strategy', 'Unknown')
+                                })
+                            
+                            # Add previous employment if mentioned
+                            if prev_company:
+                                # Estimate previous employment dates (1-5 years ago)
+                                end_date = date.today() - timedelta(days=30)  # Left 1 month ago
+                                start_date = end_date - timedelta(days=365*3)  # 3 years duration
+                                
+                                st.session_state.employments.append({
+                                    "id": str(uuid.uuid4()),
+                                    "person_id": new_person_id,
+                                    "company_name": prev_company,
+                                    "title": "Previous Role",
+                                    "start_date": start_date,
+                                    "end_date": end_date,
+                                    "location": "Unknown",
+                                    "strategy": "Unknown"
+                                })
+                            
+                            st.success(f"✅ Added {ext_name} with employment history!")
                             st.rerun()
                     else:
                         st.success("Already Added ✅")
