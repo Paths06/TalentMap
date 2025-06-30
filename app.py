@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
 import json
-import uuid
-from datetime import datetime, date
-import time
 import os
+import uuid
+from datetime import datetime, date, timedelta
+import plotly.express as px
+import plotly.graph_objects as go
+import time
 from pathlib import Path
 
 # Try to import google.generativeai, handle if not available
@@ -13,682 +15,1528 @@ try:
     GENAI_AVAILABLE = True
 except ImportError:
     GENAI_AVAILABLE = False
-    st.error("google-generativeai package not installed. Please run: pip install google-generativeai")
 
 # Configure page
 st.set_page_config(
-    page_title="Hedge Fund Talent Intelligence",
-    page_icon="🎯",
-    layout="wide"
+    page_title="Asian Hedge Fund Talent Map",
+    page_icon="🏢",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Database setup
-DATA_DIR = Path("talent_data")
+# --- Database Persistence Setup ---
+DATA_DIR = Path("hedge_fund_data")
 DATA_DIR.mkdir(exist_ok=True)
 
-EXTRACTIONS_FILE = DATA_DIR / "extractions.json"
 PEOPLE_FILE = DATA_DIR / "people.json"
 FIRMS_FILE = DATA_DIR / "firms.json"
+EMPLOYMENTS_FILE = DATA_DIR / "employments.json"
+EXTRACTIONS_FILE = DATA_DIR / "extractions.json"
 
-# Persistent data functions
+def save_data():
+    """Save all data to JSON files"""
+    try:
+        with open(PEOPLE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(st.session_state.people, f, indent=2, default=str)
+        
+        with open(FIRMS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(st.session_state.firms, f, indent=2, default=str)
+        
+        with open(EMPLOYMENTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(st.session_state.employments, f, indent=2, default=str)
+        
+        if 'all_extractions' in st.session_state:
+            with open(EXTRACTIONS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(st.session_state.all_extractions, f, indent=2, default=str)
+        
+        return True
+    except Exception as e:
+        st.error(f"Error saving data: {e}")
+        return False
+
 def load_data():
     """Load data from JSON files"""
     try:
-        extractions = []
-        people = []
-        firms = []
+        if PEOPLE_FILE.exists():
+            with open(PEOPLE_FILE, 'r', encoding='utf-8') as f:
+                people = json.load(f)
+        else:
+            people = []
+        
+        if FIRMS_FILE.exists():
+            with open(FIRMS_FILE, 'r', encoding='utf-8') as f:
+                firms = json.load(f)
+        else:
+            firms = []
+        
+        if EMPLOYMENTS_FILE.exists():
+            with open(EMPLOYMENTS_FILE, 'r', encoding='utf-8') as f:
+                employments = json.load(f)
+                # Convert date strings back to date objects
+                for emp in employments:
+                    if emp.get('start_date'):
+                        emp['start_date'] = datetime.strptime(emp['start_date'], '%Y-%m-%d').date()
+                    if emp.get('end_date'):
+                        emp['end_date'] = datetime.strptime(emp['end_date'], '%Y-%m-%d').date()
+        else:
+            employments = []
         
         if EXTRACTIONS_FILE.exists():
             with open(EXTRACTIONS_FILE, 'r', encoding='utf-8') as f:
                 extractions = json.load(f)
+        else:
+            extractions = []
         
-        if PEOPLE_FILE.exists():
-            with open(PEOPLE_FILE, 'r', encoding='utf-8') as f:
-                people = json.load(f)
-                
-        if FIRMS_FILE.exists():
-            with open(FIRMS_FILE, 'r', encoding='utf-8') as f:
-                firms = json.load(f)
-                
-        return extractions, people, firms
+        return people, firms, employments, extractions
     except Exception as e:
         st.error(f"Error loading data: {e}")
-        return [], [], []
+        return [], [], [], []
 
-def save_data(extractions=None, people=None, firms=None):
-    """Save data to JSON files"""
-    try:
-        if extractions is not None:
-            with open(EXTRACTIONS_FILE, 'w', encoding='utf-8') as f:
-                json.dump(extractions, f, indent=2, default=str)
-        
-        if people is not None:
-            with open(PEOPLE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(people, f, indent=2, default=str)
-        
-        if firms is not None:
-            with open(FIRMS_FILE, 'w', encoding='utf-8') as f:
-                json.dump(firms, f, indent=2, default=str)
-        
-        return True
-    except Exception as e:
-        st.error(f"Save error: {e}")
-        return False
-
-def auto_save():
-    """Auto-save current session state"""
-    if 'extractions' in st.session_state and 'people' in st.session_state and 'firms' in st.session_state:
-        return save_data(
-            extractions=st.session_state.extractions,
-            people=st.session_state.people,
-            firms=st.session_state.firms
-        )
-    return False
-
-# Initialize session state
-def init_session_state():
-    extractions, people, firms = load_data()
+# --- Initialize Session State with Rich Dummy Data ---
+def init_dummy_data():
+    """Initialize with comprehensive dummy data if no saved data exists"""
     
-    if 'extractions' not in st.session_state:
-        st.session_state.extractions = extractions
+    # Sample people with detailed backgrounds
+    sample_people = [
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Li Wei Chen",
+            "current_title": "Portfolio Manager",
+            "current_company_name": "Hillhouse Capital",
+            "location": "Hong Kong",
+            "email": "li.chen@hillhouse.com",
+            "linkedin_profile_url": "https://linkedin.com/in/liweichen",
+            "phone": "+852-1234-5678",
+            "education": "Harvard Business School, Tsinghua University",
+            "expertise": "Technology, Healthcare",
+            "aum_managed": "2.5B USD",
+            "strategy": "Long-only Growth Equity"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Akira Tanaka",
+            "current_title": "Chief Investment Officer",
+            "current_company_name": "Millennium Partners Asia",
+            "location": "Singapore",
+            "email": "a.tanaka@millennium.com",
+            "linkedin_profile_url": "https://linkedin.com/in/akiratanaka",
+            "phone": "+65-9876-5432",
+            "education": "Tokyo University, Wharton",
+            "expertise": "Quantitative Trading, Fixed Income",
+            "aum_managed": "1.8B USD",
+            "strategy": "Multi-Strategy Quantitative"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Sarah Kim",
+            "current_title": "Head of Research",
+            "current_company_name": "Citadel Asia",
+            "location": "Seoul",
+            "email": "s.kim@citadel.com",
+            "linkedin_profile_url": "https://linkedin.com/in/sarahkim",
+            "phone": "+82-10-1234-5678",
+            "education": "Seoul National University, MIT Sloan",
+            "expertise": "Equity Research, ESG",
+            "aum_managed": "800M USD",
+            "strategy": "Equity Long/Short"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Raj Patel",
+            "current_title": "Managing Director",
+            "current_company_name": "Two Sigma Asia",
+            "location": "Singapore",
+            "email": "r.patel@twosigma.com",
+            "linkedin_profile_url": "https://linkedin.com/in/rajpatel",
+            "phone": "+65-8765-4321",
+            "education": "IIT Delhi, Stanford MBA",
+            "expertise": "Machine Learning, Algorithmic Trading",
+            "aum_managed": "3.2B USD",
+            "strategy": "Systematic Trading"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Michael Wong",
+            "current_title": "Senior Vice President",
+            "current_company_name": "Bridgewater Asia",
+            "location": "Hong Kong",
+            "email": "m.wong@bridgewater.com",
+            "linkedin_profile_url": "https://linkedin.com/in/michaelwong",
+            "phone": "+852-9876-1234",
+            "education": "HKU, Chicago Booth",
+            "expertise": "Global Macro, Risk Management",
+            "aum_managed": "1.5B USD",
+            "strategy": "Pure Alpha"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Jennifer Zhang",
+            "current_title": "Portfolio Manager",
+            "current_company_name": "Goldman Sachs Asia",
+            "location": "Beijing",
+            "email": "j.zhang@gs.com",
+            "linkedin_profile_url": "https://linkedin.com/in/jenniferzhang",
+            "phone": "+86-138-0013-8000",
+            "education": "Peking University, Columbia Business School",
+            "expertise": "Consumer, Internet",
+            "aum_managed": "1.2B USD",
+            "strategy": "Principal Investing"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "David Yamamoto",
+            "current_title": "Head of Japan Equity",
+            "current_company_name": "Citadel Asia",
+            "location": "Tokyo",
+            "email": "d.yamamoto@citadel.com",
+            "linkedin_profile_url": "https://linkedin.com/in/davidyamamoto",
+            "phone": "+81-3-1234-5678",
+            "education": "Waseda University, Kellogg",
+            "expertise": "Japanese Equities, Value Investing",
+            "aum_managed": "950M USD",
+            "strategy": "Equity Long/Short"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Priya Sharma",
+            "current_title": "Director",
+            "current_company_name": "Two Sigma Asia",
+            "location": "Mumbai",
+            "email": "p.sharma@twosigma.com",
+            "linkedin_profile_url": "https://linkedin.com/in/priyasharma",
+            "phone": "+91-98765-43210",
+            "education": "IIM Ahmedabad, MIT",
+            "expertise": "Data Science, Alternative Data",
+            "aum_managed": "600M USD",
+            "strategy": "Alternative Data"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "James Liu",
+            "current_title": "Investment Director",
+            "current_company_name": "Hillhouse Capital",
+            "location": "Shanghai",
+            "email": "j.liu@hillhouse.com",
+            "linkedin_profile_url": "https://linkedin.com/in/jamesliu",
+            "phone": "+86-21-1234-5678",
+            "education": "CEIBS, Wharton",
+            "expertise": "TMT, Private Equity",
+            "aum_managed": "2.1B USD",
+            "strategy": "Growth Equity"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Emily Tan",
+            "current_title": "VP of Trading",
+            "current_company_name": "Millennium Partners Asia",
+            "location": "Hong Kong",
+            "email": "e.tan@millennium.com",
+            "linkedin_profile_url": "https://linkedin.com/in/emilytan",
+            "phone": "+852-5555-6666",
+            "education": "HKUST, London Business School",
+            "expertise": "Systematic Trading, Risk Management",
+            "aum_managed": "750M USD",
+            "strategy": "Quantitative Equity"
+        }
+    ]
+    
+    # Sample firms with detailed information
+    sample_firms = [
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Hillhouse Capital",
+            "location": "Hong Kong",
+            "headquarters": "Beijing, China",
+            "aum": "60B USD",
+            "founded": 2005,
+            "strategy": "Long-only, Growth Equity",
+            "website": "https://hillhousecap.com",
+            "description": "Asia's largest hedge fund focusing on technology and healthcare investments"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Millennium Partners Asia",
+            "location": "Singapore",
+            "headquarters": "New York, USA",
+            "aum": "35B USD",
+            "founded": 1989,
+            "strategy": "Multi-strategy, Quantitative",
+            "website": "https://millennium.com",
+            "description": "Global hedge fund with significant Asian operations"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Citadel Asia",
+            "location": "Hong Kong",
+            "headquarters": "Chicago, USA",
+            "aum": "45B USD",
+            "founded": 1990,
+            "strategy": "Multi-strategy, Market Making",
+            "website": "https://citadel.com",
+            "description": "Leading global hedge fund with growing Asian presence"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Two Sigma Asia",
+            "location": "Singapore",
+            "headquarters": "New York, USA",
+            "aum": "25B USD",
+            "founded": 2001,
+            "strategy": "Systematic, Machine Learning",
+            "website": "https://twosigma.com",
+            "description": "Data-driven investment manager with Asian expansion"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Bridgewater Asia",
+            "location": "Hong Kong",
+            "headquarters": "Connecticut, USA",
+            "aum": "140B USD",
+            "founded": 1975,
+            "strategy": "Global Macro, Pure Alpha",
+            "website": "https://bridgewater.com",
+            "description": "World's largest hedge fund with Asian investment focus"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Goldman Sachs Asia",
+            "location": "Hong Kong",
+            "headquarters": "New York, USA",
+            "aum": "80B USD",
+            "founded": 1869,
+            "strategy": "Multi-strategy, Principal Investing",
+            "website": "https://gs.com",
+            "description": "Global investment bank with substantial Asian hedge fund operations"
+        }
+    ]
+    
+    # Create employment history with overlaps
+    sample_employments = []
+    
+    # Li Wei Chen's history (Hillhouse Capital)
+    li_id = sample_people[0]['id']
+    sample_employments.extend([
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": li_id,
+            "company_name": "Goldman Sachs Asia",
+            "title": "Vice President",
+            "start_date": date(2018, 3, 1),
+            "end_date": date(2021, 8, 15),
+            "location": "Hong Kong",
+            "strategy": "Investment Banking"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": li_id,
+            "company_name": "Hillhouse Capital",
+            "title": "Portfolio Manager",
+            "start_date": date(2021, 9, 1),
+            "end_date": None,
+            "location": "Hong Kong",
+            "strategy": "Growth Equity"
+        }
+    ])
+    
+    # Jennifer Zhang's history (overlaps with Li Wei at Goldman Sachs)
+    jennifer_id = sample_people[5]['id']
+    sample_employments.extend([
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": jennifer_id,
+            "company_name": "Goldman Sachs Asia",
+            "title": "Associate",
+            "start_date": date(2019, 6, 1),
+            "end_date": date(2022, 12, 31),
+            "location": "Hong Kong",
+            "strategy": "Principal Investing"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": jennifer_id,
+            "company_name": "Goldman Sachs Asia",
+            "title": "Portfolio Manager",
+            "start_date": date(2023, 1, 1),
+            "end_date": None,
+            "location": "Beijing",
+            "strategy": "Principal Investing"
+        }
+    ])
+    
+    # Akira Tanaka's history
+    akira_id = sample_people[1]['id']
+    sample_employments.extend([
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": akira_id,
+            "company_name": "Two Sigma Asia",
+            "title": "Senior Researcher",
+            "start_date": date(2017, 1, 15),
+            "end_date": date(2020, 6, 30),
+            "location": "Singapore",
+            "strategy": "Systematic Trading"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": akira_id,
+            "company_name": "Millennium Partners Asia",
+            "title": "Chief Investment Officer",
+            "start_date": date(2020, 7, 15),
+            "end_date": None,
+            "location": "Singapore",
+            "strategy": "Multi-Strategy"
+        }
+    ])
+    
+    # Priya Sharma's history (overlaps with Akira at Two Sigma)
+    priya_id = sample_people[7]['id']
+    sample_employments.extend([
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": priya_id,
+            "company_name": "Two Sigma Asia",
+            "title": "Analyst",
+            "start_date": date(2018, 8, 1),
+            "end_date": date(2021, 3, 31),
+            "location": "Singapore",
+            "strategy": "Alternative Data"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": priya_id,
+            "company_name": "Two Sigma Asia",
+            "title": "Director",
+            "start_date": date(2021, 4, 1),
+            "end_date": None,
+            "location": "Mumbai",
+            "strategy": "Alternative Data"
+        }
+    ])
+    
+    # David Yamamoto and Sarah Kim (both at Citadel Asia with overlap)
+    david_id = sample_people[6]['id']
+    sarah_id = sample_people[2]['id']
+    
+    sample_employments.extend([
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": david_id,
+            "company_name": "Bridgewater Asia",
+            "title": "Associate",
+            "start_date": date(2016, 4, 1),
+            "end_date": date(2019, 9, 30),
+            "location": "Hong Kong",
+            "strategy": "Global Macro"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": david_id,
+            "company_name": "Citadel Asia",
+            "title": "Head of Japan Equity",
+            "start_date": date(2019, 10, 15),
+            "end_date": None,
+            "location": "Tokyo",
+            "strategy": "Equity Long/Short"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": sarah_id,
+            "company_name": "Citadel Asia",
+            "title": "Research Analyst",
+            "start_date": date(2020, 2, 1),
+            "end_date": date(2022, 6, 15),
+            "location": "Seoul",
+            "strategy": "Equity Research"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": sarah_id,
+            "company_name": "Citadel Asia",
+            "title": "Head of Research",
+            "start_date": date(2022, 6, 16),
+            "end_date": None,
+            "location": "Seoul",
+            "strategy": "Equity Long/Short"
+        }
+    ])
+    
+    # Add more employment histories for remaining people
+    for person in sample_people[3:]:  # Raj Patel onwards
+        if person['id'] not in [p['person_id'] for p in sample_employments]:
+            # Add current employment
+            sample_employments.append({
+                "id": str(uuid.uuid4()),
+                "person_id": person['id'],
+                "company_name": person['current_company_name'],
+                "title": person['current_title'],
+                "start_date": date(2020, 1, 1),
+                "end_date": None,
+                "location": person['location'],
+                "strategy": person.get('strategy', 'Unknown')
+            })
+    
+    return sample_people, sample_firms, sample_employments
+
+def initialize_session_state():
+    """Initialize session state with saved or dummy data"""
+    people, firms, employments, extractions = load_data()
+    
+    # If no saved data, use dummy data
+    if not people and not firms:
+        people, firms, employments = init_dummy_data()
+    
     if 'people' not in st.session_state:
         st.session_state.people = people
     if 'firms' not in st.session_state:
         st.session_state.firms = firms
+    if 'employments' not in st.session_state:
+        st.session_state.employments = employments
+    if 'all_extractions' not in st.session_state:
+        st.session_state.all_extractions = extractions
     if 'current_view' not in st.session_state:
-        st.session_state.current_view = 'extractions'
-    if 'edit_person_id' not in st.session_state:
-        st.session_state.edit_person_id = None
+        st.session_state.current_view = 'firms'
+    if 'selected_person_id' not in st.session_state:
+        st.session_state.selected_person_id = None
+    if 'selected_firm_id' not in st.session_state:
+        st.session_state.selected_firm_id = None
+    if 'show_add_person_modal' not in st.session_state:
+        st.session_state.show_add_person_modal = False
+    if 'show_add_firm_modal' not in st.session_state:
+        st.session_state.show_add_firm_modal = False
 
-# AI setup
+# --- AI Setup ---
 @st.cache_resource
-def setup_gemini_safe(api_key):
-    """Setup Gemini AI model safely"""
+def setup_gemini(api_key, model_id="gemini-1.5-flash"):
+    """Setup Gemini AI model safely with model selection"""
     if not GENAI_AVAILABLE:
-        st.error("Google Generative AI package not available")
         return None
-    
-    if not api_key:
-        st.error("API key is required")
-        return None
-        
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')  # Using stable model name
+        model = genai.GenerativeModel(model_id)
+        # Store model_id as an attribute for rate limiting
+        model.model_id = model_id
         return model
     except Exception as e:
         st.error(f"AI setup failed: {e}")
         return None
 
-# File reading
-def read_file_safely(uploaded_file, max_size_kb=200):
-    """Safely read uploaded file with size and encoding checks"""
-    try:
-        if uploaded_file is None:
-            return None
-            
-        file_size = len(uploaded_file.getvalue())
-        if file_size > max_size_kb * 1024:
-            st.error(f"File too large: {file_size/1024:.1f}KB. Max: {max_size_kb}KB")
-            return None
-            
-        raw_data = uploaded_file.getvalue()
-        
-        # Try different encodings
-        for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
-            try:
-                return raw_data.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-                
-        st.error("Could not decode file with any supported encoding")
-        return None
-    except Exception as e:
-        st.error(f"File reading error: {e}")
-        return None
-
-# AI extraction functions
-def extract_simple(text, model):
-    """Extract people and career movements from text using AI"""
+def extract_talent_simple(text, model):
+    """Smart chunking with rate limiting - processes entire newsletter"""
     if not model:
-        st.error("AI model not available")
         return []
-        
-    try:
-        if len(text) > 15000:
-            text = text[:15000]
-            st.warning("Text truncated to 15K characters for processing")
-            
-        prompt = f"""Extract people and career movements from this financial newsletter. Return JSON only, no other text:
+    
+    # Check if we need chunking
+    max_chunk_size = 15000  # Safe size per chunk
+    
+    if len(text) <= max_chunk_size:
+        # Single chunk processing
+        return extract_single_chunk(text, model)
+    else:
+        # Multi-chunk processing with rate limiting
+        return extract_with_smart_chunking(text, model, max_chunk_size)
 
+def extract_single_chunk(text, model):
+    """Extract from a single chunk"""
+    prompt = f"""
+Extract hedge fund talent movements from this newsletter text.
+
+TEXT:
 {text}
 
-{{"people": [{{"name": "Full Name", "company": "Company", "role": "Position", "type": "hire/promotion/launch"}}]}}
+Return JSON format:
+{{
+  "people": [
+    {{
+      "name": "Full Name",
+      "company": "Company Name", 
+      "title": "Job Title",
+      "movement_type": "hire|promotion|launch|departure",
+      "location": "Location",
+      "previous_company": "Previous Company (if mentioned)"
+    }}
+  ]
+}}
 
-Find ALL people mentioned in professional contexts like hires, promotions, launches, moves."""
-        
+Find ALL people mentioned in professional contexts. Look for hires, promotions, fund launches, departures.
+"""
+    
+    try:
         response = model.generate_content(prompt)
         if not response or not response.text:
-            st.warning("No response from AI model")
             return []
-            
-        response_text = response.text.strip()
         
-        # Find JSON in response
-        json_start = response_text.find('{')
-        json_end = response_text.rfind('}') + 1
+        # Parse JSON response
+        json_start = response.text.find('{')
+        json_end = response.text.rfind('}') + 1
         
-        if json_start == -1 or json_end <= json_start:
-            st.warning("No valid JSON found in AI response")
+        if json_start == -1:
             return []
-            
-        json_text = response_text[json_start:json_end]
+        
+        json_text = response.text[json_start:json_end]
         result = json.loads(json_text)
         
         people = result.get('people', [])
-        if not people:
-            st.info("No people found in the text")
-            
-        return people
+        # Filter valid entries
+        valid_people = []
+        for person in people:
+            if person.get('name') and person.get('company'):
+                valid_people.append(person)
         
-    except json.JSONDecodeError as e:
-        st.error(f"JSON parsing error: {e}")
-        return []
+        return valid_people
+        
     except Exception as e:
         st.error(f"Extraction error: {e}")
         return []
 
-def extract_chunked_safe(text, model, chunk_size=12000, max_chunks=5):
-    """Extract from large text by processing in chunks"""
-    if not model:
-        st.error("AI model not available")
-        return []
+def extract_with_smart_chunking(text, model, chunk_size):
+    """Simple, reliable chunking with proper rate limiting"""
+    
+    # Split text into chunks with overlap
+    chunks = []
+    overlap = 1000  # 1K character overlap to catch names at boundaries
+    start = 0
+    
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        chunk = text[start:end]
         
-    try:
-        all_extractions = []
-        processed_chars = 0
+        # Try to break at sentence boundary
+        if end < len(text):
+            last_period = chunk.rfind('.')
+            if last_period > len(chunk) * 0.8:  # Only if near end
+                chunk = chunk[:last_period + 1]
+                end = start + len(chunk)
         
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        chunks.append(chunk)
+        start = end - overlap
         
-        chunk_num = 0
-        while processed_chars < len(text) and chunk_num < max_chunks:
-            chunk_num += 1
+        if start >= len(text):
+            break
+    
+    st.info(f"📊 Processing {len(chunks)} chunks (~{chunk_size/1000:.0f}K chars each)")
+    
+    # Rate limiting based on selected model
+    model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
+    
+    if '1.5-pro' in model_id:
+        delay = 35  # 2 RPM for Pro
+        rpm = "2 RPM"
+    elif '2.5-flash' in model_id:
+        delay = 7   # 10 RPM for 2.5 Flash
+        rpm = "10 RPM"
+    elif '2.0-flash' in model_id:
+        delay = 5   # 15 RPM for 2.0 Flash
+        rpm = "15 RPM"
+    else:  # 1.5-flash and others
+        delay = 5   # 15 RPM for regular Flash
+        rpm = "15 RPM"
+    
+    st.info(f"⚡ Using {model_id} | Rate limit: {rpm} ({delay}s delay between chunks)")
+    
+    # Process chunks with progress tracking
+    all_extractions = []
+    seen_names = set()  # Deduplicate across chunks
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, chunk in enumerate(chunks):
+        # Update progress
+        progress = (i + 1) / len(chunks)
+        progress_bar.progress(progress)
+        status_text.info(f"Processing chunk {i+1}/{len(chunks)}...")
+        
+        # Rate limiting delay (except first chunk)
+        if i > 0:
+            status_text.info(f"Rate limiting delay: {delay}s...")
+            time.sleep(delay)
+        
+        try:
+            # Extract from this chunk
+            chunk_extractions = extract_single_chunk(chunk, model)
             
-            start_pos = max(0, processed_chars - 500)  # Overlap for context
-            end_pos = min(start_pos + chunk_size, len(text))
-            chunk_text = text[start_pos:end_pos]
-            
-            status_text.info(f"Processing chunk {chunk_num}/{min(max_chunks, (len(text)//chunk_size) + 1)}...")
-            
-            if chunk_num > 1:
-                time.sleep(3)  # Rate limiting
-            
-            try:
-                chunk_extractions = extract_simple(chunk_text, model)
+            # Deduplicate by name + company
+            new_count = 0
+            for extraction in chunk_extractions:
+                name = extraction.get('name', '').strip().lower()
+                company = extraction.get('company', '').strip().lower()
+                key = f"{name}|{company}"
                 
-                if chunk_extractions:
-                    # Deduplicate by name (case insensitive)
-                    existing_names = {ext.get('name', '').lower().strip() 
-                                    for ext in all_extractions if ext.get('name')}
-                    
-                    new_extractions = [ext for ext in chunk_extractions 
-                                     if (ext.get('name', '').lower().strip() not in existing_names 
-                                         and ext.get('name', '').strip())]
-                    
-                    all_extractions.extend(new_extractions)
-                
-            except Exception as e:
-                st.warning(f"Error processing chunk {chunk_num}: {e}")
+                if key not in seen_names and name and company:
+                    seen_names.add(key)
+                    all_extractions.append(extraction)
+                    new_count += 1
             
-            processed_chars = end_pos
-            progress_bar.progress(min(processed_chars / len(text), 1.0))
+            status_text.success(f"✅ Chunk {i+1}: Found {len(chunk_extractions)} entries ({new_count} new)")
+            
+        except Exception as e:
+            status_text.error(f"❌ Chunk {i+1} failed: {str(e)}")
+            continue
+    
+    # Final status
+    progress_bar.progress(1.0)
+    status_text.success(f"🎯 Complete! Found {len(all_extractions)} unique people across {len(chunks)} chunks")
+    
+    # Clean up progress indicators after a moment
+    time.sleep(2)
+    progress_bar.empty()
+    status_text.empty()
+    
+    return all_extractions
+
+# --- Helper Functions ---
+def get_person_by_id(person_id):
+    return next((p for p in st.session_state.people if p['id'] == person_id), None)
+
+def get_firm_by_id(firm_id):
+    return next((f for f in st.session_state.firms if f['id'] == firm_id), None)
+
+def get_firm_by_name(firm_name):
+    return next((f for f in st.session_state.firms if f['name'] == firm_name), None)
+
+def get_people_by_firm(firm_name):
+    return [p for p in st.session_state.people if p['current_company_name'] == firm_name]
+
+def get_employments_by_person_id(person_id):
+    return [e for e in st.session_state.employments if e['person_id'] == person_id]
+
+def calculate_overlap_years(start1, end1, start2, end2):
+    """Calculate overlap between two employment periods"""
+    today = date.today()
+    period1_end = end1 if end1 is not None else today
+    period2_end = end2 if end2 is not None else today
+    
+    latest_start = max(start1, start2)
+    earliest_end = min(period1_end, period2_end)
+    
+    overlap_days = (earliest_end - latest_start).days
+    if overlap_days <= 0:
+        return 0.0
+    return round(overlap_days / 365.25, 1)
+
+def get_shared_work_history(person_id):
+    """Get people who worked at same companies with overlap periods"""
+    person_employments = get_employments_by_person_id(person_id)
+    shared_history = []
+    
+    for other_person in st.session_state.people:
+        if other_person['id'] == person_id:
+            continue
         
-        progress_bar.progress(1.0)
-        status_text.success(f"Completed: {len(all_extractions)} unique people found")
-        time.sleep(1)
-        progress_bar.empty()
-        status_text.empty()
+        other_employments = get_employments_by_person_id(other_person['id'])
         
-        return all_extractions
-        
-    except Exception as e:
-        st.error(f"Chunked extraction error: {e}")
-        return []
+        for person_emp in person_employments:
+            for other_emp in other_employments:
+                if person_emp['company_name'] == other_emp['company_name']:
+                    overlap = calculate_overlap_years(
+                        person_emp['start_date'], person_emp['end_date'],
+                        other_emp['start_date'], other_emp['end_date']
+                    )
+                    if overlap > 0:
+                        shared_history.append({
+                            "colleague_name": other_person['name'],
+                            "colleague_id": other_person['id'],
+                            "shared_company": person_emp['company_name'],
+                            "colleague_current_company": other_person['current_company_name'],
+                            "colleague_current_title": other_person['current_title'],
+                            "overlap_years": overlap,
+                            "person_title": person_emp['title'],
+                            "colleague_title": other_emp['title']
+                        })
+    
+    # Remove duplicates and sort by overlap
+    unique_shared = {}
+    for item in shared_history:
+        key = f"{item['colleague_id']}_{item['shared_company']}"
+        if key not in unique_shared or item['overlap_years'] > unique_shared[key]['overlap_years']:
+            unique_shared[key] = item
+    
+    return sorted(unique_shared.values(), key=lambda x: x['overlap_years'], reverse=True)
+
+# --- Navigation Functions ---
+def go_to_firms():
+    st.session_state.current_view = 'firms'
+    st.session_state.selected_firm_id = None
+
+def go_to_people():
+    st.session_state.current_view = 'people'
+    st.session_state.selected_person_id = None
+
+def go_to_person_details(person_id):
+    st.session_state.selected_person_id = person_id
+    st.session_state.current_view = 'person_details'
+
+def go_to_firm_details(firm_id):
+    st.session_state.selected_firm_id = firm_id
+    st.session_state.current_view = 'firm_details'
 
 # Initialize session state
-init_session_state()
+initialize_session_state()
 
-# Main header
-st.title("🎯 Hedge Fund Talent Intelligence")
+# --- SIDEBAR: AI Talent Extractor ---
+with st.sidebar:
+    st.title("🤖 AI Talent Extractor")
+    
+    # API Key Setup
+    api_key = None
+    try:
+        api_key = st.secrets.get("GEMINI_API_KEY")
+        if api_key:
+            st.success("✅ API key loaded from secrets")
+    except:
+        pass
+    
+    if not api_key:
+        api_key = st.text_input("Gemini API Key", type="password", 
+                              help="Get from: https://makersuite.google.com/app/apikey")
+    
+    # Model Selection
+    st.markdown("---")
+    st.subheader("🤖 Model Selection")
+    
+    model_options = {
+        "Gemini 1.5 Flash (Recommended)": "gemini-1.5-flash",
+        "Gemini 1.5 Pro (Advanced)": "gemini-1.5-pro", 
+        "Gemini 2.0 Flash": "gemini-2.0-flash-exp",
+        "Gemini 2.5 Flash (Latest)": "gemini-2.5-flash-exp"
+    }
+    
+    selected_model_name = st.selectbox(
+        "Choose AI model:",
+        options=list(model_options.keys()),
+        index=0,  # Default to 1.5 Flash
+        help="Different models have different capabilities and rate limits"
+    )
+    
+    selected_model_id = model_options[selected_model_name]
+    
+    # Show model info
+    if "1.5-flash" in selected_model_id:
+        st.success("⚡ **Fast & Reliable**: 15 requests/min, good extraction quality")
+        rate_info = "15 RPM (5s delay)"
+    elif "1.5-pro" in selected_model_id:
+        st.warning("🧠 **Most Advanced**: 2 requests/min, best for complex newsletters")
+        rate_info = "2 RPM (35s delay) - SLOW but thorough"
+    elif "2.0-flash" in selected_model_id:
+        st.info("🔥 **Balanced**: 15 requests/min, improved accuracy over 1.5")
+        rate_info = "15 RPM (5s delay)"
+    elif "2.5-flash" in selected_model_id:
+        st.info("🌟 **Latest**: 10 requests/min, cutting-edge capabilities")
+        rate_info = "10 RPM (7s delay)"
+    
+    st.caption(f"📊 Rate limit: {rate_info}")
+    
+    # Setup model with selected version
+    model = None
+    if api_key and GENAI_AVAILABLE:
+        model = setup_gemini(api_key, selected_model_id)
+        
+        # Show rate limit info
+        if model:
+            model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
+            
+            with st.expander("⚡ Rate Limits & Processing Info"):
+                if '1.5-pro' in model_id:
+                    st.warning("🧠 **Gemini 1.5 Pro**: 2 requests/min (35s between chunks)")
+                    st.write("• Best for complex analysis")
+                    st.write("• Slowest processing due to low rate limit")
+                    st.write("• Most thorough extraction")
+                elif '2.5-flash' in model_id:
+                    st.info("🌟 **Gemini 2.5 Flash**: 10 requests/min (7s between chunks)")
+                    st.write("• Latest model with cutting-edge capabilities")
+                    st.write("• Good balance of speed and quality")
+                elif '2.0-flash' in model_id:
+                    st.success("🔥 **Gemini 2.0 Flash**: 15 requests/min (5s between chunks)")
+                    st.write("• Improved accuracy over 1.5")
+                    st.write("• Fast processing")
+                else:  # 1.5-flash
+                    st.success("⚡ **Gemini 1.5 Flash**: 15 requests/min (5s between chunks)")
+                    st.write("• Fastest processing")
+                    st.write("• Reliable and stable")
+                    st.write("• Recommended for most newsletters")
+                
+                st.markdown("**📊 Processing Time Examples:**")
+                if '1.5-pro' in model_id:
+                    st.write("• Small newsletter (0-15K chars): ~45 seconds")
+                    st.write("• Medium newsletter (15-45K chars): 2-8 minutes") 
+                    st.write("• Large newsletter (45K+ chars): 8-20 minutes")
+                elif '2.5-flash' in model_id:
+                    st.write("• Small newsletter (0-15K chars): ~35 seconds")
+                    st.write("• Medium newsletter (15-45K chars): 1-4 minutes") 
+                    st.write("• Large newsletter (45K+ chars): 4-10 minutes")
+                else:  # Flash models
+                    st.write("• Small newsletter (0-15K chars): ~30 seconds")
+                    st.write("• Medium newsletter (15-45K chars): 1-3 minutes") 
+                    st.write("• Large newsletter (45K+ chars): 3-8 minutes")
+                
+                st.info("💡 **Tip**: Use 1.5 Flash for speed, 1.5 Pro for accuracy, 2.5 Flash for latest features")
+        
+        st.markdown("---")
+        st.subheader("📄 Extract from Newsletter")
+        
+        # Input method
+        input_method = st.radio("Input method:", ["📝 Text", "📁 File"])
+        
+        newsletter_text = ""
+        if input_method == "📝 Text":
+            newsletter_text = st.text_area("Newsletter content:", height=200, 
+                                         placeholder="Paste hedge fund newsletter content here...")
+        else:
+            uploaded_file = st.file_uploader("Upload newsletter:", type=['txt'])
+            if uploaded_file:
+                try:
+                    raw_data = uploaded_file.read()
+                    newsletter_text = raw_data.decode('utf-8')
+                    st.success(f"✅ File loaded: {len(newsletter_text):,} characters")
+                except Exception as e:
+                    st.error(f"Error reading file: {e}")
+        
+        # Show processing info
+        if newsletter_text:
+            char_count = len(newsletter_text)
+            if char_count > 15000:
+                chunks_needed = max(1, char_count // 15000)
+                st.warning(f"⚡ Large newsletter detected! Will use {chunks_needed} chunks with rate limiting")
+                
+                # Estimate processing time based on selected model
+                if model:
+                    model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
+                    
+                    if '1.5-pro' in model_id:
+                        est_time = chunks_needed * 40  # 35s delay + processing
+                        model_desc = "Gemini 1.5 Pro (slow but thorough)"
+                    elif '2.5-flash' in model_id:
+                        est_time = chunks_needed * 10  # 7s delay + processing
+                        model_desc = "Gemini 2.5 Flash (balanced)"
+                    else:  # Flash models
+                        est_time = chunks_needed * 8   # 5s delay + processing
+                        model_desc = "Gemini Flash (fast)"
+                    
+                    st.info(f"🕐 **{model_desc}**: ~{est_time//60}min {est_time%60}s estimated")
+                    
+                    if est_time > 300:  # > 5 minutes
+                        st.warning("⚠️ Long processing time! Consider using a faster model for large newsletters.")
+            else:
+                st.success(f"✅ Single chunk processing ({char_count:,} chars)")
+                if model:
+                    model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
+                    st.info(f"Using {model_id.replace('gemini-', '').replace('-exp', '').title()}")
 
-# Navigation
-col1, col2, col3, col4 = st.columns(4)
+        # Extract button
+        if st.button("🚀 Extract Talent", use_container_width=True):
+            if newsletter_text.strip() and model:
+                char_count = len(newsletter_text)
+                
+                if char_count > 50000:
+                    st.warning("⚠️ Very large newsletter! This may take several minutes due to rate limits.")
+                
+                with st.spinner("Extracting talent movements..."):
+                    extractions = extract_talent_simple(newsletter_text, model)
+                    
+                    if extractions:
+                        # Add timestamp
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        for ext in extractions:
+                            ext['timestamp'] = timestamp
+                            ext['id'] = str(uuid.uuid4())
+                        
+                        st.session_state.all_extractions.extend(extractions)
+                        save_data()  # Auto-save
+                        
+                        st.success(f"✅ Found {len(extractions)} people from {char_count:,} characters!")
+                        
+                        # Show quick preview
+                        for ext in extractions[:3]:  # Show first 3
+                            st.write(f"• **{ext['name']}** → {ext['company']} ({ext.get('movement_type', 'Unknown')})")
+                        
+                        if len(extractions) > 3:
+                            st.write(f"... and {len(extractions) - 3} more")
+                            
+                    else:
+                        st.warning("No talent movements found")
+            else:
+                st.error("Please provide newsletter content and API key")
+        
+        # Quick test
+        if st.button("🧪 Test with Sample", use_container_width=True):
+            sample = """
+            Goldman Sachs veteran John Smith joins Citadel Asia as Managing Director in Hong Kong.
+            Former JPMorgan portfolio manager Lisa Chen launches her own hedge fund, Dragon Capital, 
+            focusing on Asian equities. Millennium Partners promotes Alex Wang to head of quant trading 
+            in Singapore. Sarah Kim moves from Bridgewater to become CIO at newly formed Tiger Asia.
+            """
+            
+            with st.spinner(f"Testing {selected_model_name}..."):
+                extractions = extract_talent_simple(sample, model)
+                st.write(f"**Test result:** {len(extractions)} people found")
+                for ext in extractions:
+                    st.write(f"• {ext['name']} → {ext['company']}")
+        
+        # Model comparison test
+        if st.button("🔬 Compare All Models", use_container_width=True):
+            if api_key:
+                sample = """
+                Goldman Sachs veteran John Smith joins Citadel Asia as Managing Director in Hong Kong.
+                Former JPMorgan portfolio manager Lisa Chen launches her own hedge fund, Dragon Capital, 
+                focusing on Asian equities. Millennium Partners promotes Alex Wang to head of quant trading 
+                in Singapore. Sarah Kim moves from Bridgewater to become CIO at newly formed Tiger Asia.
+                """
+                
+                st.write("**Testing all models on same sample:**")
+                
+                models_to_test = [
+                    ("Gemini 1.5 Flash", "gemini-1.5-flash"),
+                    ("Gemini 1.5 Pro", "gemini-1.5-pro"),
+                    ("Gemini 2.0 Flash", "gemini-2.0-flash-exp"),
+                    ("Gemini 2.5 Flash", "gemini-2.5-flash-exp")
+                ]
+                
+                for model_name, model_id in models_to_test:
+                    try:
+                        test_model = setup_gemini(api_key, model_id)
+                        if test_model:
+                            with st.spinner(f"Testing {model_name}..."):
+                                start_time = time.time()
+                                extractions = extract_single_chunk(sample, test_model)
+                                elapsed = time.time() - start_time
+                                count = len(extractions) if extractions else 0
+                                st.write(f"**{model_name}**: {count} people ({elapsed:.1f}s)")
+                        else:
+                            st.write(f"**{model_name}**: Setup failed")
+                    except Exception as e:
+                        st.write(f"**{model_name}**: Error - {str(e)}")
+                    
+                    # Small delay to avoid rate limits
+                    time.sleep(2)
+                
+                st.info("💡 Higher extraction count usually = better model for your use case")
+            else:
+                st.error("Please provide API key first")
+    
+    elif not GENAI_AVAILABLE:
+        st.error("Please install: pip install google-generativeai")
+    
+    # Show recent extractions
+    if st.session_state.all_extractions:
+        st.markdown("---")
+        st.subheader("📊 Recent Extractions")
+        st.metric("Total Extracted", len(st.session_state.all_extractions))
+        
+        # Add people from extractions
+        if st.button("📥 Import All to Database", use_container_width=True):
+            added_count = 0
+            for ext in st.session_state.all_extractions:
+                # Check if person already exists
+                existing = any(p['name'].lower() == ext['name'].lower() 
+                             for p in st.session_state.people)
+                
+                if not existing:
+                    # Add person
+                    new_person_id = str(uuid.uuid4())
+                    st.session_state.people.append({
+                        "id": new_person_id,
+                        "name": ext['name'],
+                        "current_title": ext.get('title', 'Unknown'),
+                        "current_company_name": ext['company'],
+                        "location": ext.get('location', 'Unknown'),
+                        "email": "",
+                        "linkedin_profile_url": "",
+                        "phone": "",
+                        "education": "",
+                        "expertise": "",
+                        "aum_managed": "",
+                        "strategy": "Unknown"
+                    })
+                    
+                    # Add firm if doesn't exist
+                    if not get_firm_by_name(ext['company']):
+                        st.session_state.firms.append({
+                            "id": str(uuid.uuid4()),
+                            "name": ext['company'],
+                            "location": ext.get('location', 'Unknown'),
+                            "headquarters": "Unknown",
+                            "aum": "Unknown",
+                            "founded": None,
+                            "strategy": "Hedge Fund",
+                            "website": "",
+                            "description": f"Hedge fund - extracted from newsletter"
+                        })
+                    
+                    # Add employment
+                    st.session_state.employments.append({
+                        "id": str(uuid.uuid4()),
+                        "person_id": new_person_id,
+                        "company_name": ext['company'],
+                        "title": ext.get('title', 'Unknown'),
+                        "start_date": date.today(),
+                        "end_date": None,
+                        "location": ext.get('location', 'Unknown'),
+                        "strategy": "Unknown"
+                    })
+                    
+                    added_count += 1
+            
+            save_data()  # Save changes
+            st.success(f"✅ Added {added_count} new people to database!")
+            st.rerun()
+
+# --- MAIN CONTENT AREA ---
+st.title("🏢 Asian Hedge Fund Talent Map")
+st.markdown("### Professional network mapping for Asia's hedge fund industry")
+
+# Auto-save indicator
+if st.sidebar.button("💾 Save Data"):
+    if save_data():
+        st.sidebar.success("✅ Data saved!")
+    else:
+        st.sidebar.error("❌ Save failed!")
+
+# Top Navigation
+col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
 
 with col1:
-    if st.button("🤖 AI Extraction", use_container_width=True, 
-                 type="primary" if st.session_state.current_view == 'extractions' else "secondary"):
-        st.session_state.current_view = 'extractions'
+    if st.button("🏢 Firms", use_container_width=True, 
+                 type="primary" if st.session_state.current_view == 'firms' else "secondary"):
+        go_to_firms()
         st.rerun()
 
 with col2:
-    if st.button("👥 People Database", use_container_width=True,
+    if st.button("👥 People", use_container_width=True, 
                  type="primary" if st.session_state.current_view == 'people' else "secondary"):
-        st.session_state.current_view = 'people'
-        st.session_state.edit_person_id = None
+        go_to_people()
         st.rerun()
 
 with col3:
-    if st.button("📊 Analytics", use_container_width=True,
-                 type="primary" if st.session_state.current_view == 'analytics' else "secondary"):
-        st.session_state.current_view = 'analytics'
+    if st.button("➕ Add Person", use_container_width=True):
+        st.session_state.show_add_person_modal = True
         st.rerun()
 
 with col4:
-    if st.button("⚙️ Settings", use_container_width=True,
-                 type="primary" if st.session_state.current_view == 'settings' else "secondary"):
-        st.session_state.current_view = 'settings'
+    if st.button("🏢➕ Add Firm", use_container_width=True):
+        st.session_state.show_add_firm_modal = True
         st.rerun()
 
-st.markdown("---")
+with col5:
+    # Quick stats
+    col5a, col5b = st.columns(2)
+    with col5a:
+        st.metric("People", len(st.session_state.people))
+    with col5b:
+        st.metric("Firms", len(st.session_state.firms))
 
-# VIEW: AI Extraction
-if st.session_state.current_view == 'extractions':
+# --- ADD PERSON MODAL ---
+if st.session_state.show_add_person_modal:
+    st.markdown("---")
+    st.subheader("➕ Add New Person")
     
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.subheader("📁 Upload Newsletter")
-        
-        # API Key
-        api_key = None
-        try:
-            api_key = st.secrets.get("GEMINI_API_KEY")
-        except:
-            pass
-            
-        if not api_key:
-            api_key = st.text_input("Gemini API Key:", type="password", 
-                                  help="Get your API key from https://makersuite.google.com/app/apikey")
-        
-        model = setup_gemini_safe(api_key) if api_key else None
-        
-        # Processing mode
-        processing_mode = st.selectbox(
-            "Processing mode:",
-            ["🛡️ Safe (15K chars)", "⚡ Chunked (Full file)"],
-            help="Safe: Quick processing, truncates long files. Chunked: Complete file analysis with rate limiting."
-        )
-        
-        # File upload
-        uploaded_file = st.file_uploader("Choose newsletter file:", type=['txt', 'md'])
-        
-        newsletter_content = None
-        if uploaded_file:
-            newsletter_content = read_file_safely(uploaded_file)
-            if newsletter_content:
-                st.success(f"File loaded: {len(newsletter_content):,} characters")
-            else:
-                st.error("Failed to read file")
-        
-        # Manual input
-        if not newsletter_content:
-            newsletter_content = st.text_area("Or paste newsletter text:", height=200, 
-                                            placeholder="Paste your newsletter content here...")
-        
-        # Extract button
-        extraction_disabled = not (newsletter_content and model and newsletter_content.strip())
-        
-        if st.button("🚀 Extract Talent", use_container_width=True, disabled=extraction_disabled):
-            if not GENAI_AVAILABLE:
-                st.error("Please install google-generativeai: pip install google-generativeai")
-            elif not newsletter_content.strip():
-                st.error("Please provide newsletter content")
-            elif not model:
-                st.error("Please provide a valid API key")
-            else:
-                with st.spinner("Processing newsletter..."):
-                    start_time = time.time()
-                    
-                    if processing_mode.startswith("🛡️"):
-                        extractions = extract_simple(newsletter_content, model)
-                    else:
-                        extractions = extract_chunked_safe(newsletter_content, model)
-                    
-                    if extractions:
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        for ext in extractions:
-                            ext.update({
-                                'timestamp': timestamp,
-                                'mode': processing_mode.split()[0],
-                                'id': str(uuid.uuid4())
-                            })
-                        
-                        st.session_state.extractions.extend(extractions)
-                        auto_save()
-                        
-                        elapsed = time.time() - start_time
-                        st.success(f"✅ Found {len(extractions)} people in {elapsed:.1f}s")
-                        st.rerun()
-                    else:
-                        st.warning("⚠️ No people found in the newsletter")
-    
-    with col2:
-        st.subheader("📊 Recent Extractions")
-        
-        if st.session_state.extractions:
-            # Show recent extractions
-            recent = st.session_state.extractions[-10:]
-            
-            for idx, ext in enumerate(reversed(recent)):
-                # Ensure each extraction has a unique ID
-                ext_id = ext.get('id', f"ext_{len(st.session_state.extractions) - idx}")
-                
-                with st.expander(f"{ext.get('name', 'Unknown')} → {ext.get('company', 'Unknown')}"):
-                    col_a, col_b, col_c = st.columns([2, 2, 1])
-                    
-                    with col_a:
-                        st.write(f"**Role:** {ext.get('role', 'Unknown')}")
-                        st.write(f"**Type:** {ext.get('type', 'Unknown')}")
-                    
-                    with col_b:
-                        st.write(f"**Date:** {ext.get('timestamp', '')[:10]}")
-                        st.write(f"**Mode:** {ext.get('mode', 'Unknown')}")
-                    
-                    with col_c:
-                        # Check if already in people DB
-                        person_exists = any(p.get('name', '').lower() == ext.get('name', '').lower() 
-                                          for p in st.session_state.people)
-                        
-                        if not person_exists:
-                            # Use a guaranteed unique key
-                            button_key = f"add_{ext_id}_{idx}"
-                            if st.button("➕ Add", key=button_key):
-                                new_person = {
-                                    "id": str(uuid.uuid4()),
-                                    "name": ext.get('name', 'Unknown'),
-                                    "current_title": ext.get('role', 'Unknown'),
-                                    "current_company_name": ext.get('company', 'Unknown'),
-                                    "location": "",
-                                    "email": "",
-                                    "phone": "",
-                                    "education": "",
-                                    "expertise": "",
-                                    "aum_managed": "",
-                                    "source_extraction_id": ext_id
-                                }
-                                st.session_state.people.append(new_person)
-                                auto_save()
-                                st.rerun()
-                        else:
-                            st.success("✓ Added")
-        else:
-            st.info("No extractions yet. Upload a newsletter to start.")
-
-# VIEW: People Database
-elif st.session_state.current_view == 'people':
-    
-    if st.session_state.edit_person_id:
-        # Edit mode
-        person = next((p for p in st.session_state.people if p['id'] == st.session_state.edit_person_id), None)
-        
-        if person:
-            st.subheader(f"✏️ Edit {person.get('name', 'Person')}")
-            
-            with st.form("edit_person_form"):
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    name = st.text_input("Full Name", value=person.get('name', ''))
-                    title = st.text_input("Current Title", value=person.get('current_title', ''))
-                    company = st.text_input("Current Company", value=person.get('current_company_name', ''))
-                    location = st.text_input("Location", value=person.get('location', ''))
-                    email = st.text_input("Email", value=person.get('email', ''))
-                
-                with col2:
-                    phone = st.text_input("Phone", value=person.get('phone', ''))
-                    education = st.text_input("Education", value=person.get('education', ''))
-                    expertise = st.text_input("Expertise", value=person.get('expertise', ''))
-                    aum_managed = st.text_input("AUM Managed", value=person.get('aum_managed', ''))
-                
-                col_save, col_cancel, col_delete = st.columns([1, 1, 1])
-                
-                with col_save:
-                    if st.form_submit_button("💾 Save Changes", use_container_width=True):
-                        # Update person
-                        person.update({
-                            'name': name,
-                            'current_title': title,
-                            'current_company_name': company,
-                            'location': location,
-                            'email': email,
-                            'phone': phone,
-                            'education': education,
-                            'expertise': expertise,
-                            'aum_managed': aum_managed
-                        })
-                        auto_save()
-                        st.session_state.edit_person_id = None
-                        st.success("Changes saved!")
-                        st.rerun()
-                
-                with col_cancel:
-                    if st.form_submit_button("❌ Cancel", use_container_width=True):
-                        st.session_state.edit_person_id = None
-                        st.rerun()
-                
-                with col_delete:
-                    if st.form_submit_button("🗑️ Delete", use_container_width=True):
-                        st.session_state.people = [p for p in st.session_state.people if p['id'] != person['id']]
-                        auto_save()
-                        st.session_state.edit_person_id = None
-                        st.success("Person deleted!")
-                        st.rerun()
-    
-    else:
-        # List mode
-        st.subheader("👥 People Database")
-        
-        if st.session_state.people:
-            
-            # Search and filter
-            col1, col2, col3 = st.columns([2, 1, 1])
-            with col1:
-                search_term = st.text_input("🔍 Search people...", placeholder="Name, company, title...")
-            with col2:
-                show_count = st.selectbox("Show", [10, 25, 50, 100], index=1)
-            with col3:
-                if st.button("📥 Export CSV", use_container_width=True):
-                    df = pd.DataFrame(st.session_state.people)
-                    csv = df.to_csv(index=False)
-                    st.download_button("Download", csv, "people.csv", "text/csv", use_container_width=True)
-            
-            # Filter people
-            filtered_people = st.session_state.people
-            if search_term:
-                search_lower = search_term.lower()
-                filtered_people = [
-                    p for p in st.session_state.people
-                    if search_lower in p.get('name', '').lower() or
-                       search_lower in p.get('current_company_name', '').lower() or
-                       search_lower in p.get('current_title', '').lower()
-                ]
-            
-            # Display people in cards
-            people_to_show = filtered_people[:show_count]
-            
-            for person in people_to_show:
-                with st.container():
-                    col_info, col_actions = st.columns([4, 1])
-                    
-                    with col_info:
-                        st.write(f"**{person.get('name', 'Unknown')}**")
-                        st.write(f"{person.get('current_title', 'Unknown')} at {person.get('current_company_name', 'Unknown')}")
-                        
-                        details = []
-                        if person.get('location'):
-                            details.append(f"📍 {person['location']}")
-                        if person.get('email'):
-                            details.append(f"📧 {person['email']}")
-                        if person.get('aum_managed'):
-                            details.append(f"💰 {person['aum_managed']}")
-                        
-                        if details:
-                            st.caption(" • ".join(details))
-                    
-                    with col_actions:
-                        if st.button("✏️ Edit", key=f"edit_{person['id']}"):
-                            st.session_state.edit_person_id = person['id']
-                            st.rerun()
-                    
-                    st.markdown("---")
-            
-            if len(filtered_people) > show_count:
-                st.info(f"Showing {show_count} of {len(filtered_people)} people")
-        
-        else:
-            st.info("No people in database. Add some from AI extractions first.")
-
-# VIEW: Analytics
-elif st.session_state.current_view == 'analytics':
-    st.subheader("📊 Analytics")
-    
-    if st.session_state.extractions and st.session_state.people:
-        # Metrics
-        col1, col2, col3, col4 = st.columns(4)
+    with st.form("add_person_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
         
         with col1:
-            st.metric("Total Extractions", len(st.session_state.extractions))
+            name = st.text_input("Full Name*", placeholder="John Smith")
+            title = st.text_input("Current Title*", placeholder="Portfolio Manager")
+            company = st.selectbox("Current Company*", 
+                                 options=[""] + [f['name'] for f in st.session_state.firms])
+            location = st.selectbox("Location*", 
+                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                          "Mumbai", "Shanghai", "Beijing", "Taipei"])
         
         with col2:
-            st.metric("People in Database", len(st.session_state.people))
+            email = st.text_input("Email", placeholder="john.smith@company.com")
+            phone = st.text_input("Phone", placeholder="+852-1234-5678")
+            education = st.text_input("Education", placeholder="Harvard, MIT")
+            expertise = st.text_input("Expertise", placeholder="Equities, Technology")
         
-        with col3:
-            companies = set(ext.get('company', '') for ext in st.session_state.extractions if ext.get('company'))
-            st.metric("Unique Companies", len(companies))
+        submitted = st.form_submit_button("Add Person")
         
-        with col4:
-            conversion_rate = (len(st.session_state.people) / len(st.session_state.extractions) * 100) if st.session_state.extractions else 0
-            st.metric("Conversion Rate", f"{conversion_rate:.1f}%")
+        if submitted:
+            if name and title and company and location:
+                new_person_id = str(uuid.uuid4())
+                st.session_state.people.append({
+                    "id": new_person_id,
+                    "name": name,
+                    "current_title": title,
+                    "current_company_name": company,
+                    "location": location,
+                    "email": email,
+                    "linkedin_profile_url": "",
+                    "phone": phone,
+                    "education": education,
+                    "expertise": expertise,
+                    "aum_managed": "",
+                    "strategy": "Unknown"
+                })
+                
+                # Add employment record
+                st.session_state.employments.append({
+                    "id": str(uuid.uuid4()),
+                    "person_id": new_person_id,
+                    "company_name": company,
+                    "title": title,
+                    "start_date": date.today(),
+                    "end_date": None,
+                    "location": location,
+                    "strategy": "Unknown"
+                })
+                
+                save_data()  # Auto-save
+                st.success(f"✅ Added {name}!")
+                st.session_state.show_add_person_modal = False
+                st.rerun()
+            else:
+                st.error("Please fill required fields (*)")
+    
+    if st.button("❌ Cancel", key="cancel_add_person"):
+        st.session_state.show_add_person_modal = False
+        st.rerun()
+
+# --- ADD FIRM MODAL ---
+if st.session_state.show_add_firm_modal:
+    st.markdown("---")
+    st.subheader("🏢 Add New Firm")
+    
+    with st.form("add_firm_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
         
-        # Top companies
-        st.subheader("🏢 Top Companies")
-        company_counts = {}
-        for ext in st.session_state.extractions:
-            company = ext.get('company', '')
-            if company and company != 'Unknown':
-                company_counts[company] = company_counts.get(company, 0) + 1
-        
-        if company_counts:
-            top_companies = sorted(company_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        with col1:
+            firm_name = st.text_input("Firm Name*", placeholder="Tiger Asia Management")
+            location = st.selectbox("Location*", 
+                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                          "Mumbai", "Shanghai", "Beijing", "Taipei"])
+            aum = st.text_input("AUM", placeholder="5B USD")
             
-            company_df = pd.DataFrame(top_companies, columns=['Company', 'Mentions'])
-            st.dataframe(company_df, use_container_width=True, hide_index=True)
+        with col2:
+            strategy = st.selectbox("Strategy", 
+                                  options=["", "Long/Short Equity", "Multi-Strategy", 
+                                          "Quantitative", "Macro", "Event Driven"])
+            founded = st.number_input("Founded", min_value=1900, max_value=2025, value=2000)
+            website = st.text_input("Website", placeholder="https://company.com")
         
-        # Recent activity
-        st.subheader("📈 Recent Activity")
-        recent_extractions = st.session_state.extractions[-10:]
+        submitted = st.form_submit_button("Add Firm")
         
-        activity_data = []
-        for ext in recent_extractions:
-            activity_data.append({
-                'Date': ext.get('timestamp', '')[:10],
-                'Person': ext.get('name', 'Unknown'),
-                'Company': ext.get('company', 'Unknown'),
-                'Type': ext.get('type', 'Unknown')
+        if submitted:
+            if firm_name and location:
+                st.session_state.firms.append({
+                    "id": str(uuid.uuid4()),
+                    "name": firm_name,
+                    "location": location,
+                    "headquarters": location,
+                    "aum": aum,
+                    "founded": founded if founded > 1900 else None,
+                    "strategy": strategy,
+                    "website": website,
+                    "description": f"{strategy} hedge fund based in {location}"
+                })
+                
+                save_data()  # Auto-save
+                st.success(f"✅ Added {firm_name}!")
+                st.session_state.show_add_firm_modal = False
+                st.rerun()
+            else:
+                st.error("Please fill Firm Name and Location")
+    
+    if st.button("❌ Cancel", key="cancel_add_firm"):
+        st.session_state.show_add_firm_modal = False
+        st.rerun()
+
+# --- FIRMS VIEW ---
+if st.session_state.current_view == 'firms':
+    st.markdown("---")
+    st.header("🏢 Hedge Funds in Asia")
+    
+    if not st.session_state.firms:
+        st.info("No firms added yet. Use 'Add Firm' button above.")
+    else:
+        # Create a grid layout for firm cards
+        cols = st.columns(2)
+        for i, firm in enumerate(st.session_state.firms):
+            with cols[i % 2]:
+                with st.container():
+                    people_count = len(get_people_by_firm(firm['name']))
+                    
+                    st.markdown(f"""
+                    <div style="border: 1px solid #ddd; border-radius: 10px; padding: 20px; margin: 10px 0; background-color: #f9f9f9;">
+                        <h3 style="margin-top: 0;">{firm['name']}</h3>
+                        <p><strong>📍 Location:</strong> {firm['location']}</p>
+                        <p><strong>💰 AUM:</strong> {firm['aum']}</p>
+                        <p><strong>📈 Strategy:</strong> {firm['strategy']}</p>
+                        <p><strong>👥 People:</strong> {people_count}</p>
+                        <p><strong>🏛️ Founded:</strong> {firm.get('founded', 'Unknown')}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if st.button(f"View Details", key=f"view_firm_{firm['id']}", use_container_width=True):
+                        go_to_firm_details(firm['id'])
+                        st.rerun()
+
+# --- PEOPLE VIEW ---
+elif st.session_state.current_view == 'people':
+    st.markdown("---")
+    st.header("👥 Hedge Fund Professionals")
+    
+    if not st.session_state.people:
+        st.info("No people added yet. Use 'Add Person' button above.")
+    else:
+        # Filters
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            locations = ["All"] + sorted(list(set(p['location'] for p in st.session_state.people)))
+            location_filter = st.selectbox("Filter by Location", locations)
+        with col2:
+            companies = ["All"] + sorted(list(set(p['current_company_name'] for p in st.session_state.people)))
+            company_filter = st.selectbox("Filter by Company", companies)
+        with col3:
+            search_term = st.text_input("Search by Name", placeholder="Enter name...")
+        
+        # Apply filters
+        filtered_people = st.session_state.people
+        if location_filter != "All":
+            filtered_people = [p for p in filtered_people if p['location'] == location_filter]
+        if company_filter != "All":
+            filtered_people = [p for p in filtered_people if p['current_company_name'] == company_filter]
+        if search_term:
+            filtered_people = [p for p in filtered_people if search_term.lower() in p['name'].lower()]
+        
+        # Display people in a grid
+        st.write(f"**Showing {len(filtered_people)} people**")
+        
+        cols = st.columns(3)
+        for i, person in enumerate(filtered_people):
+            with cols[i % 3]:
+                with st.container():
+                    st.markdown(f"""
+                    <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin: 5px 0; background-color: #f8f9fa;">
+                        <h4 style="margin-top: 0; color: #333;">{person['name']}</h4>
+                        <p><strong>{person['current_title']}</strong></p>
+                        <p>🏢 {person['current_company_name']}</p>
+                        <p>📍 {person['location']}</p>
+                        <p>💰 {person.get('aum_managed', 'Unknown')}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if st.button("View Profile", key=f"view_person_{person['id']}", use_container_width=True):
+                        go_to_person_details(person['id'])
+                        st.rerun()
+
+# --- FIRM DETAILS VIEW ---
+elif st.session_state.current_view == 'firm_details' and st.session_state.selected_firm_id:
+    firm = get_firm_by_id(st.session_state.selected_firm_id)
+    if not firm:
+        st.error("Firm not found")
+        go_to_firms()
+        st.rerun()
+    
+    # Back button
+    if st.button("← Back to Firms"):
+        go_to_firms()
+        st.rerun()
+    
+    st.header(f"🏢 {firm['name']}")
+    
+    # Firm details
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Assets Under Management", firm['aum'])
+    with col2:
+        st.metric("Founded", firm.get('founded', 'Unknown'))
+    with col3:
+        people_count = len(get_people_by_firm(firm['name']))
+        st.metric("Total People", people_count)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"**📍 Location:** {firm['location']}")
+        st.markdown(f"**🏛️ Headquarters:** {firm.get('headquarters', 'Unknown')}")
+    with col2:
+        st.markdown(f"**📈 Strategy:** {firm['strategy']}")
+        if firm.get('website'):
+            st.markdown(f"**🌐 Website:** [{firm['website']}]({firm['website']})")
+    
+    if firm.get('description'):
+        st.markdown(f"**📄 About:** {firm['description']}")
+    
+    # People at this firm
+    st.markdown("---")
+    st.subheader(f"👥 People at {firm['name']}")
+    
+    firm_people = get_people_by_firm(firm['name'])
+    if firm_people:
+        for person in firm_people:
+            with st.expander(f"{person['name']} - {person['current_title']}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    if person.get('email'):
+                        st.markdown(f"📧 {person['email']}")
+                    if person.get('phone'):
+                        st.markdown(f"📱 {person['phone']}")
+                    if person.get('education'):
+                        st.markdown(f"🎓 {person['education']}")
+                
+                with col2:
+                    if person.get('expertise'):
+                        st.markdown(f"🏆 **Expertise:** {person['expertise']}")
+                    if person.get('aum_managed'):
+                        st.markdown(f"💰 **AUM:** {person['aum_managed']}")
+                
+                if st.button("View Full Profile", key=f"view_full_{person['id']}"):
+                    go_to_person_details(person['id'])
+                    st.rerun()
+    else:
+        st.info("No people added for this firm yet.")
+
+# --- PERSON DETAILS VIEW ---
+elif st.session_state.current_view == 'person_details' and st.session_state.selected_person_id:
+    person = get_person_by_id(st.session_state.selected_person_id)
+    if not person:
+        st.error("Person not found")
+        go_to_people()
+        st.rerun()
+    
+    # Back button
+    if st.button("← Back to People"):
+        go_to_people()
+        st.rerun()
+    
+    st.header(f"👤 {person['name']}")
+    st.subheader(f"{person['current_title']} at {person['current_company_name']}")
+    
+    # Basic info
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"**📍 Location:** {person['location']}")
+        if person.get('email'):
+            st.markdown(f"**📧 Email:** [{person['email']}](mailto:{person['email']})")
+        if person.get('phone'):
+            st.markdown(f"**📱 Phone:** {person['phone']}")
+        if person.get('linkedin_profile_url'):
+            st.markdown(f"**🔗 LinkedIn:** [Profile]({person['linkedin_profile_url']})")
+    
+    with col2:
+        if person.get('education'):
+            st.markdown(f"**🎓 Education:** {person['education']}")
+        if person.get('expertise'):
+            st.markdown(f"**🏆 Expertise:** {person['expertise']}")
+        if person.get('aum_managed'):
+            st.markdown(f"**💰 AUM Managed:** {person['aum_managed']}")
+        if person.get('strategy'):
+            st.markdown(f"**📈 Strategy:** {person['strategy']}")
+    
+    # Employment History
+    st.markdown("---")
+    st.subheader("💼 Employment History")
+    
+    employments = get_employments_by_person_id(person['id'])
+    if employments:
+        # Sort by start date (most recent first)
+        sorted_employments = sorted(employments, key=lambda x: x['start_date'], reverse=True)
+        
+        for emp in sorted_employments:
+            end_date_str = emp['end_date'].strftime("%B %Y") if emp['end_date'] else "Present"
+            start_date_str = emp['start_date'].strftime("%B %Y")
+            
+            # Calculate duration
+            end_for_calc = emp['end_date'] if emp['end_date'] else date.today()
+            duration_days = (end_for_calc - emp['start_date']).days
+            duration_years = duration_days / 365.25
+            
+            if duration_years >= 1:
+                duration_str = f"{duration_years:.1f} years"
+            else:
+                duration_str = f"{duration_days // 30} months"
+            
+            st.markdown(f"""
+            **{emp['title']}** at **{emp['company_name']}**  
+            📅 {start_date_str} → {end_date_str} ({duration_str})  
+            📍 {emp.get('location', 'Unknown')} • 📈 {emp.get('strategy', 'Unknown')}
+            """)
+    else:
+        st.info("No employment history available.")
+    
+    # Shared Work History (The OWL-like feature)
+    st.markdown("---")
+    st.subheader("🤝 Professional Network Connections")
+    
+    shared_history = get_shared_work_history(person['id'])
+    
+    if shared_history:
+        st.write(f"**Found {len(shared_history)} colleagues who worked at the same companies:**")
+        
+        # Create a nice table
+        network_data = []
+        for connection in shared_history:
+            network_data.append({
+                "Colleague": connection['colleague_name'],
+                "Shared Company": connection['shared_company'],
+                "Overlap (Years)": connection['overlap_years'],
+                "Current Role": f"{connection['colleague_current_title']} at {connection['colleague_current_company']}",
+                "Colleague ID": connection['colleague_id']
             })
         
-        if activity_data:
-            activity_df = pd.DataFrame(activity_data)
-            st.dataframe(activity_df, use_container_width=True, hide_index=True)
-    
-    else:
-        st.info("No data available for analytics yet.")
-
-# VIEW: Settings
-elif st.session_state.current_view == 'settings':
-    st.subheader("⚙️ Settings & Data Management")
-    
-    # Database status
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("💎 Extractions", len(st.session_state.extractions))
-    with col2:
-        st.metric("👥 People", len(st.session_state.people))
-    with col3:
-        st.metric("🏢 Firms", len(st.session_state.firms))
-    
-    st.markdown("---")
-    
-    # Data operations
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("📥 Export & Backup")
+        df_network = pd.DataFrame(network_data)
         
-        if st.button("📥 Export All Data", use_container_width=True):
-            export_data = {
-                "extractions": st.session_state.extractions,
-                "people": st.session_state.people,
-                "firms": st.session_state.firms,
-                "export_timestamp": datetime.now().isoformat()
-            }
+        # Display as interactive table
+        st.dataframe(df_network.drop(columns=['Colleague ID']), use_container_width=True)
+        
+        # Quick access buttons for top connections
+        st.write("**Quick Access to Top Connections:**")
+        top_connections = shared_history[:5]  # Top 5 connections
+        
+        cols = st.columns(min(5, len(top_connections)))
+        for i, connection in enumerate(top_connections):
+            with cols[i]:
+                if st.button(f"View {connection['colleague_name'].split()[0]}", 
+                           key=f"quick_view_{connection['colleague_id']}",
+                           use_container_width=True):
+                    go_to_person_details(connection['colleague_id'])
+                    st.rerun()
+                st.caption(f"{connection['overlap_years']} years together")
+        
+        # Visualization of network
+        if len(shared_history) > 0:
+            st.markdown("---")
+            st.subheader("📊 Network Visualization")
             
-            export_json = json.dumps(export_data, indent=2, default=str)
-            st.download_button(
-                "Download Database",
-                export_json,
-                f"talent_db_{datetime.now().strftime('%Y%m%d')}.json",
-                "application/json",
-                use_container_width=True
+            # Create a simple network chart
+            fig = go.Figure()
+            
+            # Add connections as a bar chart
+            companies = [conn['shared_company'] for conn in shared_history]
+            overlaps = [conn['overlap_years'] for conn in shared_history]
+            colleagues = [conn['colleague_name'] for conn in shared_history]
+            
+            fig.add_trace(go.Bar(
+                x=companies,
+                y=overlaps,
+                text=[f"{colleague}<br>{overlap}y" for colleague, overlap in zip(colleagues, overlaps)],
+                textposition='auto',
+                name="Work Overlap"
+            ))
+            
+            fig.update_layout(
+                title=f"Professional Network Connections for {person['name']}",
+                xaxis_title="Companies",
+                yaxis_title="Overlap Years",
+                height=400
             )
-    
-    with col2:
-        st.subheader("🧹 Data Management")
+            
+            st.plotly_chart(fig, use_container_width=True)
         
-        if st.button("🧹 Remove Duplicates", use_container_width=True):
-            # Remove duplicate extractions
-            original_count = len(st.session_state.extractions)
-            seen = set()
-            unique_extractions = []
-            
-            for ext in st.session_state.extractions:
-                key = f"{ext.get('name', '').lower()}|{ext.get('company', '').lower()}"
-                if key not in seen and ext.get('name') and ext.get('company'):
-                    seen.add(key)
-                    unique_extractions.append(ext)
-            
-            st.session_state.extractions = unique_extractions
-            auto_save()
-            
-            removed = original_count - len(unique_extractions)
-            st.success(f"Removed {removed} duplicate extractions")
-            st.rerun()
-        
-        if st.button("🔄 Force Save", use_container_width=True):
-            if auto_save():
-                st.success("Data saved successfully!")
-        
-        # Danger zone
-        with st.expander("⚠️ Danger Zone"):
-            st.warning("These actions cannot be undone!")
-            
-            if st.button("🗑️ Clear All Extractions"):
-                st.session_state.extractions = []
-                auto_save()
-                st.success("All extractions cleared")
-                st.rerun()
-            
-            if st.button("🗑️ Clear All People"):
-                st.session_state.people = []
-                auto_save()
-                st.success("All people cleared")
-                st.rerun()
+    else:
+        st.info("No shared work history found with other people in the database.")
+        st.write("💡 Add more people who worked at the same companies to see connections!")
 
-# Footer
+# --- Footer ---
 st.markdown("---")
-with st.container():
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.caption("🎯 Hedge Fund Talent Intelligence • Data automatically saved")
+st.markdown("### 🌏 Asian Hedge Fund Talent Intelligence Platform")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.markdown("**🤖 AI-Powered Extraction**")
+with col2:
+    st.markdown("**🤝 Professional Networks**") 
+with col3:
+    st.markdown("**💾 Persistent Data Storage**")
+
+# Auto-save data on any changes
+if st.session_state.get('data_changed', False):
+    save_data()
+    st.session_state.data_changed = False
