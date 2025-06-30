@@ -1,0 +1,115 @@
+{
+  "version": "1.0-free",
+  "training_date": "2025-06-30T12:12:47.602878",
+  "platform": "kaggle_free_models",
+  "models_trained": [
+    "gpt_neo",
+    "dialogo",
+    "distilgpt2",
+    "gpt2_medium"
+  ],
+  "training_samples": 8,
+  "streamlit_prompts": {
+    "distilgpt2_examples": {
+      "model_name": "distilgpt2",
+      "prompt_template": "Extract like: \"John Smith joins ABC Fund\" = John Smith at ABC Fund\n\nText: {text}\n\nExtract:\n",
+      "generation_config": {
+        "max_new_tokens": 100,
+        "temperature": 0.3,
+        "do_sample": true,
+        "return_full_text": false
+      },
+      "performance": {
+        "quality": 1.0,
+        "extraction_count": 47
+      }
+    },
+    "gpt_neo_examples": {
+      "model_name": "EleutherAI/gpt-neo-1.3B",
+      "prompt_template": "Extract like: \"John Smith joins ABC Fund\" = John Smith at ABC Fund\n\nText: {text}\n\nExtract:\n",
+      "generation_config": {
+        "max_new_tokens": 100,
+        "temperature": 0.3,
+        "do_sample": true,
+        "return_full_text": false
+      },
+      "performance": {
+        "quality": 1.0,
+        "extraction_count": 36
+      }
+    },
+    "gpt2_medium_examples": {
+      "model_name": "gpt2-medium",
+      "prompt_template": "Extract like: \"John Smith joins ABC Fund\" = John Smith at ABC Fund\n\nText: {text}\n\nExtract:\n",
+      "generation_config": {
+        "max_new_tokens": 100,
+        "temperature": 0.3,
+        "do_sample": true,
+        "return_full_text": false
+      },
+      "performance": {
+        "quality": 1.0,
+        "extraction_count": 23
+      }
+    }
+  },
+  "best_combinations": [
+    {
+      "model": "distilgpt2",
+      "prompt": "examples",
+      "count": 47,
+      "quality": 1.0,
+      "score": 47.0
+    },
+    {
+      "model": "gpt_neo",
+      "prompt": "examples",
+      "count": 36,
+      "quality": 1.0,
+      "score": 36.0
+    },
+    {
+      "model": "gpt2_medium",
+      "prompt": "examples",
+      "count": 23,
+      "quality": 1.0,
+      "score": 23.0
+    }
+  ],
+  "fallback_patterns": [
+    [
+      "([A-Z][a-z]+\\s+[A-Z][a-z]+)'s\\s+([A-Z][A-Za-z\\s]+(?:Capital|Management|Fund))",
+      "launch"
+    ],
+    [
+      "([A-Z][a-z]+\\s+[A-Z][a-z]+)\\s+joins\\s+([A-Z][A-Za-z\\s]+)",
+      "hire"
+    ],
+    [
+      "([A-Z][A-Za-z\\s]+)\\s+hires\\s+([A-Z][a-z]+\\s+[A-Z][a-z]+)",
+      "hire"
+    ],
+    [
+      "([A-Z][a-z]+\\s+[A-Z][a-z]+)\\s+picked\\s+for\\s+position",
+      "promotion"
+    ]
+  ],
+  "validation_rules": {
+    "name_format": "exactly_two_words",
+    "exclude_patterns": [
+      "\\b(?:PM|CIO|CEO|director|manager|head|fund|capital|pro|vet)\\b"
+    ],
+    "min_name_length": 5,
+    "require_alphabetic": true
+  },
+  "performance_metrics": {
+    "avg_extractions_per_sample": 35.333333333333336,
+    "avg_quality_score": 1.0,
+    "recommended_model": "distilgpt2"
+  },
+  "deployment_instructions": {
+    "recommended_approach": "huggingface_pipeline",
+    "model_loading": "cache_models_for_performance",
+    "fallback_strategy": "use_regex_patterns_if_model_fails"
+  }
+}
