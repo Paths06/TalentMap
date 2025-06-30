@@ -1871,7 +1871,7 @@ if st.session_state.current_view == 'firms':
                     st.write(f"*{firm['description']}*")
                 
                 # Add some visual separation
-                st.markdown("---")session_state.firms:
+                st.markdown("---")
         st.info("No firms added yet. Use 'Add Firm' button above.")
     else:
         # Create a grid layout for firm cards
