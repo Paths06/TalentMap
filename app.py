@@ -1041,45 +1041,16 @@ with st.sidebar:
     if api_key and GENAI_AVAILABLE:
         model = setup_gemini(api_key, selected_model_id)
         
-        # Show rate limit info
+        # Show simple rate limit info
         if model:
             model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
             
-            with st.expander("⚡ Rate Limits & Processing Info"):
-                if '1.5-pro' in model_id:
-                    st.warning("🧠 **Gemini 1.5 Pro**: 2 requests/min (35s between chunks)")
-                    st.write("• Best for complex analysis")
-                    st.write("• Slowest processing due to low rate limit")
-                    st.write("• Most thorough extraction")
-                elif '2.5-flash' in model_id:
-                    st.info("🌟 **Gemini 2.5 Flash**: 10 requests/min (7s between chunks)")
-                    st.write("• Latest model with cutting-edge capabilities")
-                    st.write("• Good balance of speed and quality")
-                elif '2.0-flash' in model_id:
-                    st.success("🔥 **Gemini 2.0 Flash**: 15 requests/min (5s between chunks)")
-                    st.write("• Improved accuracy over 1.5")
-                    st.write("• Fast processing")
-                else:  # 1.5-flash
-                    st.success("⚡ **Gemini 1.5 Flash**: 15 requests/min (5s between chunks)")
-                    st.write("• Fastest processing")
-                    st.write("• Reliable and stable")
-                    st.write("• Recommended for most newsletters")
-                
-                st.markdown("**📊 Processing Time Examples:**")
-                if '1.5-pro' in model_id:
-                    st.write("• Small newsletter (0-15K chars): ~45 seconds")
-                    st.write("• Medium newsletter (15-45K chars): 2-8 minutes") 
-                    st.write("• Large newsletter (45K+ chars): 8-20 minutes")
-                elif '2.5-flash' in model_id:
-                    st.write("• Small newsletter (0-15K chars): ~35 seconds")
-                    st.write("• Medium newsletter (15-45K chars): 1-4 minutes") 
-                    st.write("• Large newsletter (45K+ chars): 4-10 minutes")
-                else:  # Flash models
-                    st.write("• Small newsletter (0-15K chars): ~30 seconds")
-                    st.write("• Medium newsletter (15-45K chars): 1-3 minutes") 
-                    st.write("• Large newsletter (45K+ chars): 3-8 minutes")
-                
-                st.info("💡 **Tip**: Use 1.5 Flash for speed, 1.5 Pro for accuracy, 2.5 Flash for latest features")
+            if '1.5-pro' in model_id:
+                st.info("🧠 Gemini 1.5 Pro: Slowest but most thorough (40s between chunks)")
+            elif '2.5-flash' in model_id:
+                st.info("🌟 Gemini 2.5 Flash: Latest model (10s between chunks)")
+            else:
+                st.info("⚡ Gemini Flash: Fast and reliable (10s between chunks)")
         
         st.markdown("---")
         st.subheader("📄 Extract from Newsletter")
@@ -1119,36 +1090,11 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"Error reading file: {e}")
         
-        # Show processing info
-        if newsletter_text:
+        # Show simple processing info
+        if newsletter_text and len(newsletter_text) > 15000:
             char_count = len(newsletter_text)
-            if char_count > 15000:
-                chunks_needed = max(1, char_count // 15000)
-                st.warning(f"⚡ Large newsletter detected! Will use {chunks_needed} chunks with rate limiting")
-                
-                # Estimate processing time based on selected model
-                if model:
-                    model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
-                    
-                    if '1.5-pro' in model_id:
-                        est_time = chunks_needed * 40  # 35s delay + processing
-                        model_desc = "Gemini 1.5 Pro (slow but thorough)"
-                    elif '2.5-flash' in model_id:
-                        est_time = chunks_needed * 10  # 7s delay + processing
-                        model_desc = "Gemini 2.5 Flash (balanced)"
-                    else:  # Flash models
-                        est_time = chunks_needed * 8   # 5s delay + processing
-                        model_desc = "Gemini Flash (fast)"
-                    
-                    st.info(f"🕐 **{model_desc}**: ~{est_time//60}min {est_time%60}s estimated")
-                    
-                    if est_time > 300:  # > 5 minutes
-                        st.warning("⚠️ Long processing time! Consider using a faster model for large newsletters.")
-            else:
-                st.success(f"✅ Single chunk processing ({char_count:,} chars)")
-                if model:
-                    model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
-                    st.info(f"Using {model_id.replace('gemini-', '').replace('-exp', '').title()}")
+            chunks_needed = max(1, char_count // 15000)
+            st.info(f"Large file: {char_count:,} chars → {chunks_needed} chunks → ~{chunks_needed * 2} minutes estimated")
 
         # Extract button - simplified and crash-proof
         if st.button("🚀 Extract Talent", use_container_width=True):
@@ -1200,7 +1146,7 @@ with st.sidebar:
                     st.error(f"Extraction failed: {e}")
                     st.info("Try: different model, smaller file, or copy/paste instead of upload")
         
-        # Quick test
+        # Quick test - simplified
         if st.button("🧪 Test with Sample", use_container_width=True):
             sample = """
             Goldman Sachs veteran John Smith joins Citadel Asia as Managing Director in Hong Kong.
@@ -1209,52 +1155,14 @@ with st.sidebar:
             in Singapore. Sarah Kim moves from Bridgewater to become CIO at newly formed Tiger Asia.
             """
             
-            with st.spinner(f"Testing {selected_model_name}..."):
-                extractions = extract_talent_simple(sample, model)
-                st.write(f"**Test result:** {len(extractions)} people found")
+            try:
+                st.info("Testing extraction...")
+                extractions = extract_single_chunk_safe(sample, model)
+                st.write(f"**Found {len(extractions)} people:**")
                 for ext in extractions:
-                    st.write(f"• {ext['name']} → {ext['company']}")
-        
-        # Model comparison test
-        if st.button("🔬 Compare All Models", use_container_width=True):
-            if api_key:
-                sample = """
-                Goldman Sachs veteran John Smith joins Citadel Asia as Managing Director in Hong Kong.
-                Former JPMorgan portfolio manager Lisa Chen launches her own hedge fund, Dragon Capital, 
-                focusing on Asian equities. Millennium Partners promotes Alex Wang to head of quant trading 
-                in Singapore. Sarah Kim moves from Bridgewater to become CIO at newly formed Tiger Asia.
-                """
-                
-                st.write("**Testing all models on same sample:**")
-                
-                models_to_test = [
-                    ("Gemini 1.5 Flash", "gemini-1.5-flash"),
-                    ("Gemini 1.5 Pro", "gemini-1.5-pro"),
-                    ("Gemini 2.0 Flash", "gemini-2.0-flash-exp"),
-                    ("Gemini 2.5 Flash", "gemini-2.5-flash-exp")
-                ]
-                
-                for model_name, model_id in models_to_test:
-                    try:
-                        test_model = setup_gemini(api_key, model_id)
-                        if test_model:
-                            with st.spinner(f"Testing {model_name}..."):
-                                start_time = time.time()
-                                extractions = extract_single_chunk(sample, test_model)
-                                elapsed = time.time() - start_time
-                                count = len(extractions) if extractions else 0
-                                st.write(f"**{model_name}**: {count} people ({elapsed:.1f}s)")
-                        else:
-                            st.write(f"**{model_name}**: Setup failed")
-                    except Exception as e:
-                        st.write(f"**{model_name}**: Error - {str(e)}")
-                    
-                    # Small delay to avoid rate limits
-                    time.sleep(2)
-                
-                st.info("💡 Higher extraction count usually = better model for your use case")
-            else:
-                st.error("Please provide API key first")
+                    st.write(f"• {ext.get('name', 'Unknown')} → {ext.get('company', 'Unknown')}")
+            except Exception as e:
+                st.error(f"Test failed: {e}")
     
     elif not GENAI_AVAILABLE:
         st.error("Please install: pip install google-generativeai")
@@ -1265,22 +1173,22 @@ with st.sidebar:
         st.subheader("📊 Recent Extractions")
         st.metric("Total Extracted", len(st.session_state.all_extractions))
         
-        # Add people from extractions
+        # Add people from extractions with safe defaults
         if st.button("📥 Import All to Database", use_container_width=True):
             added_count = 0
             for ext in st.session_state.all_extractions:
                 # Check if person already exists
-                existing = any(p['name'].lower() == ext['name'].lower() 
+                existing = any(p.get('name', '').lower() == ext.get('name', '').lower() 
                              for p in st.session_state.people)
                 
-                if not existing:
-                    # Add person
+                if not existing and ext.get('name') and ext.get('company'):
+                    # Add person with safe defaults
                     new_person_id = str(uuid.uuid4())
                     st.session_state.people.append({
                         "id": new_person_id,
-                        "name": ext['name'],
+                        "name": ext.get('name', 'Unknown'),
                         "current_title": ext.get('title', 'Unknown'),
-                        "current_company_name": ext['company'],
+                        "current_company_name": ext.get('company', 'Unknown'),
                         "location": ext.get('location', 'Unknown'),
                         "email": "",
                         "linkedin_profile_url": "",
@@ -1292,10 +1200,10 @@ with st.sidebar:
                     })
                     
                     # Add firm if doesn't exist
-                    if not get_firm_by_name(ext['company']):
+                    if not get_firm_by_name(ext.get('company', '')):
                         st.session_state.firms.append({
                             "id": str(uuid.uuid4()),
-                            "name": ext['company'],
+                            "name": ext.get('company', 'Unknown'),
                             "location": ext.get('location', 'Unknown'),
                             "headquarters": "Unknown",
                             "aum": "Unknown",
@@ -1305,11 +1213,11 @@ with st.sidebar:
                             "description": f"Hedge fund - extracted from newsletter"
                         })
                     
-                    # Add employment
+                    # Add employment with safe defaults
                     st.session_state.employments.append({
                         "id": str(uuid.uuid4()),
                         "person_id": new_person_id,
-                        "company_name": ext['company'],
+                        "company_name": ext.get('company', 'Unknown'),
                         "title": ext.get('title', 'Unknown'),
                         "start_date": date.today(),
                         "end_date": None,
@@ -1433,7 +1341,220 @@ if st.session_state.show_add_person_modal:
         st.session_state.show_add_person_modal = False
         st.rerun()
 
-# --- ADD FIRM MODAL ---
+# --- EDIT PERSON MODAL ---
+if st.session_state.show_edit_person_modal and st.session_state.edit_person_data:
+    st.markdown("---")
+    st.subheader(f"✏️ Edit {st.session_state.edit_person_data.get('name', 'Person')}")
+    
+    person_data = st.session_state.edit_person_data
+    
+    with st.form("edit_person_form", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            name = st.text_input("Full Name*", value=person_data.get('name', ''), placeholder="John Smith")
+            title = st.text_input("Current Title*", value=person_data.get('current_title', ''), placeholder="Portfolio Manager")
+            company = st.selectbox("Current Company*", 
+                                 options=[""] + [f['name'] for f in st.session_state.firms],
+                                 index=0 if not person_data.get('current_company_name') else 
+                                       ([f['name'] for f in st.session_state.firms].index(person_data['current_company_name']) + 1 
+                                        if person_data['current_company_name'] in [f['name'] for f in st.session_state.firms] else 0))
+            location = st.selectbox("Location*", 
+                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                          "Mumbai", "Shanghai", "Beijing", "Taipei"],
+                                  index=0 if not person_data.get('location') else
+                                        (["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                          "Mumbai", "Shanghai", "Beijing", "Taipei"].index(person_data['location']) 
+                                         if person_data['location'] in ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                                                        "Mumbai", "Shanghai", "Beijing", "Taipei"] else 0))
+        
+        with col2:
+            email = st.text_input("Email", value=person_data.get('email', ''), placeholder="john.smith@company.com")
+            phone = st.text_input("Phone", value=person_data.get('phone', ''), placeholder="+852-1234-5678")
+            linkedin = st.text_input("LinkedIn URL", value=person_data.get('linkedin_profile_url', ''), placeholder="https://linkedin.com/in/username")
+            education = st.text_input("Education", value=person_data.get('education', ''), placeholder="Harvard, MIT")
+        
+        col3, col4 = st.columns(2)
+        with col3:
+            expertise = st.text_input("Expertise", value=person_data.get('expertise', ''), placeholder="Equities, Technology")
+            aum = st.text_input("AUM Managed", value=person_data.get('aum_managed', ''), placeholder="2.5B USD")
+        
+        with col4:
+            strategy = st.selectbox("Investment Strategy", 
+                                  options=["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"],
+                                  index=0 if not person_data.get('strategy') else
+                                        (["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"].index(person_data['strategy'])
+                                         if person_data['strategy'] in ["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"] else 0))
+        
+        col_save, col_cancel, col_delete = st.columns(3)
+        
+        with col_save:
+            if st.form_submit_button("💾 Save Changes", use_container_width=True):
+                if name and title and company and location:
+                    # Update person data
+                    person_data.update({
+                        "name": name,
+                        "current_title": title,
+                        "current_company_name": company,
+                        "location": location,
+                        "email": email,
+                        "linkedin_profile_url": linkedin,
+                        "phone": phone,
+                        "education": education,
+                        "expertise": expertise,
+                        "aum_managed": aum,
+                        "strategy": strategy
+                    })
+                    
+                    # Find and update the person in the main list
+                    for i, p in enumerate(st.session_state.people):
+                        if p['id'] == person_data['id']:
+                            st.session_state.people[i] = person_data
+                            break
+                    
+                    # Update employment record if exists
+                    for emp in st.session_state.employments:
+                        if emp['person_id'] == person_data['id'] and emp.get('end_date') is None:  # Current employment
+                            emp.update({
+                                "company_name": company,
+                                "title": title,
+                                "location": location,
+                                "strategy": strategy
+                            })
+                            break
+                    
+                    save_data()  # Auto-save
+                    st.success(f"✅ Updated {name}!")
+                    st.session_state.show_edit_person_modal = False
+                    st.session_state.edit_person_data = None
+                    st.rerun()
+                else:
+                    st.error("Please fill required fields (*)")
+        
+        with col_cancel:
+            if st.form_submit_button("❌ Cancel", use_container_width=True):
+                st.session_state.show_edit_person_modal = False
+                st.session_state.edit_person_data = None
+                st.rerun()
+        
+        with col_delete:
+            if st.form_submit_button("🗑️ Delete Person", use_container_width=True):
+                # Remove person and related data
+                person_id = person_data['id']
+                st.session_state.people = [p for p in st.session_state.people if p['id'] != person_id]
+                st.session_state.employments = [e for e in st.session_state.employments if e['person_id'] != person_id]
+                
+                save_data()
+                st.success("✅ Person deleted!")
+                st.session_state.show_edit_person_modal = False
+                st.session_state.edit_person_data = None
+                st.rerun()
+
+# --- EDIT FIRM MODAL ---
+if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
+    st.markdown("---")
+    st.subheader(f"✏️ Edit {st.session_state.edit_firm_data.get('name', 'Firm')}")
+    
+    firm_data = st.session_state.edit_firm_data
+    
+    with st.form("edit_firm_form", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            firm_name = st.text_input("Firm Name*", value=firm_data.get('name', ''), placeholder="Tiger Asia Management")
+            location = st.selectbox("Location*", 
+                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                          "Mumbai", "Shanghai", "Beijing", "Taipei"],
+                                  index=0 if not firm_data.get('location') else
+                                        (["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                          "Mumbai", "Shanghai", "Beijing", "Taipei"].index(firm_data['location'])
+                                         if firm_data['location'] in ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                                                     "Mumbai", "Shanghai", "Beijing", "Taipei"] else 0))
+            headquarters = st.text_input("Headquarters", value=firm_data.get('headquarters', ''), placeholder="Hong Kong")
+            aum = st.text_input("AUM", value=firm_data.get('aum', ''), placeholder="5B USD")
+            
+        with col2:
+            strategy = st.selectbox("Strategy", 
+                                  options=["", "Long/Short Equity", "Multi-Strategy", 
+                                          "Quantitative", "Macro", "Event Driven"],
+                                  index=0 if not firm_data.get('strategy') else
+                                        (["", "Long/Short Equity", "Multi-Strategy", 
+                                          "Quantitative", "Macro", "Event Driven"].index(firm_data['strategy'])
+                                         if firm_data['strategy'] in ["", "Long/Short Equity", "Multi-Strategy", 
+                                                                     "Quantitative", "Macro", "Event Driven"] else 0))
+            founded = st.number_input("Founded", min_value=1900, max_value=2025, 
+                                    value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
+            website = st.text_input("Website", value=firm_data.get('website', ''), placeholder="https://company.com")
+        
+        description = st.text_area("Description", value=firm_data.get('description', ''), placeholder="Brief description of the hedge fund...")
+        
+        col_save, col_cancel, col_delete = st.columns(3)
+        
+        with col_save:
+            if st.form_submit_button("💾 Save Changes", use_container_width=True):
+                if firm_name and location:
+                    # Update firm data
+                    old_name = firm_data.get('name', '')
+                    firm_data.update({
+                        "name": firm_name,
+                        "location": location,
+                        "headquarters": headquarters,
+                        "aum": aum,
+                        "founded": founded if founded > 1900 else None,
+                        "strategy": strategy,
+                        "website": website,
+                        "description": description
+                    })
+                    
+                    # Find and update the firm in the main list
+                    for i, f in enumerate(st.session_state.firms):
+                        if f['id'] == firm_data['id']:
+                            st.session_state.firms[i] = firm_data
+                            break
+                    
+                    # Update people's company names if firm name changed
+                    if old_name != firm_name:
+                        for person in st.session_state.people:
+                            if person.get('current_company_name') == old_name:
+                                person['current_company_name'] = firm_name
+                        
+                        # Update employment records
+                        for emp in st.session_state.employments:
+                            if emp.get('company_name') == old_name:
+                                emp['company_name'] = firm_name
+                    
+                    save_data()  # Auto-save
+                    st.success(f"✅ Updated {firm_name}!")
+                    st.session_state.show_edit_firm_modal = False
+                    st.session_state.edit_firm_data = None
+                    st.rerun()
+                else:
+                    st.error("Please fill Firm Name and Location")
+        
+        with col_cancel:
+            if st.form_submit_button("❌ Cancel", use_container_width=True):
+                st.session_state.show_edit_firm_modal = False
+                st.session_state.edit_firm_data = None
+                st.rerun()
+        
+        with col_delete:
+            if st.form_submit_button("🗑️ Delete Firm", use_container_width=True):
+                # Remove firm and update related data
+                firm_id = firm_data['id']
+                firm_name = firm_data.get('name', '')
+                
+                st.session_state.firms = [f for f in st.session_state.firms if f['id'] != firm_id]
+                
+                # Update people to remove company reference
+                for person in st.session_state.people:
+                    if person.get('current_company_name') == firm_name:
+                        person['current_company_name'] = 'Unknown'
+                
+                save_data()
+                st.success("✅ Firm deleted!")
+                st.session_state.show_edit_firm_modal = False
+                st.session_state.edit_firm_data = None
+                st.rerun()
 if st.session_state.show_add_firm_modal:
     st.markdown("---")
     st.subheader("🏢 Add New Firm")
@@ -1482,6 +1603,221 @@ if st.session_state.show_add_firm_modal:
         st.session_state.show_add_firm_modal = False
         st.rerun()
 
+# --- EDIT PERSON MODAL ---
+if st.session_state.show_edit_person_modal and st.session_state.edit_person_data:
+    st.markdown("---")
+    st.subheader(f"✏️ Edit {st.session_state.edit_person_data.get('name', 'Person')}")
+    
+    person_data = st.session_state.edit_person_data
+    
+    with st.form("edit_person_form", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            name = st.text_input("Full Name*", value=person_data.get('name', ''), placeholder="John Smith")
+            title = st.text_input("Current Title*", value=person_data.get('current_title', ''), placeholder="Portfolio Manager")
+            company = st.selectbox("Current Company*", 
+                                 options=[""] + [f['name'] for f in st.session_state.firms],
+                                 index=0 if not person_data.get('current_company_name') else 
+                                       ([f['name'] for f in st.session_state.firms].index(person_data['current_company_name']) + 1 
+                                        if person_data['current_company_name'] in [f['name'] for f in st.session_state.firms] else 0))
+            location = st.selectbox("Location*", 
+                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                          "Mumbai", "Shanghai", "Beijing", "Taipei"],
+                                  index=0 if not person_data.get('location') else
+                                        (["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                          "Mumbai", "Shanghai", "Beijing", "Taipei"].index(person_data['location']) 
+                                         if person_data['location'] in ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                                                        "Mumbai", "Shanghai", "Beijing", "Taipei"] else 0))
+        
+        with col2:
+            email = st.text_input("Email", value=person_data.get('email', ''), placeholder="john.smith@company.com")
+            phone = st.text_input("Phone", value=person_data.get('phone', ''), placeholder="+852-1234-5678")
+            linkedin = st.text_input("LinkedIn URL", value=person_data.get('linkedin_profile_url', ''), placeholder="https://linkedin.com/in/username")
+            education = st.text_input("Education", value=person_data.get('education', ''), placeholder="Harvard, MIT")
+        
+        col3, col4 = st.columns(2)
+        with col3:
+            expertise = st.text_input("Expertise", value=person_data.get('expertise', ''), placeholder="Equities, Technology")
+            aum = st.text_input("AUM Managed", value=person_data.get('aum_managed', ''), placeholder="2.5B USD")
+        
+        with col4:
+            strategy = st.selectbox("Investment Strategy", 
+                                  options=["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"],
+                                  index=0 if not person_data.get('strategy') else
+                                        (["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"].index(person_data['strategy'])
+                                         if person_data['strategy'] in ["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"] else 0))
+        
+        col_save, col_cancel, col_delete = st.columns(3)
+        
+        with col_save:
+            if st.form_submit_button("💾 Save Changes", use_container_width=True):
+                if name and title and company and location:
+                    # Update person data
+                    person_data.update({
+                        "name": name,
+                        "current_title": title,
+                        "current_company_name": company,
+                        "location": location,
+                        "email": email,
+                        "linkedin_profile_url": linkedin,
+                        "phone": phone,
+                        "education": education,
+                        "expertise": expertise,
+                        "aum_managed": aum,
+                        "strategy": strategy
+                    })
+                    
+                    # Find and update the person in the main list
+                    for i, p in enumerate(st.session_state.people):
+                        if p['id'] == person_data['id']:
+                            st.session_state.people[i] = person_data
+                            break
+                    
+                    # Update employment record if exists
+                    for emp in st.session_state.employments:
+                        if emp['person_id'] == person_data['id'] and emp.get('end_date') is None:  # Current employment
+                            emp.update({
+                                "company_name": company,
+                                "title": title,
+                                "location": location,
+                                "strategy": strategy
+                            })
+                            break
+                    
+                    save_data()  # Auto-save
+                    st.success(f"✅ Updated {name}!")
+                    st.session_state.show_edit_person_modal = False
+                    st.session_state.edit_person_data = None
+                    st.rerun()
+                else:
+                    st.error("Please fill required fields (*)")
+        
+        with col_cancel:
+            if st.form_submit_button("❌ Cancel", use_container_width=True):
+                st.session_state.show_edit_person_modal = False
+                st.session_state.edit_person_data = None
+                st.rerun()
+        
+        with col_delete:
+            if st.form_submit_button("🗑️ Delete Person", use_container_width=True):
+                # Remove person and related data
+                person_id = person_data['id']
+                st.session_state.people = [p for p in st.session_state.people if p['id'] != person_id]
+                st.session_state.employments = [e for e in st.session_state.employments if e['person_id'] != person_id]
+                
+                save_data()
+                st.success("✅ Person deleted!")
+                st.session_state.show_edit_person_modal = False
+                st.session_state.edit_person_data = None
+                st.rerun()
+
+# --- EDIT FIRM MODAL ---
+if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
+    st.markdown("---")
+    st.subheader(f"✏️ Edit {st.session_state.edit_firm_data.get('name', 'Firm')}")
+    
+    firm_data = st.session_state.edit_firm_data
+    
+    with st.form("edit_firm_form", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            firm_name = st.text_input("Firm Name*", value=firm_data.get('name', ''), placeholder="Tiger Asia Management")
+            location = st.selectbox("Location*", 
+                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                          "Mumbai", "Shanghai", "Beijing", "Taipei"],
+                                  index=0 if not firm_data.get('location') else
+                                        (["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                          "Mumbai", "Shanghai", "Beijing", "Taipei"].index(firm_data['location'])
+                                         if firm_data['location'] in ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
+                                                                     "Mumbai", "Shanghai", "Beijing", "Taipei"] else 0))
+            headquarters = st.text_input("Headquarters", value=firm_data.get('headquarters', ''), placeholder="Hong Kong")
+            aum = st.text_input("AUM", value=firm_data.get('aum', ''), placeholder="5B USD")
+            
+        with col2:
+            strategy = st.selectbox("Strategy", 
+                                  options=["", "Long/Short Equity", "Multi-Strategy", 
+                                          "Quantitative", "Macro", "Event Driven"],
+                                  index=0 if not firm_data.get('strategy') else
+                                        (["", "Long/Short Equity", "Multi-Strategy", 
+                                          "Quantitative", "Macro", "Event Driven"].index(firm_data['strategy'])
+                                         if firm_data['strategy'] in ["", "Long/Short Equity", "Multi-Strategy", 
+                                                                     "Quantitative", "Macro", "Event Driven"] else 0))
+            founded = st.number_input("Founded", min_value=1900, max_value=2025, 
+                                    value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
+            website = st.text_input("Website", value=firm_data.get('website', ''), placeholder="https://company.com")
+        
+        description = st.text_area("Description", value=firm_data.get('description', ''), placeholder="Brief description of the hedge fund...")
+        
+        col_save, col_cancel, col_delete = st.columns(3)
+        
+        with col_save:
+            if st.form_submit_button("💾 Save Changes", use_container_width=True):
+                if firm_name and location:
+                    # Update firm data
+                    old_name = firm_data.get('name', '')
+                    firm_data.update({
+                        "name": firm_name,
+                        "location": location,
+                        "headquarters": headquarters,
+                        "aum": aum,
+                        "founded": founded if founded > 1900 else None,
+                        "strategy": strategy,
+                        "website": website,
+                        "description": description
+                    })
+                    
+                    # Find and update the firm in the main list
+                    for i, f in enumerate(st.session_state.firms):
+                        if f['id'] == firm_data['id']:
+                            st.session_state.firms[i] = firm_data
+                            break
+                    
+                    # Update people's company names if firm name changed
+                    if old_name != firm_name:
+                        for person in st.session_state.people:
+                            if person.get('current_company_name') == old_name:
+                                person['current_company_name'] = firm_name
+                        
+                        # Update employment records
+                        for emp in st.session_state.employments:
+                            if emp.get('company_name') == old_name:
+                                emp['company_name'] = firm_name
+                    
+                    save_data()  # Auto-save
+                    st.success(f"✅ Updated {firm_name}!")
+                    st.session_state.show_edit_firm_modal = False
+                    st.session_state.edit_firm_data = None
+                    st.rerun()
+                else:
+                    st.error("Please fill Firm Name and Location")
+        
+        with col_cancel:
+            if st.form_submit_button("❌ Cancel", use_container_width=True):
+                st.session_state.show_edit_firm_modal = False
+                st.session_state.edit_firm_data = None
+                st.rerun()
+        
+        with col_delete:
+            if st.form_submit_button("🗑️ Delete Firm", use_container_width=True):
+                # Remove firm and update related data
+                firm_id = firm_data['id']
+                firm_name = firm_data.get('name', '')
+                
+                st.session_state.firms = [f for f in st.session_state.firms if f['id'] != firm_id]
+                
+                # Update people to remove company reference
+                for person in st.session_state.people:
+                    if person.get('current_company_name') == firm_name:
+                        person['current_company_name'] = 'Unknown'
+                
+                save_data()
+                st.success("✅ Firm deleted!")
+                st.session_state.show_edit_firm_modal = False
+                st.session_state.edit_firm_data = None
+                st.rerun()
+
 # --- FIRMS VIEW ---
 if st.session_state.current_view == 'firms':
     st.markdown("---")
@@ -1490,27 +1826,93 @@ if st.session_state.current_view == 'firms':
     if not st.session_state.firms:
         st.info("No firms added yet. Use 'Add Firm' button above.")
     else:
+        # Display firms in a more user-friendly way
+        for firm in st.session_state.firms:
+            people_count = len(get_people_by_firm(firm['name']))
+            
+            # Create an attractive card using Streamlit components
+            with st.container():
+                # Main firm header
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.subheader(f"🏢 {firm['name']}")
+                    st.write(f"**Strategy:** {firm.get('strategy', 'Unknown')}")
+                
+                with col2:
+                    col2a, col2b = st.columns(2)
+                    with col2a:
+                        if st.button("📋 View Details", key=f"view_firm_{firm['id']}", use_container_width=True):
+                            go_to_firm_details(firm['id'])
+                            st.rerun()
+                    with col2b:
+                        if st.button("✏️ Edit", key=f"edit_firm_{firm['id']}", use_container_width=True):
+                            st.session_state.edit_firm_data = firm
+                            st.session_state.show_edit_firm_modal = True
+                            st.rerun()
+                
+                # Firm details in columns
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("📍 Location", firm.get('location', 'Unknown'))
+                
+                with col2:
+                    st.metric("💰 AUM", firm.get('aum', 'Unknown'))
+                
+                with col3:
+                    st.metric("👥 People", people_count)
+                
+                with col4:
+                    st.metric("🏛️ Founded", firm.get('founded', 'Unknown'))
+                
+                # Description if available
+                if firm.get('description'):
+                    st.write(f"*{firm['description']}*")
+                
+                # Add some visual separation
+                st.markdown("---")session_state.firms:
+        st.info("No firms added yet. Use 'Add Firm' button above.")
+    else:
         # Create a grid layout for firm cards
-        cols = st.columns(2)
-        for i, firm in enumerate(st.session_state.firms):
-            with cols[i % 2]:
-                with st.container():
-                    people_count = len(get_people_by_firm(firm['name']))
-                    
-                    st.markdown(f"""
-                    <div style="border: 1px solid #ddd; border-radius: 10px; padding: 20px; margin: 10px 0; background-color: #f9f9f9;">
-                        <h3 style="margin-top: 0;">{firm['name']}</h3>
-                        <p><strong>📍 Location:</strong> {firm['location']}</p>
-                        <p><strong>💰 AUM:</strong> {firm['aum']}</p>
-                        <p><strong>📈 Strategy:</strong> {firm['strategy']}</p>
-                        <p><strong>👥 People:</strong> {people_count}</p>
-                        <p><strong>🏛️ Founded:</strong> {firm.get('founded', 'Unknown')}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    if st.button(f"View Details", key=f"view_firm_{firm['id']}", use_container_width=True):
+        for firm in st.session_state.firms:
+            people_count = len(get_people_by_firm(firm['name']))
+            
+            # Create an attractive card using Streamlit components
+            with st.container():
+                # Main firm header
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.subheader(f"🏢 {firm['name']}")
+                    st.write(f"**Strategy:** {firm.get('strategy', 'Unknown')}")
+                
+                with col2:
+                    if st.button("📋 View Details", key=f"view_firm_{firm['id']}", use_container_width=True):
                         go_to_firm_details(firm['id'])
                         st.rerun()
+                
+                # Firm details in columns
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("📍 Location", firm.get('location', 'Unknown'))
+                
+                with col2:
+                    st.metric("💰 AUM", firm.get('aum', 'Unknown'))
+                
+                with col3:
+                    st.metric("👥 People", people_count)
+                
+                with col4:
+                    st.metric("🏛️ Founded", firm.get('founded', 'Unknown'))
+                
+                # Description if available
+                if firm.get('description'):
+                    st.write(f"*{firm['description']}*")
+                
+                # Add some visual separation
+                st.markdown("---")
 
 # --- PEOPLE VIEW ---
 elif st.session_state.current_view == 'people':
@@ -1523,10 +1925,12 @@ elif st.session_state.current_view == 'people':
         # Filters
         col1, col2, col3 = st.columns(3)
         with col1:
-            locations = ["All"] + sorted(list(set(p['location'] for p in st.session_state.people)))
+            # Filter out None values before sorting
+            locations = ["All"] + sorted(list(set(p.get('location', 'Unknown') for p in st.session_state.people if p.get('location'))))
             location_filter = st.selectbox("Filter by Location", locations)
         with col2:
-            companies = ["All"] + sorted(list(set(p['current_company_name'] for p in st.session_state.people)))
+            # Filter out None values before sorting
+            companies = ["All"] + sorted(list(set(p.get('current_company_name', 'Unknown') for p in st.session_state.people if p.get('current_company_name'))))
             company_filter = st.selectbox("Filter by Company", companies)
         with col3:
             search_term = st.text_input("Search by Name", placeholder="Enter name...")
@@ -1534,32 +1938,71 @@ elif st.session_state.current_view == 'people':
         # Apply filters
         filtered_people = st.session_state.people
         if location_filter != "All":
-            filtered_people = [p for p in filtered_people if p['location'] == location_filter]
+            filtered_people = [p for p in filtered_people if p.get('location', 'Unknown') == location_filter]
         if company_filter != "All":
-            filtered_people = [p for p in filtered_people if p['current_company_name'] == company_filter]
+            filtered_people = [p for p in filtered_people if p.get('current_company_name', 'Unknown') == company_filter]
         if search_term:
-            filtered_people = [p for p in filtered_people if search_term.lower() in p['name'].lower()]
+            filtered_people = [p for p in filtered_people if search_term.lower() in p.get('name', '').lower()]
         
-        # Display people in a grid
+        # Display people in user-friendly cards
         st.write(f"**Showing {len(filtered_people)} people**")
         
-        cols = st.columns(3)
-        for i, person in enumerate(filtered_people):
-            with cols[i % 3]:
-                with st.container():
-                    st.markdown(f"""
-                    <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin: 5px 0; background-color: #f8f9fa;">
-                        <h4 style="margin-top: 0; color: #333;">{person['name']}</h4>
-                        <p><strong>{person['current_title']}</strong></p>
-                        <p>🏢 {person['current_company_name']}</p>
-                        <p>📍 {person['location']}</p>
-                        <p>💰 {person.get('aum_managed', 'Unknown')}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    if st.button("View Profile", key=f"view_person_{person['id']}", use_container_width=True):
-                        go_to_person_details(person['id'])
-                        st.rerun()
+        for person in filtered_people:
+            with st.container():
+                # Main person header
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.subheader(f"👤 {person.get('name', 'Unknown')}")
+                    st.write(f"**{person.get('current_title', 'Unknown')}** at **{person.get('current_company_name', 'Unknown')}**")
+                
+                with col2:
+                    col2a, col2b = st.columns(2)
+                    with col2a:
+                        if st.button("👁️ View Profile", key=f"view_person_{person['id']}", use_container_width=True):
+                            go_to_person_details(person['id'])
+                            st.rerun()
+                    with col2b:
+                        if st.button("✏️ Edit", key=f"edit_person_{person['id']}", use_container_width=True):
+                            st.session_state.edit_person_data = person
+                            st.session_state.show_edit_person_modal = True
+                            st.rerun()
+                
+                # Person details in columns
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("📍 Location", person.get('location', 'Unknown'))
+                
+                with col2:
+                    st.metric("💰 AUM Managed", person.get('aum_managed', 'Unknown'))
+                
+                with col3:
+                    expertise = person.get('expertise', 'Unknown')
+                    if len(expertise) > 15:
+                        expertise = expertise[:15] + "..."
+                    st.metric("🎯 Expertise", expertise)
+                
+                with col4:
+                    strategy = person.get('strategy', 'Unknown')
+                    if len(strategy) > 15:
+                        strategy = strategy[:15] + "..."
+                    st.metric("📈 Strategy", strategy)
+                
+                # Contact info if available
+                contact_info = []
+                if person.get('email'):
+                    contact_info.append(f"📧 {person['email']}")
+                if person.get('phone'):
+                    contact_info.append(f"📱 {person['phone']}")
+                if person.get('education'):
+                    contact_info.append(f"🎓 {person['education']}")
+                
+                if contact_info:
+                    st.caption(" • ".join(contact_info[:2]))  # Show max 2 items
+                
+                # Add visual separation
+                st.markdown("---")
 
 # --- FIRM DETAILS VIEW ---
 elif st.session_state.current_view == 'firm_details' and st.session_state.selected_firm_id:
@@ -1635,18 +2078,27 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
         go_to_people()
         st.rerun()
     
-    # Back button
-    if st.button("← Back to People"):
-        go_to_people()
-        st.rerun()
-    
-    st.header(f"👤 {person['name']}")
-    st.subheader(f"{person['current_title']} at {person['current_company_name']}")
+    # Person header
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.header(f"👤 {person.get('name', 'Unknown')}")
+        st.subheader(f"{person.get('current_title', 'Unknown')} at {person.get('current_company_name', 'Unknown')}")
+    with col2:
+        col2a, col2b = st.columns(2)
+        with col2a:
+            if st.button("← Back"):
+                go_to_people()
+                st.rerun()
+        with col2b:
+            if st.button("✏️ Edit"):
+                st.session_state.edit_person_data = person
+                st.session_state.show_edit_person_modal = True
+                st.rerun()
     
     # Basic info
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f"**📍 Location:** {person['location']}")
+        st.markdown(f"**📍 Location:** {person.get('location', 'Unknown')}")
         if person.get('email'):
             st.markdown(f"**📧 Email:** [{person['email']}](mailto:{person['email']})")
         if person.get('phone'):
@@ -1670,25 +2122,32 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     
     employments = get_employments_by_person_id(person['id'])
     if employments:
-        # Sort by start date (most recent first)
-        sorted_employments = sorted(employments, key=lambda x: x['start_date'], reverse=True)
+        # Sort by start date (most recent first) - handle None values
+        sorted_employments = sorted(
+            [emp for emp in employments if emp.get('start_date')], 
+            key=lambda x: x['start_date'], 
+            reverse=True
+        )
         
         for emp in sorted_employments:
-            end_date_str = emp['end_date'].strftime("%B %Y") if emp['end_date'] else "Present"
-            start_date_str = emp['start_date'].strftime("%B %Y")
+            end_date_str = emp['end_date'].strftime("%B %Y") if emp.get('end_date') else "Present"
+            start_date_str = emp['start_date'].strftime("%B %Y") if emp.get('start_date') else "Unknown"
             
-            # Calculate duration
-            end_for_calc = emp['end_date'] if emp['end_date'] else date.today()
-            duration_days = (end_for_calc - emp['start_date']).days
-            duration_years = duration_days / 365.25
-            
-            if duration_years >= 1:
-                duration_str = f"{duration_years:.1f} years"
+            # Calculate duration safely
+            if emp.get('start_date'):
+                end_for_calc = emp['end_date'] if emp.get('end_date') else date.today()
+                duration_days = (end_for_calc - emp['start_date']).days
+                duration_years = duration_days / 365.25
+                
+                if duration_years >= 1:
+                    duration_str = f"{duration_years:.1f} years"
+                else:
+                    duration_str = f"{max(1, duration_days // 30)} months"
             else:
-                duration_str = f"{duration_days // 30} months"
+                duration_str = "Unknown duration"
             
             st.markdown(f"""
-            **{emp['title']}** at **{emp['company_name']}**  
+            **{emp.get('title', 'Unknown')}** at **{emp.get('company_name', 'Unknown')}**  
             📅 {start_date_str} → {end_date_str} ({duration_str})  
             📍 {emp.get('location', 'Unknown')} • 📈 {emp.get('strategy', 'Unknown')}
             """)
