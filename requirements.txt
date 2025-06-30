@@ -1,2 +1,20 @@
-streamlit
-pandas
+streamlit>=1.28.0
+pandas>=1.5.0
+numpy>=1.24.0
+plotly>=5.15.0
+scikit-learn>=1.3.0
+joblib>=1.3.0
+chardet>=5.1.0
+python-dateutil>=2.8.0
+sqlite3  # Built into Python
+pathlib  # Built into Python
+io  # Built into Python
+json  # Built into Python
+re  # Built into Python
+time  # Built into Python
+logging  # Built into Python
+warnings  # Built into Python
+threading  # Built into Python
+queue  # Built into Python
+dataclasses  # Built into Python (Python 3.7+)
+typing  # Built into Python
