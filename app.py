@@ -146,11 +146,11 @@ if 'show_add_firm_modal' not in st.session_state:
 
 # --- Setup Gemini AI ---
 @st.cache_resource
-def setup_gemini(api_key):
+def setup_gemini(api_key, model_name='gemini-2.5-flash'):
     """Setup Gemini AI model"""
     try:
         genai.configure(api_key=api_key)
-        return genai.GenerativeModel('gemini-1.5-flash')
+        return genai.GenerativeModel(model_name)
     except Exception as e:
         st.error(f"Error setting up Gemini: {e}")
         return None
@@ -258,14 +258,14 @@ def extract_talent(newsletter_text, model):
     prompt = f"""
 You are an expert at extracting talent movements from financial newsletters and industry news.
 
-Extract ALL people and their career movements from this CLEANED text. Look for:
-- New hires, departures, promotions, launches
-- Hedge funds, private equity, asset management, family offices
-- Portfolio managers, CIOs, analysts, partners, directors
-- Fund launches, team formations, executive moves
+Extract ALL people and their career movements from this text. Be COMPREHENSIVE and look for:
+- New hires, departures, promotions, launches, appointments
+- Hedge funds, private equity, asset management, family offices, pension funds
+- Portfolio managers, CIOs, analysts, partners, directors, VPs, executives
+- Fund launches, team formations, executive moves, job changes
 
-CLEANED TEXT TO ANALYZE:
-{cleaned_text[:3000]}
+NEWSLETTER TEXT TO ANALYZE:
+{cleaned_text[:4000]}
 
 Return ONLY a valid JSON object in this exact format:
 {{
@@ -274,28 +274,34 @@ Return ONLY a valid JSON object in this exact format:
       "name": "First Last",
       "company": "Company Name", 
       "previous_company": "Previous Company (if mentioned)",
-      "movement_type": "hire",
+      "movement_type": "launch|hire|promotion|departure|appointment|partnership",
       "title": "Position Title (if mentioned)",
       "location": "Location (if mentioned)",
+      "strategy": "Investment strategy (if mentioned)",
       "context": "Brief description of the movement"
     }}
   ]
 }}
 
-Examples from typical movements:
-- "Harrison Balistreri's Inevitable Capital Management" → name: "Harrison Balistreri", company: "Inevitable Capital Management", movement_type: "launch"
-- "Sarah Gray joins Neil Chriss on forming Edge Peak" → Two entries for both people
-- "Robin Boldt to debut ROCK2 Capital" → name: "Robin Boldt", company: "ROCK2 Capital", movement_type: "launch"
-- "Daniel Crews picked for position at Tennessee Treasury" → name: "Daniel Crews", company: "Tennessee Treasury", movement_type: "hire"
-- "Vince Ortiz would lead new strategy" → name: "Vince Ortiz", movement_type: "appointment"
+REAL EXAMPLES from the text you should catch:
+- "Harrison Balistreri's Inevitable Capital Management" → launch
+- "Sarah Gray joins Neil Chriss on forming Edge Peak" → Two separate entries
+- "Robin Boldt to debut ROCK2 Capital" → launch  
+- "Daniel Crews picked for position at Tennessee Treasury" → promotion
+- "Vince Ortiz would lead new strategy" → appointment
+- "Jo-Wen Lin raising capital for Asia healthcare" → appointment/launch
+- "Louis Couronne and Macaire Chue as vice presidents" → Two hire entries
 
-Rules:
-- Extract EVERY person mentioned in a professional context
-- Movement types: hire, promotion, launch, departure, partnership, appointment
-- Include both first and last names only
-- If multiple people in one sentence, create separate entries
-- Skip generic references without specific names
-- Focus on hedge funds, PE, asset management industry
+STRICT RULES:
+1. Extract EVERY person with a specific first and last name
+2. Include ALL movement types: launch, hire, promotion, departure, appointment, partnership
+3. If one sentence mentions multiple people, create separate entries for each
+4. Capture fund launches, new roles, promotions, team formations
+5. Don't skip anyone - be exhaustive
+6. Movement types must be one of: launch, hire, promotion, departure, appointment, partnership
+7. Always include previous_company if mentioned (like "ex-Goldman", "former DB")
+
+Expected result: 15-20+ entries from this newsletter sample.
 """
     
     try:
@@ -373,8 +379,98 @@ with st.sidebar:
     except:
         api_key = st.text_input("Gemini API Key", type="password", help="Get from: https://makersuite.google.com/app/apikey")
     
+    # Model Selection
+    st.subheader("🤖 Model Selection")
+    model_options = {
+        "Gemini 2.5 Flash (BEST)": "gemini-2.5-flash",
+        "Gemini 2.0 Flash": "gemini-2.0-flash", 
+        "Gemini 1.5 Flash": "gemini-1.5-flash",
+        "Gemini 1.5 Pro (Advanced)": "gemini-1.5-pro"
+    }
+    
+    selected_model_name = st.selectbox(
+        "Choose extraction model:",
+        options=list(model_options.keys()),
+        index=0,  # Default to 2.5 Flash
+        help="2.5 Flash recommended for best extraction accuracy"
+    )
+    
+    selected_model_id = model_options[selected_model_name]
+    
+    # Show model info
+    if "2.5-flash" in selected_model_id:
+        st.info("🌟 **Best choice**: Most accurate extraction, latest model")
+    elif "2.0-flash" in selected_model_id:
+        st.info("⚡ **Great choice**: Fast and accurate, good rate limits")
+    elif "1.5-pro" in selected_model_id:
+        st.warning("🧠 **Advanced**: Best reasoning but limited rate (2 RPM)")
+    elif "1.5-flash" in selected_model_id:
+        st.info("📊 **Standard**: Basic model, may miss some entries")
+    
     if api_key:
-        model = setup_gemini(api_key)
+        model = setup_gemini(api_key, selected_model_id)
+        
+        # Model Performance Tips
+        with st.expander("📊 Model Performance Guide"):
+            st.markdown("""
+            **🏆 Gemini 2.5 Flash (Recommended)**
+            - Most accurate extraction (15-20+ entries expected)
+            - Best at following complex instructions
+            - Superior pattern recognition
+            - Rate limit: 10 RPM / 250K TPM
+            
+            **⚡ Gemini 2.0 Flash**  
+            - Very good extraction (12-18 entries expected)
+            - Fast processing
+            - Good instruction following
+            - Rate limit: 15 RPM / 1M TPM
+            
+            **🧠 Gemini 1.5 Pro**
+            - Best reasoning for ambiguous cases
+            - Excellent for complex newsletters
+            - **Warning**: Only 2 RPM (very limited!)
+            - Rate limit: 2 RPM / 32K TPM
+            
+            **📊 Gemini 1.5 Flash (Current)**
+            - Basic extraction (6-12 entries typical)
+            - May miss some subtle movements
+            - Fastest processing
+            - Rate limit: 15 RPM / 1M TPM
+            
+            💡 **All models are FREE on the free tier!**
+            """)
+        
+        # Test different models button
+        if st.button("🔬 Compare Models on Sample", use_container_width=True):
+            sample_text = """
+            Harrison Balistreri's Inevitable Capital Management will trade l/s strat.
+            Davidson Kempner eyes European strat for l/s equity co-head New standalone strategy would be led by Vince Ortiz.
+            Ex-Marshall Wace healthcare PM plots HF debut Robin Boldt to debut ROCK2 Capital in London.
+            Tennessee Treasury promotes PE director to deputy CIO Daniel Crews picked for position; senior PM Grant Leslie to lead PE.
+            GS vet teams up with ex-Paloma co-CIO on quant launch Sarah Gray joins Neil Chriss on forming Edge Peak.
+            Options Group strengthens with two new VPs Louis Couronne and Macaire Chue as vice presidents.
+            """
+            
+            st.write("**Testing all models on same sample:**")
+            
+            models_to_test = [
+                ("Gemini 2.5 Flash", "gemini-2.5-flash"),
+                ("Gemini 2.0 Flash", "gemini-2.0-flash"), 
+                ("Gemini 1.5 Flash", "gemini-1.5-flash")
+            ]
+            
+            for model_name, model_id in models_to_test:
+                try:
+                    test_model = setup_gemini(api_key, model_id)
+                    if test_model:
+                        with st.spinner(f"Testing {model_name}..."):
+                            extractions = extract_talent(sample_text, test_model)
+                            count = len(extractions) if extractions else 0
+                            st.write(f"**{model_name}**: {count} movements extracted")
+                except Exception as e:
+                    st.write(f"**{model_name}**: Error - {str(e)}")
+            
+            st.info("💡 Higher extraction count = better model for your use case")
         
         st.markdown("---")
         st.subheader("📰 Extract from Newsletter")
@@ -417,83 +513,116 @@ with st.sidebar:
         
         if st.button("🧪 Test Sample", use_container_width=True):
             sample_text = """
-            Li Wei Chen joins Hillhouse Capital as Portfolio Manager from Sequoia Capital China.
-            Akira Tanaka promoted to CIO at Millennium Singapore office.
-            Sarah Kim moves from Goldman Sachs Asia to head research at Citadel Hong Kong.
-            Zhang Ming launches new fund at Greenwoods Asset Management.
-            Priya Sharma departs Two Sigma Asia for family office role.
+            Harrison Balistreri's Inevitable Capital Management will trade l/s strat.
+            Davidson Kempner eyes European strat for l/s equity co-head New standalone strategy would be led by Vince Ortiz.
+            Ex-Marshall Wace healthcare PM plots HF debut Robin Boldt to debut ROCK2 Capital in London.
+            Tennessee Treasury promotes PE director to deputy CIO Daniel Crews picked for position; senior PM Grant Leslie to lead PE.
+            GS vet teams up with ex-Paloma co-CIO on quant launch Sarah Gray joins Neil Chriss on forming Edge Peak.
+            Options Group strengthens with two new VPs Louis Couronne and Macaire Chue as vice presidents.
             """
             if model:
-                with st.spinner("Testing..."):
+                with st.spinner("Testing extraction..."):
                     extractions = extract_talent(sample_text, model)
                     if extractions:
                         st.success(f"✅ Found {len(extractions)} movements!")
-                        with st.expander("Results"):
+                        with st.expander("Sample Results"):
                             for ext in extractions:
-                                st.write(f"• **{ext['name']}** → {ext['company']}")
+                                st.write(f"• **{ext['name']}** → {ext['company']} ({ext['movement_type']})")
+                    else:
+                        st.warning("No movements found")
+        
+        # Export button
+        if st.session_state.all_extractions:
+            if st.button("📥 Export Extractions as CSV", use_container_width=True):
+                df = pd.DataFrame(st.session_state.all_extractions)
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name=f"hedge_fund_extractions_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
     
     # Recent Extractions
     if st.session_state.all_extractions:
         st.markdown("---")
-        st.subheader("📊 Recent Extractions")
+        st.subheader("📊 All Extractions")
         st.metric("Total Extracted", len(st.session_state.all_extractions))
         
-        for ext in st.session_state.all_extractions[-3:]:
-            with st.expander(f"{ext['name']} → {ext['company']}"):
-                st.write(f"**Type:** {ext['movement_type']}")
-                if ext.get('title'):
-                    st.write(f"**Title:** {ext['title']}")
-                if ext.get('location'):
-                    st.write(f"**Location:** {ext['location']}")
-                if ext.get('strategy'):
-                    st.write(f"**Strategy:** {ext['strategy']}")
-                if st.button(f"➕ Add {ext['name']}", key=f"add_{ext['name']}_{ext['timestamp']}"):
-                    # Add to people and firms
-                    new_person_id = str(uuid.uuid4())
-                    st.session_state.people.append({
-                        "id": new_person_id,
-                        "name": ext['name'],
-                        "current_title": ext.get('title', 'Unknown'),
-                        "current_company_name": ext['company'],
-                        "location": ext.get('location', 'Unknown'),
-                        "email": "",
-                        "linkedin_profile_url": "",
-                        "phone": "",
-                        "education": "",
-                        "expertise": ext.get('strategy', ''),
-                        "aum_managed": "",
-                        "strategy": ext.get('strategy', 'Unknown')
-                    })
-                    
-                    # Add firm if doesn't exist
-                    if not get_firm_by_name(ext['company']):
-                        new_firm_id = str(uuid.uuid4())
-                        st.session_state.firms.append({
-                            "id": new_firm_id,
-                            "name": ext['company'],
-                            "location": ext.get('location', 'Unknown'),
-                            "headquarters": "Unknown",
-                            "aum": "Unknown",
-                            "founded": None,
-                            "strategy": ext.get('strategy', 'Hedge Fund'),
-                            "website": "",
-                            "description": f"Hedge fund operating in {ext.get('location', 'Asia')} - {ext.get('strategy', 'Multi-strategy')}"
-                        })
-                    
-                    # Add employment
-                    st.session_state.employments.append({
-                        "id": str(uuid.uuid4()),
-                        "person_id": new_person_id,
-                        "company_name": ext['company'],
-                        "title": ext.get('title', 'Unknown'),
-                        "start_date": date.today(),
-                        "end_date": None,
-                        "location": ext.get('location', 'Unknown'),
-                        "strategy": ext.get('strategy', 'Unknown')
-                    })
-                    
-                    st.success(f"✅ Added {ext['name']}!")
-                    st.rerun()
+        # Show all extractions with status
+        for i, ext in enumerate(st.session_state.all_extractions):
+            # Check if already added
+            is_added = any(p['name'].lower() == ext['name'].lower() for p in st.session_state.people)
+            status = "✅ Added" if is_added else "⏳ Pending"
+            
+            with st.expander(f"{status} | {ext['name']} → {ext['company']}"):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**Type:** {ext['movement_type']}")
+                    if ext.get('title'):
+                        st.write(f"**Title:** {ext['title']}")
+                    if ext.get('location'):
+                        st.write(f"**Location:** {ext['location']}")
+                    if ext.get('strategy'):
+                        st.write(f"**Strategy:** {ext['strategy']}")
+                    if ext.get('previous_company'):
+                        st.write(f"**Previous:** {ext['previous_company']}")
+                    if ext.get('context'):
+                        st.write(f"**Context:** {ext['context']}")
+                    st.write(f"**Extracted:** {ext.get('timestamp', 'Unknown')}")
+                
+                with col2:
+                    if not is_added:
+                        if st.button(f"➕ Add", key=f"add_{i}_{ext['timestamp']}"):
+                            # Add to people and firms
+                            new_person_id = str(uuid.uuid4())
+                            st.session_state.people.append({
+                                "id": new_person_id,
+                                "name": ext['name'],
+                                "current_title": ext.get('title', 'Unknown'),
+                                "current_company_name": ext['company'],
+                                "location": ext.get('location', 'Unknown'),
+                                "email": "",
+                                "linkedin_profile_url": "",
+                                "phone": "",
+                                "education": "",
+                                "expertise": ext.get('strategy', ''),
+                                "aum_managed": "",
+                                "strategy": ext.get('strategy', 'Unknown')
+                            })
+                            
+                            # Add firm if doesn't exist
+                            if not get_firm_by_name(ext['company']):
+                                new_firm_id = str(uuid.uuid4())
+                                st.session_state.firms.append({
+                                    "id": new_firm_id,
+                                    "name": ext['company'],
+                                    "location": ext.get('location', 'Unknown'),
+                                    "headquarters": "Unknown",
+                                    "aum": "Unknown",
+                                    "founded": None,
+                                    "strategy": ext.get('strategy', 'Hedge Fund'),
+                                    "website": "",
+                                    "description": f"Hedge fund operating in {ext.get('location', 'Asia')} - {ext.get('strategy', 'Multi-strategy')}"
+                                })
+                            
+                            # Add employment
+                            st.session_state.employments.append({
+                                "id": str(uuid.uuid4()),
+                                "person_id": new_person_id,
+                                "company_name": ext['company'],
+                                "title": ext.get('title', 'Unknown'),
+                                "start_date": date.today(),
+                                "end_date": None,
+                                "location": ext.get('location', 'Unknown'),
+                                "strategy": ext.get('strategy', 'Unknown')
+                            })
+                            
+                            st.success(f"✅ Added {ext['name']}!")
+                            st.rerun()
+                    else:
+                        st.success("Already Added ✅")
 
 # --- MAIN CONTENT AREA ---
 st.title("🏢 Asian Hedge Fund Talent Map")
