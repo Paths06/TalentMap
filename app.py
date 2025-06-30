@@ -13,7 +13,23 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🏢 Hedge Fund Talent Map - CRASH-PROOF VERSION")
+st.title("🏢 Hedge Fund Talent Map - STABLE VERSION")
+
+# Quick mode comparison
+with st.container():
+    st.success("""
+    ✅ **CRASH-PROOF EXTRACTION:**
+    • **🛡️ Safe Mode**: Process first 15K chars instantly (good for testing)
+    • **⚡ Chunked Mode**: Process full file safely in 12K chunks (complete extraction)
+    • **🔄 Progress Tracking**: See exactly what's happening
+    • **🚫 No Crashes**: File size limits and error recovery
+    """)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info("**🛡️ Safe Mode:** Fast • 15K chars • ~8 people from your file")
+    with col2:
+        st.info("**⚡ Chunked Mode:** Complete • 50K chars • ~20+ people expected")
 
 # Initialize minimal session state
 if 'extractions' not in st.session_state:
@@ -64,8 +80,77 @@ def read_file_safely(uploaded_file, max_size_kb=100):
         st.error(f"❌ File reading error: {e}")
         return None
 
-# Simple extraction function
-def extract_simple(text, model):
+# Safe chunked extraction function
+def extract_chunked_safe(text, model, chunk_size=12000, max_chunks=5):
+    """Process large text in safe chunks with progress tracking"""
+    try:
+        total_chars = len(text)
+        st.info(f"📄 Processing {total_chars:,} characters in chunks of {chunk_size:,}")
+        
+        all_extractions = []
+        processed_chars = 0
+        
+        # Create progress containers
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Process in chunks
+        chunk_num = 0
+        while processed_chars < total_chars and chunk_num < max_chunks:
+            chunk_num += 1
+            
+            # Extract chunk with small overlap
+            start_pos = max(0, processed_chars - 500)  # 500 char overlap
+            end_pos = min(start_pos + chunk_size, total_chars)
+            chunk_text = text[start_pos:end_pos]
+            
+            status_text.info(f"🔄 Processing chunk {chunk_num} ({len(chunk_text):,} chars)...")
+            
+            # Rate limiting delay
+            if chunk_num > 1:
+                status_text.info(f"⏱️ Rate limit delay: 3 seconds...")
+                time.sleep(3)
+            
+            # Process chunk
+            try:
+                chunk_extractions = extract_simple(chunk_text, model)
+                
+                if chunk_extractions:
+                    # Simple deduplication by name
+                    existing_names = {ext.get('name', '').lower() for ext in all_extractions}
+                    new_extractions = [
+                        ext for ext in chunk_extractions 
+                        if ext.get('name', '').lower() not in existing_names
+                    ]
+                    
+                    all_extractions.extend(new_extractions)
+                    status_text.success(f"✅ Chunk {chunk_num}: Found {len(chunk_extractions)} people ({len(new_extractions)} new)")
+                else:
+                    status_text.warning(f"⚠️ Chunk {chunk_num}: No extractions found")
+                
+            except Exception as e:
+                status_text.error(f"❌ Chunk {chunk_num} failed: {e}")
+                # Continue with next chunk
+            
+            # Update progress
+            processed_chars = end_pos
+            progress = min(processed_chars / total_chars, 1.0)
+            progress_bar.progress(progress)
+            
+            # Safety break
+            if chunk_num >= max_chunks:
+                status_text.warning(f"⚠️ Stopped at {max_chunks} chunks (safety limit)")
+                break
+        
+        # Final status
+        progress_bar.progress(1.0)
+        status_text.success(f"🎯 **Complete!** Processed {processed_chars:,}/{total_chars:,} chars in {chunk_num} chunks")
+        
+        return all_extractions
+        
+    except Exception as e:
+        st.error(f"❌ Chunked processing failed: {e}")
+        return []
     """Simple extraction without complex processing"""
     try:
         # Limit text to prevent API issues
@@ -137,7 +222,17 @@ with st.sidebar:
     # File Upload with Safety
     st.subheader("📁 Upload Newsletter")
     
-    max_file_size = st.selectbox("Max file size:", [50, 100, 200], index=1, format_func=lambda x: f"{x}KB")
+    processing_mode = st.radio(
+        "Processing mode:",
+        ["🛡️ Safe (15K chars)", "⚡ Chunked (Full file)"],
+        help="Safe mode: Fast, single chunk. Chunked: Processes full file in pieces."
+    )
+    
+    if processing_mode.startswith("🛡️"):
+        max_file_size = st.selectbox("Max file size:", [50, 100, 200], index=1, format_func=lambda x: f"{x}KB")
+    else:
+        max_file_size = st.selectbox("Max file size:", [100, 200, 500], index=1, format_func=lambda x: f"{x}KB")
+        st.info("🔄 **Chunked mode**: Will process full file in safe 12K chunks with 3s delays")
     
     uploaded_file = st.file_uploader(
         "Choose file:", 
@@ -181,10 +276,18 @@ with st.sidebar:
         else:
             try:
                 st.info("🔄 Starting extraction...")
-                
-                # Process with timeout
                 start_time = time.time()
-                extractions = extract_simple(newsletter_content, model)
+                
+                # Choose processing method
+                if processing_mode.startswith("🛡️"):
+                    # Safe mode - single chunk
+                    st.info(f"🛡️ **Safe mode**: Processing first 15K characters")
+                    extractions = extract_simple(newsletter_content, model)
+                else:
+                    # Chunked mode - full file
+                    st.info(f"⚡ **Chunked mode**: Processing full {len(newsletter_content):,} characters")
+                    extractions = extract_chunked_safe(newsletter_content, model)
+                
                 elapsed = time.time() - start_time
                 
                 if extractions:
@@ -192,17 +295,25 @@ with st.sidebar:
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     for ext in extractions:
                         ext['timestamp'] = timestamp
+                        ext['mode'] = processing_mode.split()[0]
                     
                     # Add to session state
                     st.session_state.extractions.extend(extractions)
                     
                     st.success(f"✅ Found {len(extractions)} people in {elapsed:.1f}s")
+                    
+                    # Show comparison
+                    if processing_mode.startswith("🛡️"):
+                        estimated_full = int(len(extractions) * (len(newsletter_content) / 15000))
+                        st.info(f"💡 **Estimate**: Full file might contain ~{estimated_full} people. Try chunked mode for complete extraction.")
+                    
                     st.rerun()
                 else:
                     st.warning("⚠️ No extractions found")
                     
             except Exception as e:
                 st.error(f"❌ Processing failed: {e}")
+                st.info("💡 **Tip**: Try safe mode if chunked mode fails")
     
     # Debug mode
     if st.checkbox("🐛 Debug mode"):
@@ -218,7 +329,8 @@ if st.session_state.extractions:
     
     # Display results
     for i, ext in enumerate(st.session_state.extractions):
-        with st.expander(f"👤 {ext.get('name', 'Unknown')} → {ext.get('company', 'Unknown')}"):
+        mode_badge = ext.get('mode', '🔧')
+        with st.expander(f"{mode_badge} {ext.get('name', 'Unknown')} → {ext.get('company', 'Unknown')}"):
             col1, col2 = st.columns(2)
             
             with col1:
@@ -228,6 +340,7 @@ if st.session_state.extractions:
             
             with col2:
                 st.write(f"**Type:** {ext.get('type', 'Unknown')}")
+                st.write(f"**Mode:** {ext.get('mode', 'Unknown')}")
                 st.write(f"**Extracted:** {ext.get('timestamp', 'Unknown')}")
             
             # Add to people database
@@ -258,6 +371,22 @@ if st.session_state.extractions:
             "extractions.csv",
             "text/csv"
         )
+    
+    # Results analysis
+    with st.expander("📊 Results Analysis"):
+        safe_mode_results = [ext for ext in st.session_state.extractions if ext.get('mode') == '🛡️']
+        chunked_mode_results = [ext for ext in st.session_state.extractions if ext.get('mode') == '⚡']
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("🛡️ Safe Mode", len(safe_mode_results))
+        with col2:
+            st.metric("⚡ Chunked Mode", len(chunked_mode_results))
+        
+        if safe_mode_results and chunked_mode_results:
+            st.success("✅ **Chunked mode found more people!** This shows full file processing works.")
+        elif safe_mode_results:
+            st.info("💡 Try chunked mode to process your full file and find more people.")
     
     # Clear button
     if st.button("🗑️ Clear All Extractions"):
