@@ -32,7 +32,8 @@ if 'people' not in st.session_state:
             "phone": "+852-1234-5678",
             "education": "Harvard Business School, Tsinghua University",
             "expertise": "Technology, Healthcare",
-            "aum_managed": "2.5B USD"
+            "aum_managed": "2.5B USD",
+            "strategy": "Long-only Growth Equity"
         },
         {
             "id": str(uuid.uuid4()),
@@ -45,7 +46,8 @@ if 'people' not in st.session_state:
             "phone": "+65-9876-5432",
             "education": "Tokyo University, Wharton",
             "expertise": "Quantitative Trading, Fixed Income",
-            "aum_managed": "1.8B USD"
+            "aum_managed": "1.8B USD",
+            "strategy": "Multi-Strategy Quantitative"
         },
         {
             "id": str(uuid.uuid4()),
@@ -58,7 +60,8 @@ if 'people' not in st.session_state:
             "phone": "+82-10-1234-5678",
             "education": "Seoul National University, MIT Sloan",
             "expertise": "Equity Research, ESG",
-            "aum_managed": "800M USD"
+            "aum_managed": "800M USD",
+            "strategy": "Equity Long/Short"
         }
     ]
     st.session_state.people.extend(sample_people)
@@ -116,7 +119,8 @@ if 'employments' not in st.session_state:
                 "title": person['current_title'],
                 "start_date": date(2020, 1, 1),
                 "end_date": None,
-                "location": person['location']
+                "location": person['location'],
+                "strategy": person.get('strategy', 'Unknown')
             })
 
 if 'all_extractions' not in st.session_state:
@@ -151,40 +155,147 @@ def setup_gemini(api_key):
         st.error(f"Error setting up Gemini: {e}")
         return None
 
+def preprocess_newsletter(raw_text):
+    """Clean and preprocess newsletter text for better AI extraction"""
+    import re
+    
+    # Convert to string if bytes
+    if isinstance(raw_text, bytes):
+        raw_text = raw_text.decode('utf-8', errors='ignore')
+    
+    text = raw_text
+    
+    # Remove email headers (From:, Sent:, To:, Subject:)
+    text = re.sub(r'^From:.*?Subject:.*?\n', '', text, flags=re.MULTILINE | re.DOTALL)
+    
+    # Remove long URLs and email links
+    text = re.sub(r'https?://[^\s<>"]+', '', text)
+    text = re.sub(r'mailto:[^\s<>"]+', '', text)
+    
+    # Remove HTML-like tags and formatting
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'&[^;]+;', ' ', text)  # HTML entities
+    
+    # Remove JP Morgan specific boilerplate
+    boilerplate_patterns = [
+        r'This section contains materials produced by third parties.*?for the results obtained from your use of such information\.',
+        r'© 202\d JPMorgan Chase.*?(?=\n|$)',
+        r'JPMorgan Chase Bank.*?FDIC insured\.',
+        r'Important Reminder: JPMorgan Chase will never send emails.*?(?=\n|$)',
+        r'This message is confidential.*?(?=\n|$)',
+        r'Unsubscribe.*?(?=\n|$)',
+        r'Privacy Policy.*?(?=\n|$)',
+        r'J\.P\. Morgan Corporate & Investment Bank Marketing.*?(?=\n|$)',
+        r'CAPITAL ADVISORY GROUP.*?(?=\n|$)',
+        r'Hedge Fund News.*?(?=\n|$)',
+        r'SEE ALL ARTICLES.*?(?=\n|$)',
+        r'jpmorgan\.com.*?(?=\n|$)'
+    ]
+    
+    for pattern in boilerplate_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL)
+    
+    # Remove excessive whitespace and line breaks
+    text = re.sub(r'\n\s*\n', '\n\n', text)  # Multiple line breaks to double
+    text = re.sub(r'[ \t]+', ' ', text)  # Multiple spaces to single
+    
+    # Remove lines that are just separators or formatting
+    lines = text.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        # Skip empty lines, separators, and formatting junk
+        if (len(line) > 10 and 
+            not line.startswith('_') and 
+            not line.startswith('=') and
+            not line.startswith('|') and
+            not re.match(r'^[^a-zA-Z]*$', line) and  # Skip lines with no letters
+            'unsubscribe' not in line.lower() and
+            'privacy policy' not in line.lower() and
+            'jpmorgan' not in line.lower() and
+            len(line.split()) > 2):  # Need at least 3 words
+            cleaned_lines.append(line)
+    
+    # Join back and clean up
+    text = '\n'.join(cleaned_lines)
+    
+    # Extract main content sections - look for news items
+    # JP Morgan newsletters typically have "Source:" pattern
+    news_items = []
+    current_item = ""
+    
+    for line in text.split('\n'):
+        line = line.strip()
+        if line:
+            if line.startswith('Source:'):
+                if current_item:
+                    news_items.append(current_item.strip())
+                current_item = ""
+            else:
+                current_item += " " + line
+    
+    # Add the last item
+    if current_item:
+        news_items.append(current_item.strip())
+    
+    # If we found structured news items, use those
+    if news_items and len(news_items) > 2:
+        text = '\n\n'.join(news_items)
+    
+    # Final cleanup
+    text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
+    text = text.strip()
+    
+    return text
+
 def extract_talent(newsletter_text, model):
-    """Extract Asian hedge fund talent movements using Gemini AI"""
+    """Extract hedge fund talent movements using Gemini AI"""
+    
+    # Preprocess the newsletter first
+    cleaned_text = preprocess_newsletter(newsletter_text)
+    
     prompt = f"""
-You are an expert at extracting talent movements from Asian financial newsletters, specifically focused on hedge funds, private equity, and asset management.
+You are an expert at extracting talent movements from financial newsletters and industry news.
 
-Extract people and their career movements from this text, focusing on:
-- Hedge funds, private equity firms, asset management companies
-- Asian markets (Hong Kong, Singapore, Tokyo, Seoul, Mumbai, etc.)
-- Senior roles (PM, CIO, MD, Partner, Analyst, etc.)
+Extract ALL people and their career movements from this CLEANED text. Look for:
+- New hires, departures, promotions, launches
+- Hedge funds, private equity, asset management, family offices
+- Portfolio managers, CIOs, analysts, partners, directors
+- Fund launches, team formations, executive moves
 
-Text to analyze:
-{newsletter_text[:2000]}
+CLEANED TEXT TO ANALYZE:
+{cleaned_text[:3000]}
 
 Return ONLY a valid JSON object in this exact format:
 {{
   "extractions": [
     {{
       "name": "First Last",
-      "company": "Company Name",
+      "company": "Company Name", 
       "previous_company": "Previous Company (if mentioned)",
       "movement_type": "hire",
-      "title": "Position Title",
-      "location": "City, Country",
-      "context": "Brief description"
+      "title": "Position Title (if mentioned)",
+      "location": "Location (if mentioned)",
+      "context": "Brief description of the movement"
     }}
   ]
 }}
 
+Examples from typical movements:
+- "Harrison Balistreri's Inevitable Capital Management" → name: "Harrison Balistreri", company: "Inevitable Capital Management", movement_type: "launch"
+- "Sarah Gray joins Neil Chriss on forming Edge Peak" → Two entries for both people
+- "Robin Boldt to debut ROCK2 Capital" → name: "Robin Boldt", company: "ROCK2 Capital", movement_type: "launch"
+- "Daniel Crews picked for position at Tennessee Treasury" → name: "Daniel Crews", company: "Tennessee Treasury", movement_type: "hire"
+- "Vince Ortiz would lead new strategy" → name: "Vince Ortiz", movement_type: "appointment"
+
 Rules:
-- Only extract real person names (First + Last name)
-- Movement types: hire, promotion, launch, departure, partnership
-- Focus on hedge funds and asset management
-- Include Asian locations when mentioned
-- No job titles or acronyms as names
+- Extract EVERY person mentioned in a professional context
+- Movement types: hire, promotion, launch, departure, partnership, appointment
+- Include both first and last names only
+- If multiple people in one sentence, create separate entries
+- Skip generic references without specific names
+- Focus on hedge funds, PE, asset management industry
 """
     
     try:
@@ -334,6 +445,8 @@ with st.sidebar:
                     st.write(f"**Title:** {ext['title']}")
                 if ext.get('location'):
                     st.write(f"**Location:** {ext['location']}")
+                if ext.get('strategy'):
+                    st.write(f"**Strategy:** {ext['strategy']}")
                 if st.button(f"➕ Add {ext['name']}", key=f"add_{ext['name']}_{ext['timestamp']}"):
                     # Add to people and firms
                     new_person_id = str(uuid.uuid4())
@@ -342,13 +455,14 @@ with st.sidebar:
                         "name": ext['name'],
                         "current_title": ext.get('title', 'Unknown'),
                         "current_company_name": ext['company'],
-                        "location": ext.get('location', 'Asia'),
+                        "location": ext.get('location', 'Unknown'),
                         "email": "",
                         "linkedin_profile_url": "",
                         "phone": "",
                         "education": "",
-                        "expertise": "",
-                        "aum_managed": ""
+                        "expertise": ext.get('strategy', ''),
+                        "aum_managed": "",
+                        "strategy": ext.get('strategy', 'Unknown')
                     })
                     
                     # Add firm if doesn't exist
@@ -357,13 +471,13 @@ with st.sidebar:
                         st.session_state.firms.append({
                             "id": new_firm_id,
                             "name": ext['company'],
-                            "location": ext.get('location', 'Asia'),
+                            "location": ext.get('location', 'Unknown'),
                             "headquarters": "Unknown",
                             "aum": "Unknown",
                             "founded": None,
-                            "strategy": "Hedge Fund",
+                            "strategy": ext.get('strategy', 'Hedge Fund'),
                             "website": "",
-                            "description": f"Hedge fund operating in {ext.get('location', 'Asia')}"
+                            "description": f"Hedge fund operating in {ext.get('location', 'Asia')} - {ext.get('strategy', 'Multi-strategy')}"
                         })
                     
                     # Add employment
@@ -374,7 +488,8 @@ with st.sidebar:
                         "title": ext.get('title', 'Unknown'),
                         "start_date": date.today(),
                         "end_date": None,
-                        "location": ext.get('location', 'Asia')
+                        "location": ext.get('location', 'Unknown'),
+                        "strategy": ext.get('strategy', 'Unknown')
                     })
                     
                     st.success(f"✅ Added {ext['name']}!")
@@ -441,6 +556,8 @@ if st.session_state.show_add_person_modal:
         
         with col4:
             start_date = st.date_input("Start Date at Current Company", value=date.today())
+            strategy = st.selectbox("Investment Strategy", 
+                                  options=["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"])
         
         submitted = st.form_submit_button("Add Person")
         
@@ -458,7 +575,8 @@ if st.session_state.show_add_person_modal:
                     "phone": phone,
                     "education": education,
                     "expertise": expertise,
-                    "aum_managed": aum
+                    "aum_managed": aum,
+                    "strategy": strategy
                 })
                 
                 # Add employment record
@@ -469,7 +587,8 @@ if st.session_state.show_add_person_modal:
                     "title": title,
                     "start_date": start_date,
                     "end_date": None,
-                    "location": location
+                    "location": location,
+                    "strategy": strategy
                 })
                 
                 st.success(f"✅ Added {name} to the network!")
@@ -574,7 +693,8 @@ elif st.session_state.current_view == 'people':
                 "Name": person['name'],
                 "Title": person['current_title'],
                 "Company": person['current_company_name'],
-                "Location": person['location'],
+                "Location": person.get('location', 'Unknown'),
+                "Strategy": person.get('strategy', 'Unknown'),
                 "AUM Managed": person.get('aum_managed', ''),
                 "Expertise": person.get('expertise', ''),
                 "ID": person['id']
@@ -583,12 +703,14 @@ elif st.session_state.current_view == 'people':
         df = pd.DataFrame(people_data)
         
         # Filters
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             location_filter = st.selectbox("Filter by Location", ["All"] + list(df['Location'].unique()))
         with col2:
             company_filter = st.selectbox("Filter by Company", ["All"] + list(df['Company'].unique()))
         with col3:
+            strategy_filter = st.selectbox("Filter by Strategy", ["All"] + list(df['Strategy'].unique()))
+        with col4:
             expertise_filter = st.text_input("Search by Expertise", placeholder="Technology, Healthcare...")
         
         # Apply filters
@@ -597,6 +719,8 @@ elif st.session_state.current_view == 'people':
             filtered_df = filtered_df[filtered_df['Location'] == location_filter]
         if company_filter != "All":
             filtered_df = filtered_df[filtered_df['Company'] == company_filter]
+        if strategy_filter != "All":
+            filtered_df = filtered_df[filtered_df['Strategy'] == strategy_filter]
         if expertise_filter:
             filtered_df = filtered_df[filtered_df['Expertise'].str.contains(expertise_filter, case=False, na=False)]
         
@@ -655,13 +779,15 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
             with st.expander(f"{person['name']} - {person['current_title']}"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write(f"**📧 Email:** {person['email']}")
-                    st.write(f"**📱 Phone:** {person['phone']}")
-                    st.write(f"**🎓 Education:** {person['education']}")
+                    st.write(f"**📧 Email:** {person.get('email', 'Unknown')}")
+                    st.write(f"**📱 Phone:** {person.get('phone', 'Unknown')}")
+                    st.write(f"**🎓 Education:** {person.get('education', 'Unknown')}")
                 with col2:
-                    st.write(f"**🏆 Expertise:** {person['expertise']}")
-                    st.write(f"**💰 AUM Managed:** {person['aum_managed']}")
-                    if person['linkedin_profile_url']:
+                    st.write(f"**🏆 Expertise:** {person.get('expertise', 'Unknown')}")
+                    st.write(f"**💰 AUM Managed:** {person.get('aum_managed', 'Unknown')}")
+                    if person.get('strategy') and person.get('strategy') != 'Unknown':
+                        st.write(f"**📈 Strategy:** {person['strategy']}")
+                    if person.get('linkedin_profile_url'):
                         st.markdown(f"**🔗 LinkedIn:** [{person['linkedin_profile_url']}]({person['linkedin_profile_url']})")
                 
                 if st.button(f"View Full Profile", key=f"view_full_{person['id']}"):
@@ -692,20 +818,22 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     # Contact info
     col1, col2 = st.columns(2)
     with col1:
-        if person['email']:
+        if person.get('email'):
             st.markdown(f"📧 [{person['email']}](mailto:{person['email']})")
-        if person['phone']:
+        if person.get('phone'):
             st.markdown(f"📱 {person['phone']}")
-        if person['linkedin_profile_url']:
+        if person.get('linkedin_profile_url'):
             st.markdown(f"🔗 [LinkedIn Profile]({person['linkedin_profile_url']})")
     
     with col2:
-        if person['education']:
+        if person.get('education'):
             st.markdown(f"🎓 **Education:** {person['education']}")
-        if person['expertise']:
+        if person.get('expertise'):
             st.markdown(f"🏆 **Expertise:** {person['expertise']}")
-        if person['aum_managed']:
+        if person.get('aum_managed'):
             st.markdown(f"💰 **AUM Managed:** {person['aum_managed']}")
+        if person.get('strategy') and person.get('strategy') != 'Unknown':
+            st.markdown(f"📈 **Strategy:** {person['strategy']}")
     
     # Employment History
     st.markdown("---")
