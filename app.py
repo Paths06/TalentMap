@@ -139,104 +139,6 @@ def init_dummy_data():
             "expertise": "Equity Research, ESG",
             "aum_managed": "800M USD",
             "strategy": "Equity Long/Short"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Raj Patel",
-            "current_title": "Managing Director",
-            "current_company_name": "Two Sigma Asia",
-            "location": "Singapore",
-            "email": "r.patel@twosigma.com",
-            "linkedin_profile_url": "https://linkedin.com/in/rajpatel",
-            "phone": "+65-8765-4321",
-            "education": "IIT Delhi, Stanford MBA",
-            "expertise": "Machine Learning, Algorithmic Trading",
-            "aum_managed": "3.2B USD",
-            "strategy": "Systematic Trading"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Michael Wong",
-            "current_title": "Senior Vice President",
-            "current_company_name": "Bridgewater Asia",
-            "location": "Hong Kong",
-            "email": "m.wong@bridgewater.com",
-            "linkedin_profile_url": "https://linkedin.com/in/michaelwong",
-            "phone": "+852-9876-1234",
-            "education": "HKU, Chicago Booth",
-            "expertise": "Global Macro, Risk Management",
-            "aum_managed": "1.5B USD",
-            "strategy": "Pure Alpha"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Jennifer Zhang",
-            "current_title": "Portfolio Manager",
-            "current_company_name": "Goldman Sachs Asia",
-            "location": "Beijing",
-            "email": "j.zhang@gs.com",
-            "linkedin_profile_url": "https://linkedin.com/in/jenniferzhang",
-            "phone": "+86-138-0013-8000",
-            "education": "Peking University, Columbia Business School",
-            "expertise": "Consumer, Internet",
-            "aum_managed": "1.2B USD",
-            "strategy": "Principal Investing"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "David Yamamoto",
-            "current_title": "Head of Japan Equity",
-            "current_company_name": "Citadel Asia",
-            "location": "Tokyo",
-            "email": "d.yamamoto@citadel.com",
-            "linkedin_profile_url": "https://linkedin.com/in/davidyamamoto",
-            "phone": "+81-3-1234-5678",
-            "education": "Waseda University, Kellogg",
-            "expertise": "Japanese Equities, Value Investing",
-            "aum_managed": "950M USD",
-            "strategy": "Equity Long/Short"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Priya Sharma",
-            "current_title": "Director",
-            "current_company_name": "Two Sigma Asia",
-            "location": "Mumbai",
-            "email": "p.sharma@twosigma.com",
-            "linkedin_profile_url": "https://linkedin.com/in/priyasharma",
-            "phone": "+91-98765-43210",
-            "education": "IIM Ahmedabad, MIT",
-            "expertise": "Data Science, Alternative Data",
-            "aum_managed": "600M USD",
-            "strategy": "Alternative Data"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "James Liu",
-            "current_title": "Investment Director",
-            "current_company_name": "Hillhouse Capital",
-            "location": "Shanghai",
-            "email": "j.liu@hillhouse.com",
-            "linkedin_profile_url": "https://linkedin.com/in/jamesliu",
-            "phone": "+86-21-1234-5678",
-            "education": "CEIBS, Wharton",
-            "expertise": "TMT, Private Equity",
-            "aum_managed": "2.1B USD",
-            "strategy": "Growth Equity"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Emily Tan",
-            "current_title": "VP of Trading",
-            "current_company_name": "Millennium Partners Asia",
-            "location": "Hong Kong",
-            "email": "e.tan@millennium.com",
-            "linkedin_profile_url": "https://linkedin.com/in/emilytan",
-            "phone": "+852-5555-6666",
-            "education": "HKUST, London Business School",
-            "expertise": "Systematic Trading, Risk Management",
-            "aum_managed": "750M USD",
-            "strategy": "Quantitative Equity"
         }
     ]
     
@@ -274,39 +176,6 @@ def init_dummy_data():
             "strategy": "Multi-strategy, Market Making",
             "website": "https://citadel.com",
             "description": "Leading global hedge fund with growing Asian presence"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Two Sigma Asia",
-            "location": "Singapore",
-            "headquarters": "New York, USA",
-            "aum": "25B USD",
-            "founded": 2001,
-            "strategy": "Systematic, Machine Learning",
-            "website": "https://twosigma.com",
-            "description": "Data-driven investment manager with Asian expansion"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Bridgewater Asia",
-            "location": "Hong Kong",
-            "headquarters": "Connecticut, USA",
-            "aum": "140B USD",
-            "founded": 1975,
-            "strategy": "Global Macro, Pure Alpha",
-            "website": "https://bridgewater.com",
-            "description": "World's largest hedge fund with Asian investment focus"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "name": "Goldman Sachs Asia",
-            "location": "Hong Kong",
-            "headquarters": "New York, USA",
-            "aum": "80B USD",
-            "founded": 1869,
-            "strategy": "Multi-strategy, Principal Investing",
-            "website": "https://gs.com",
-            "description": "Global investment bank with substantial Asian hedge fund operations"
         }
     ]
     
@@ -338,143 +207,6 @@ def init_dummy_data():
         }
     ])
     
-    # Jennifer Zhang's history (overlaps with Li Wei at Goldman Sachs)
-    jennifer_id = sample_people[5]['id']
-    sample_employments.extend([
-        {
-            "id": str(uuid.uuid4()),
-            "person_id": jennifer_id,
-            "company_name": "Goldman Sachs Asia",
-            "title": "Associate",
-            "start_date": date(2019, 6, 1),
-            "end_date": date(2022, 12, 31),
-            "location": "Hong Kong",
-            "strategy": "Principal Investing"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "person_id": jennifer_id,
-            "company_name": "Goldman Sachs Asia",
-            "title": "Portfolio Manager",
-            "start_date": date(2023, 1, 1),
-            "end_date": None,
-            "location": "Beijing",
-            "strategy": "Principal Investing"
-        }
-    ])
-    
-    # Akira Tanaka's history
-    akira_id = sample_people[1]['id']
-    sample_employments.extend([
-        {
-            "id": str(uuid.uuid4()),
-            "person_id": akira_id,
-            "company_name": "Two Sigma Asia",
-            "title": "Senior Researcher",
-            "start_date": date(2017, 1, 15),
-            "end_date": date(2020, 6, 30),
-            "location": "Singapore",
-            "strategy": "Systematic Trading"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "person_id": akira_id,
-            "company_name": "Millennium Partners Asia",
-            "title": "Chief Investment Officer",
-            "start_date": date(2020, 7, 15),
-            "end_date": None,
-            "location": "Singapore",
-            "strategy": "Multi-Strategy"
-        }
-    ])
-    
-    # Priya Sharma's history (overlaps with Akira at Two Sigma)
-    priya_id = sample_people[7]['id']
-    sample_employments.extend([
-        {
-            "id": str(uuid.uuid4()),
-            "person_id": priya_id,
-            "company_name": "Two Sigma Asia",
-            "title": "Analyst",
-            "start_date": date(2018, 8, 1),
-            "end_date": date(2021, 3, 31),
-            "location": "Singapore",
-            "strategy": "Alternative Data"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "person_id": priya_id,
-            "company_name": "Two Sigma Asia",
-            "title": "Director",
-            "start_date": date(2021, 4, 1),
-            "end_date": None,
-            "location": "Mumbai",
-            "strategy": "Alternative Data"
-        }
-    ])
-    
-    # David Yamamoto and Sarah Kim (both at Citadel Asia with overlap)
-    david_id = sample_people[6]['id']
-    sarah_id = sample_people[2]['id']
-    
-    sample_employments.extend([
-        {
-            "id": str(uuid.uuid4()),
-            "person_id": david_id,
-            "company_name": "Bridgewater Asia",
-            "title": "Associate",
-            "start_date": date(2016, 4, 1),
-            "end_date": date(2019, 9, 30),
-            "location": "Hong Kong",
-            "strategy": "Global Macro"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "person_id": david_id,
-            "company_name": "Citadel Asia",
-            "title": "Head of Japan Equity",
-            "start_date": date(2019, 10, 15),
-            "end_date": None,
-            "location": "Tokyo",
-            "strategy": "Equity Long/Short"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "person_id": sarah_id,
-            "company_name": "Citadel Asia",
-            "title": "Research Analyst",
-            "start_date": date(2020, 2, 1),
-            "end_date": date(2022, 6, 15),
-            "location": "Seoul",
-            "strategy": "Equity Research"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "person_id": sarah_id,
-            "company_name": "Citadel Asia",
-            "title": "Head of Research",
-            "start_date": date(2022, 6, 16),
-            "end_date": None,
-            "location": "Seoul",
-            "strategy": "Equity Long/Short"
-        }
-    ])
-    
-    # Add more employment histories for remaining people
-    for person in sample_people[3:]:  # Raj Patel onwards
-        if person['id'] not in [p['person_id'] for p in sample_employments]:
-            # Add current employment
-            sample_employments.append({
-                "id": str(uuid.uuid4()),
-                "person_id": person['id'],
-                "company_name": person['current_company_name'],
-                "title": person['current_title'],
-                "start_date": date(2020, 1, 1),
-                "end_date": None,
-                "location": person['location'],
-                "strategy": person.get('strategy', 'Unknown')
-            })
-    
     return sample_people, sample_firms, sample_employments
 
 def initialize_session_state():
@@ -503,6 +235,14 @@ def initialize_session_state():
         st.session_state.show_add_person_modal = False
     if 'show_add_firm_modal' not in st.session_state:
         st.session_state.show_add_firm_modal = False
+    if 'show_edit_person_modal' not in st.session_state:
+        st.session_state.show_edit_person_modal = False
+    if 'show_edit_firm_modal' not in st.session_state:
+        st.session_state.show_edit_firm_modal = False
+    if 'edit_person_data' not in st.session_state:
+        st.session_state.edit_person_data = None
+    if 'edit_firm_data' not in st.session_state:
+        st.session_state.edit_firm_data = None
 
 # --- AI Setup ---
 @st.cache_resource
@@ -519,23 +259,6 @@ def setup_gemini(api_key, model_id="gemini-1.5-flash"):
     except Exception as e:
         st.error(f"AI setup failed: {e}")
         return None
-
-def extract_talent_simple(text, model):
-    """Crash-proof extraction with minimal UI updates"""
-    if not model:
-        return []
-    
-    # Simple size-based processing decision
-    max_single_chunk = 15000
-    
-    if len(text) <= max_single_chunk:
-        # Single chunk - simple and reliable
-        st.info("📄 Processing as single chunk...")
-        return extract_single_chunk_safe(text, model)
-    else:
-        # Multi-chunk with crash protection
-        st.info(f"📊 Large file detected ({len(text):,} chars). Using safe chunking...")
-        return extract_multi_chunk_safe(text, model, max_single_chunk)
 
 def extract_single_chunk_safe(text, model):
     """Safe single chunk extraction with timeout"""
@@ -653,246 +376,22 @@ def extract_multi_chunk_safe(text, model, chunk_size):
         st.error(f"Multi-chunk processing failed: {e}")
         return []
 
-def extract_single_chunk(text, model):
-    """Extract from a single chunk"""
-    prompt = f"""
-Extract hedge fund talent movements from this newsletter text.
-
-TEXT:
-{text}
-
-Return JSON format:
-{{
-  "people": [
-    {{
-      "name": "Full Name",
-      "company": "Company Name", 
-      "title": "Job Title",
-      "movement_type": "hire|promotion|launch|departure",
-      "location": "Location",
-      "previous_company": "Previous Company (if mentioned)"
-    }}
-  ]
-}}
-
-Find ALL people mentioned in professional contexts. Look for hires, promotions, fund launches, departures.
-"""
-    
-    try:
-        response = model.generate_content(prompt)
-        if not response or not response.text:
-            return []
-        
-        # Parse JSON response
-        json_start = response.text.find('{')
-        json_end = response.text.rfind('}') + 1
-        
-        if json_start == -1:
-            return []
-        
-        json_text = response.text[json_start:json_end]
-        result = json.loads(json_text)
-        
-        people = result.get('people', [])
-        # Filter valid entries
-        valid_people = []
-        for person in people:
-            if person.get('name') and person.get('company'):
-                valid_people.append(person)
-        
-        return valid_people
-        
-    except Exception as e:
-        st.error(f"Extraction error: {e}")
+def extract_talent_simple(text, model):
+    """Crash-proof extraction with minimal UI updates"""
+    if not model:
         return []
-
-def extract_with_smart_chunking(text, model, chunk_size):
-    """Smart chunking with robust error handling and conservative rate limiting"""
     
-    # Split text into chunks with overlap
-    chunks = []
-    overlap = 1000  # 1K character overlap to catch names at boundaries
-    start = 0
+    # Simple size-based processing decision
+    max_single_chunk = 15000
     
-    while start < len(text):
-        end = min(start + chunk_size, len(text))
-        chunk = text[start:end]
-        
-        # Try to break at sentence boundary
-        if end < len(text):
-            last_period = chunk.rfind('.')
-            if last_period > len(chunk) * 0.8:  # Only if near end
-                chunk = chunk[:last_period + 1]
-                end = start + len(chunk)
-        
-        chunks.append(chunk)
-        start = end - overlap
-        
-        if start >= len(text):
-            break
-    
-    st.info(f"📊 Processing {len(chunks)} chunks (~{chunk_size/1000:.0f}K chars each)")
-    
-    # Conservative rate limiting based on selected model
-    model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
-    
-    if '1.5-pro' in model_id:
-        delay = 45  # Extra conservative for Pro (was 35)
-        rpm = "2 RPM"
-        timeout = 60  # Longer timeout for Pro
-    elif '2.5-flash' in model_id:
-        delay = 10  # More conservative (was 7)
-        rpm = "10 RPM"
-        timeout = 45
-    elif '2.0-flash' in model_id:
-        delay = 8   # More conservative (was 5)
-        rpm = "15 RPM"
-        timeout = 30
-    else:  # 1.5-flash and others
-        delay = 8   # More conservative (was 5)
-        rpm = "15 RPM"
-        timeout = 30
-    
-    st.info(f"⚡ Using {model_id} | Rate limit: {rpm} ({delay}s delay) | Timeout: {timeout}s per chunk")
-    
-    # Estimate total time and warn user
-    total_estimated_time = len(chunks) * (delay + 10)  # delay + processing time
-    if total_estimated_time > 300:  # > 5 minutes
-        st.warning(f"⏰ **Estimated processing time: {total_estimated_time//60}min {total_estimated_time%60}s**")
-        st.warning("💡 Consider using a faster model (1.5 Flash) or breaking up the newsletter")
-        
-        if not st.checkbox("✅ I understand this will take time and want to proceed"):
-            st.stop()
-    
-    # Process chunks with robust error handling
-    all_extractions = []
-    seen_names = set()  # Deduplicate across chunks
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    error_container = st.empty()
-    
-    successful_chunks = 0
-    failed_chunks = 0
-    
-    for i, chunk in enumerate(chunks):
-        try:
-            # Update progress
-            progress = (i + 1) / len(chunks)
-            progress_bar.progress(progress)
-            status_text.info(f"🔄 Processing chunk {i+1}/{len(chunks)} ({len(chunk):,} chars)...")
-            
-            # Rate limiting delay (except first chunk)
-            if i > 0:
-                status_text.info(f"⏱️ Rate limiting delay: {delay}s...")
-                time.sleep(delay)
-            
-            # Process chunk with timeout and retry logic
-            max_retries = 2
-            chunk_extractions = None
-            
-            for attempt in range(max_retries + 1):
-                try:
-                    # Add timeout handling
-                    start_time = time.time()
-                    chunk_extractions = extract_single_chunk(chunk, model)
-                    elapsed = time.time() - start_time
-                    
-                    if elapsed > timeout:
-                        raise Exception(f"Timeout: took {elapsed:.1f}s (max: {timeout}s)")
-                    
-                    # Success!
-                    break
-                    
-                except Exception as chunk_error:
-                    if attempt < max_retries:
-                        error_container.warning(f"⚠️ Chunk {i+1} attempt {attempt+1} failed: {str(chunk_error)[:100]}... Retrying in {delay}s...")
-                        time.sleep(delay)  # Extra delay before retry
-                    else:
-                        # Final failure
-                        error_container.error(f"❌ Chunk {i+1} failed after {max_retries + 1} attempts")
-                        failed_chunks += 1
-                        chunk_extractions = []
-                        break
-            
-            if chunk_extractions is None:
-                chunk_extractions = []
-            
-            # Deduplicate and add successful extractions
-            if chunk_extractions:
-                new_count = 0
-                for extraction in chunk_extractions:
-                    name = extraction.get('name', '').strip().lower()
-                    company = extraction.get('company', '').strip().lower()
-                    key = f"{name}|{company}"
-                    
-                    if key not in seen_names and name and company:
-                        seen_names.add(key)
-                        all_extractions.append(extraction)
-                        new_count += 1
-                
-                successful_chunks += 1
-                status_text.success(f"✅ Chunk {i+1}: Found {len(chunk_extractions)} entries ({new_count} new, {len(all_extractions)} total)")
-            else:
-                if failed_chunks == 0:  # Only count as failed if no retries worked
-                    failed_chunks += 1
-                status_text.warning(f"⚠️ Chunk {i+1}: No extractions found")
-            
-            # Early exit if too many failures
-            if failed_chunks > len(chunks) // 2:  # More than 50% failed
-                error_container.error(f"🚫 **Too many chunk failures ({failed_chunks}/{i+1})**. Stopping to prevent further issues.")
-                error_container.info("💡 **Suggestions**: Try a different model, reduce file size, or check your API key")
-                break
-                
-        except KeyboardInterrupt:
-            status_text.warning("⏹️ **Processing stopped by user**")
-            break
-            
-        except Exception as e:
-            failed_chunks += 1
-            error_msg = str(e)
-            
-            # Handle specific error types
-            if "rate_limit" in error_msg.lower() or "quota" in error_msg.lower():
-                error_container.error(f"🚫 **Rate Limit Hit on Chunk {i+1}**: {error_msg}")
-                error_container.info("💡 **Solution**: Wait a few minutes and try again, or use a different model")
-                break
-            elif "authentication" in error_msg.lower() or "api_key" in error_msg.lower():
-                error_container.error(f"🔑 **API Key Error**: {error_msg}")
-                break
-            else:
-                error_container.error(f"❌ **Unexpected Error on Chunk {i+1}**: {error_msg}")
-                
-                # Continue with next chunk for unexpected errors
-                continue
-    
-    # Final progress update
-    progress_bar.progress(1.0)
-    
-    # Results summary
-    if successful_chunks > 0:
-        success_rate = (successful_chunks / len(chunks)) * 100
-        status_text.success(f"""
-        🎯 **Processing Complete!**
-        ✅ Successful chunks: {successful_chunks}/{len(chunks)} ({success_rate:.1f}%)
-        ❌ Failed chunks: {failed_chunks}/{len(chunks)}
-        📊 Total unique extractions: {len(all_extractions)}
-        """)
-        
-        if failed_chunks > 0:
-            error_container.warning(f"⚠️ **Partial Success**: {failed_chunks} chunks failed. Results may be incomplete.")
+    if len(text) <= max_single_chunk:
+        # Single chunk - simple and reliable
+        st.info("📄 Processing as single chunk...")
+        return extract_single_chunk_safe(text, model)
     else:
-        status_text.error("❌ **All chunks failed!** Check rate limits, API key, or try a different model.")
-        error_container.info("🔧 **Troubleshooting**: Try 1.5 Flash model, check API key, or reduce file size")
-    
-    # Clean up UI after a delay
-    time.sleep(3)
-    if successful_chunks > 0:  # Only clean up if we got some results
-        progress_bar.empty()
-        status_text.empty()
-        error_container.empty()
-    
-    return all_extractions
+        # Multi-chunk with crash protection
+        st.info(f"📊 Large file detected ({len(text):,} chars). Using safe chunking...")
+        return extract_multi_chunk_safe(text, model, max_single_chunk)
 
 # --- Helper Functions ---
 def get_person_by_id(person_id):
@@ -1164,9 +663,6 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Test failed: {e}")
     
-    elif not GENAI_AVAILABLE:
-        st.error("Please install: pip install google-generativeai")
-    
     # Show recent extractions
     if st.session_state.all_extractions:
         st.markdown("---")
@@ -1230,6 +726,9 @@ with st.sidebar:
             save_data()  # Save changes
             st.success(f"✅ Added {added_count} new people to database!")
             st.rerun()
+
+    elif not GENAI_AVAILABLE:
+        st.error("Please install: pip install google-generativeai")
 
 # --- MAIN CONTENT AREA ---
 st.title("🏢 Asian Hedge Fund Talent Map")
@@ -1341,220 +840,7 @@ if st.session_state.show_add_person_modal:
         st.session_state.show_add_person_modal = False
         st.rerun()
 
-# --- EDIT PERSON MODAL ---
-if st.session_state.show_edit_person_modal and st.session_state.edit_person_data:
-    st.markdown("---")
-    st.subheader(f"✏️ Edit {st.session_state.edit_person_data.get('name', 'Person')}")
-    
-    person_data = st.session_state.edit_person_data
-    
-    with st.form("edit_person_form", clear_on_submit=False):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            name = st.text_input("Full Name*", value=person_data.get('name', ''), placeholder="John Smith")
-            title = st.text_input("Current Title*", value=person_data.get('current_title', ''), placeholder="Portfolio Manager")
-            company = st.selectbox("Current Company*", 
-                                 options=[""] + [f['name'] for f in st.session_state.firms],
-                                 index=0 if not person_data.get('current_company_name') else 
-                                       ([f['name'] for f in st.session_state.firms].index(person_data['current_company_name']) + 1 
-                                        if person_data['current_company_name'] in [f['name'] for f in st.session_state.firms] else 0))
-            location = st.selectbox("Location*", 
-                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                          "Mumbai", "Shanghai", "Beijing", "Taipei"],
-                                  index=0 if not person_data.get('location') else
-                                        (["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                          "Mumbai", "Shanghai", "Beijing", "Taipei"].index(person_data['location']) 
-                                         if person_data['location'] in ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                                                        "Mumbai", "Shanghai", "Beijing", "Taipei"] else 0))
-        
-        with col2:
-            email = st.text_input("Email", value=person_data.get('email', ''), placeholder="john.smith@company.com")
-            phone = st.text_input("Phone", value=person_data.get('phone', ''), placeholder="+852-1234-5678")
-            linkedin = st.text_input("LinkedIn URL", value=person_data.get('linkedin_profile_url', ''), placeholder="https://linkedin.com/in/username")
-            education = st.text_input("Education", value=person_data.get('education', ''), placeholder="Harvard, MIT")
-        
-        col3, col4 = st.columns(2)
-        with col3:
-            expertise = st.text_input("Expertise", value=person_data.get('expertise', ''), placeholder="Equities, Technology")
-            aum = st.text_input("AUM Managed", value=person_data.get('aum_managed', ''), placeholder="2.5B USD")
-        
-        with col4:
-            strategy = st.selectbox("Investment Strategy", 
-                                  options=["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"],
-                                  index=0 if not person_data.get('strategy') else
-                                        (["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"].index(person_data['strategy'])
-                                         if person_data['strategy'] in ["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"] else 0))
-        
-        col_save, col_cancel, col_delete = st.columns(3)
-        
-        with col_save:
-            if st.form_submit_button("💾 Save Changes", use_container_width=True):
-                if name and title and company and location:
-                    # Update person data
-                    person_data.update({
-                        "name": name,
-                        "current_title": title,
-                        "current_company_name": company,
-                        "location": location,
-                        "email": email,
-                        "linkedin_profile_url": linkedin,
-                        "phone": phone,
-                        "education": education,
-                        "expertise": expertise,
-                        "aum_managed": aum,
-                        "strategy": strategy
-                    })
-                    
-                    # Find and update the person in the main list
-                    for i, p in enumerate(st.session_state.people):
-                        if p['id'] == person_data['id']:
-                            st.session_state.people[i] = person_data
-                            break
-                    
-                    # Update employment record if exists
-                    for emp in st.session_state.employments:
-                        if emp['person_id'] == person_data['id'] and emp.get('end_date') is None:  # Current employment
-                            emp.update({
-                                "company_name": company,
-                                "title": title,
-                                "location": location,
-                                "strategy": strategy
-                            })
-                            break
-                    
-                    save_data()  # Auto-save
-                    st.success(f"✅ Updated {name}!")
-                    st.session_state.show_edit_person_modal = False
-                    st.session_state.edit_person_data = None
-                    st.rerun()
-                else:
-                    st.error("Please fill required fields (*)")
-        
-        with col_cancel:
-            if st.form_submit_button("❌ Cancel", use_container_width=True):
-                st.session_state.show_edit_person_modal = False
-                st.session_state.edit_person_data = None
-                st.rerun()
-        
-        with col_delete:
-            if st.form_submit_button("🗑️ Delete Person", use_container_width=True):
-                # Remove person and related data
-                person_id = person_data['id']
-                st.session_state.people = [p for p in st.session_state.people if p['id'] != person_id]
-                st.session_state.employments = [e for e in st.session_state.employments if e['person_id'] != person_id]
-                
-                save_data()
-                st.success("✅ Person deleted!")
-                st.session_state.show_edit_person_modal = False
-                st.session_state.edit_person_data = None
-                st.rerun()
-
-# --- EDIT FIRM MODAL ---
-if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
-    st.markdown("---")
-    st.subheader(f"✏️ Edit {st.session_state.edit_firm_data.get('name', 'Firm')}")
-    
-    firm_data = st.session_state.edit_firm_data
-    
-    with st.form("edit_firm_form", clear_on_submit=False):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            firm_name = st.text_input("Firm Name*", value=firm_data.get('name', ''), placeholder="Tiger Asia Management")
-            location = st.selectbox("Location*", 
-                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                          "Mumbai", "Shanghai", "Beijing", "Taipei"],
-                                  index=0 if not firm_data.get('location') else
-                                        (["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                          "Mumbai", "Shanghai", "Beijing", "Taipei"].index(firm_data['location'])
-                                         if firm_data['location'] in ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                                                     "Mumbai", "Shanghai", "Beijing", "Taipei"] else 0))
-            headquarters = st.text_input("Headquarters", value=firm_data.get('headquarters', ''), placeholder="Hong Kong")
-            aum = st.text_input("AUM", value=firm_data.get('aum', ''), placeholder="5B USD")
-            
-        with col2:
-            strategy = st.selectbox("Strategy", 
-                                  options=["", "Long/Short Equity", "Multi-Strategy", 
-                                          "Quantitative", "Macro", "Event Driven"],
-                                  index=0 if not firm_data.get('strategy') else
-                                        (["", "Long/Short Equity", "Multi-Strategy", 
-                                          "Quantitative", "Macro", "Event Driven"].index(firm_data['strategy'])
-                                         if firm_data['strategy'] in ["", "Long/Short Equity", "Multi-Strategy", 
-                                                                     "Quantitative", "Macro", "Event Driven"] else 0))
-            founded = st.number_input("Founded", min_value=1900, max_value=2025, 
-                                    value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
-            website = st.text_input("Website", value=firm_data.get('website', ''), placeholder="https://company.com")
-        
-        description = st.text_area("Description", value=firm_data.get('description', ''), placeholder="Brief description of the hedge fund...")
-        
-        col_save, col_cancel, col_delete = st.columns(3)
-        
-        with col_save:
-            if st.form_submit_button("💾 Save Changes", use_container_width=True):
-                if firm_name and location:
-                    # Update firm data
-                    old_name = firm_data.get('name', '')
-                    firm_data.update({
-                        "name": firm_name,
-                        "location": location,
-                        "headquarters": headquarters,
-                        "aum": aum,
-                        "founded": founded if founded > 1900 else None,
-                        "strategy": strategy,
-                        "website": website,
-                        "description": description
-                    })
-                    
-                    # Find and update the firm in the main list
-                    for i, f in enumerate(st.session_state.firms):
-                        if f['id'] == firm_data['id']:
-                            st.session_state.firms[i] = firm_data
-                            break
-                    
-                    # Update people's company names if firm name changed
-                    if old_name != firm_name:
-                        for person in st.session_state.people:
-                            if person.get('current_company_name') == old_name:
-                                person['current_company_name'] = firm_name
-                        
-                        # Update employment records
-                        for emp in st.session_state.employments:
-                            if emp.get('company_name') == old_name:
-                                emp['company_name'] = firm_name
-                    
-                    save_data()  # Auto-save
-                    st.success(f"✅ Updated {firm_name}!")
-                    st.session_state.show_edit_firm_modal = False
-                    st.session_state.edit_firm_data = None
-                    st.rerun()
-                else:
-                    st.error("Please fill Firm Name and Location")
-        
-        with col_cancel:
-            if st.form_submit_button("❌ Cancel", use_container_width=True):
-                st.session_state.show_edit_firm_modal = False
-                st.session_state.edit_firm_data = None
-                st.rerun()
-        
-        with col_delete:
-            if st.form_submit_button("🗑️ Delete Firm", use_container_width=True):
-                # Remove firm and update related data
-                firm_id = firm_data['id']
-                firm_name = firm_data.get('name', '')
-                
-                st.session_state.firms = [f for f in st.session_state.firms if f['id'] != firm_id]
-                
-                # Update people to remove company reference
-                for person in st.session_state.people:
-                    if person.get('current_company_name') == firm_name:
-                        person['current_company_name'] = 'Unknown'
-                
-                save_data()
-                st.success("✅ Firm deleted!")
-                st.session_state.show_edit_firm_modal = False
-                st.session_state.edit_firm_data = None
-                st.rerun()
+# --- ADD FIRM MODAL ---
 if st.session_state.show_add_firm_modal:
     st.markdown("---")
     st.subheader("🏢 Add New Firm")
@@ -1614,39 +900,40 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
         col1, col2 = st.columns(2)
         
         with col1:
-            name = st.text_input("Full Name*", value=person_data.get('name', ''), placeholder="John Smith")
-            title = st.text_input("Current Title*", value=person_data.get('current_title', ''), placeholder="Portfolio Manager")
-            company = st.selectbox("Current Company*", 
-                                 options=[""] + [f['name'] for f in st.session_state.firms],
-                                 index=0 if not person_data.get('current_company_name') else 
-                                       ([f['name'] for f in st.session_state.firms].index(person_data['current_company_name']) + 1 
-                                        if person_data['current_company_name'] in [f['name'] for f in st.session_state.firms] else 0))
-            location = st.selectbox("Location*", 
-                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                          "Mumbai", "Shanghai", "Beijing", "Taipei"],
-                                  index=0 if not person_data.get('location') else
-                                        (["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                          "Mumbai", "Shanghai", "Beijing", "Taipei"].index(person_data['location']) 
-                                         if person_data['location'] in ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                                                        "Mumbai", "Shanghai", "Beijing", "Taipei"] else 0))
+            name = st.text_input("Full Name*", value=person_data.get('name', ''))
+            title = st.text_input("Current Title*", value=person_data.get('current_title', ''))
+            current_company = person_data.get('current_company_name', '')
+            company_options = [""] + [f['name'] for f in st.session_state.firms]
+            company_index = 0
+            if current_company and current_company in company_options:
+                company_index = company_options.index(current_company)
+            company = st.selectbox("Current Company*", options=company_options, index=company_index)
+            
+            current_location = person_data.get('location', '')
+            location_options = ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", "Mumbai", "Shanghai", "Beijing", "Taipei"]
+            location_index = 0
+            if current_location and current_location in location_options:
+                location_index = location_options.index(current_location)
+            location = st.selectbox("Location*", options=location_options, index=location_index)
         
         with col2:
-            email = st.text_input("Email", value=person_data.get('email', ''), placeholder="john.smith@company.com")
-            phone = st.text_input("Phone", value=person_data.get('phone', ''), placeholder="+852-1234-5678")
-            linkedin = st.text_input("LinkedIn URL", value=person_data.get('linkedin_profile_url', ''), placeholder="https://linkedin.com/in/username")
-            education = st.text_input("Education", value=person_data.get('education', ''), placeholder="Harvard, MIT")
+            email = st.text_input("Email", value=person_data.get('email', ''))
+            phone = st.text_input("Phone", value=person_data.get('phone', ''))
+            linkedin = st.text_input("LinkedIn URL", value=person_data.get('linkedin_profile_url', ''))
+            education = st.text_input("Education", value=person_data.get('education', ''))
         
         col3, col4 = st.columns(2)
         with col3:
-            expertise = st.text_input("Expertise", value=person_data.get('expertise', ''), placeholder="Equities, Technology")
-            aum = st.text_input("AUM Managed", value=person_data.get('aum_managed', ''), placeholder="2.5B USD")
+            expertise = st.text_input("Expertise", value=person_data.get('expertise', ''))
+            aum = st.text_input("AUM Managed", value=person_data.get('aum_managed', ''))
         
         with col4:
-            strategy = st.selectbox("Investment Strategy", 
-                                  options=["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"],
-                                  index=0 if not person_data.get('strategy') else
-                                        (["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"].index(person_data['strategy'])
-                                         if person_data['strategy'] in ["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit", "Healthcare", "Technology", "Event Driven", "Distressed", "Market Neutral", "Long-only", "Activist"] else 0))
+            current_strategy = person_data.get('strategy', '')
+            strategy_options = ["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit"]
+            strategy_index = 0
+            if current_strategy and current_strategy in strategy_options:
+                strategy_index = strategy_options.index(current_strategy)
+            strategy = st.selectbox("Investment Strategy", options=strategy_options, index=strategy_index)
         
         col_save, col_cancel, col_delete = st.columns(3)
         
@@ -1674,18 +961,7 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
                             st.session_state.people[i] = person_data
                             break
                     
-                    # Update employment record if exists
-                    for emp in st.session_state.employments:
-                        if emp['person_id'] == person_data['id'] and emp.get('end_date') is None:  # Current employment
-                            emp.update({
-                                "company_name": company,
-                                "title": title,
-                                "location": location,
-                                "strategy": strategy
-                            })
-                            break
-                    
-                    save_data()  # Auto-save
+                    save_data()
                     st.success(f"✅ Updated {name}!")
                     st.session_state.show_edit_person_modal = False
                     st.session_state.edit_person_data = None
@@ -1723,32 +999,30 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         col1, col2 = st.columns(2)
         
         with col1:
-            firm_name = st.text_input("Firm Name*", value=firm_data.get('name', ''), placeholder="Tiger Asia Management")
-            location = st.selectbox("Location*", 
-                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                          "Mumbai", "Shanghai", "Beijing", "Taipei"],
-                                  index=0 if not firm_data.get('location') else
-                                        (["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                          "Mumbai", "Shanghai", "Beijing", "Taipei"].index(firm_data['location'])
-                                         if firm_data['location'] in ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                                                     "Mumbai", "Shanghai", "Beijing", "Taipei"] else 0))
-            headquarters = st.text_input("Headquarters", value=firm_data.get('headquarters', ''), placeholder="Hong Kong")
-            aum = st.text_input("AUM", value=firm_data.get('aum', ''), placeholder="5B USD")
+            firm_name = st.text_input("Firm Name*", value=firm_data.get('name', ''))
+            current_location = firm_data.get('location', '')
+            location_options = ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", "Mumbai", "Shanghai", "Beijing", "Taipei"]
+            location_index = 0
+            if current_location and current_location in location_options:
+                location_index = location_options.index(current_location)
+            location = st.selectbox("Location*", options=location_options, index=location_index)
+            
+            headquarters = st.text_input("Headquarters", value=firm_data.get('headquarters', ''))
+            aum = st.text_input("AUM", value=firm_data.get('aum', ''))
             
         with col2:
-            strategy = st.selectbox("Strategy", 
-                                  options=["", "Long/Short Equity", "Multi-Strategy", 
-                                          "Quantitative", "Macro", "Event Driven"],
-                                  index=0 if not firm_data.get('strategy') else
-                                        (["", "Long/Short Equity", "Multi-Strategy", 
-                                          "Quantitative", "Macro", "Event Driven"].index(firm_data['strategy'])
-                                         if firm_data['strategy'] in ["", "Long/Short Equity", "Multi-Strategy", 
-                                                                     "Quantitative", "Macro", "Event Driven"] else 0))
+            current_strategy = firm_data.get('strategy', '')
+            strategy_options = ["", "Long/Short Equity", "Multi-Strategy", "Quantitative", "Macro", "Event Driven"]
+            strategy_index = 0
+            if current_strategy and current_strategy in strategy_options:
+                strategy_index = strategy_options.index(current_strategy)
+            strategy = st.selectbox("Strategy", options=strategy_options, index=strategy_index)
+            
             founded = st.number_input("Founded", min_value=1900, max_value=2025, 
                                     value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
-            website = st.text_input("Website", value=firm_data.get('website', ''), placeholder="https://company.com")
+            website = st.text_input("Website", value=firm_data.get('website', ''))
         
-        description = st.text_area("Description", value=firm_data.get('description', ''), placeholder="Brief description of the hedge fund...")
+        description = st.text_area("Description", value=firm_data.get('description', ''))
         
         col_save, col_cancel, col_delete = st.columns(3)
         
@@ -1779,13 +1053,8 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
                         for person in st.session_state.people:
                             if person.get('current_company_name') == old_name:
                                 person['current_company_name'] = firm_name
-                        
-                        # Update employment records
-                        for emp in st.session_state.employments:
-                            if emp.get('company_name') == old_name:
-                                emp['company_name'] = firm_name
                     
-                    save_data()  # Auto-save
+                    save_data()
                     st.success(f"✅ Updated {firm_name}!")
                     st.session_state.show_edit_firm_modal = False
                     st.session_state.edit_firm_data = None
@@ -1850,47 +1119,6 @@ if st.session_state.current_view == 'firms':
                             st.session_state.edit_firm_data = firm
                             st.session_state.show_edit_firm_modal = True
                             st.rerun()
-                
-                # Firm details in columns
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("📍 Location", firm.get('location', 'Unknown'))
-                
-                with col2:
-                    st.metric("💰 AUM", firm.get('aum', 'Unknown'))
-                
-                with col3:
-                    st.metric("👥 People", people_count)
-                
-                with col4:
-                    st.metric("🏛️ Founded", firm.get('founded', 'Unknown'))
-                
-                # Description if available
-                if firm.get('description'):
-                    st.write(f"*{firm['description']}*")
-                
-                # Add some visual separation
-                st.markdown("---")
-        st.info("No firms added yet. Use 'Add Firm' button above.")
-    else:
-        # Create a grid layout for firm cards
-        for firm in st.session_state.firms:
-            people_count = len(get_people_by_firm(firm['name']))
-            
-            # Create an attractive card using Streamlit components
-            with st.container():
-                # Main firm header
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    st.subheader(f"🏢 {firm['name']}")
-                    st.write(f"**Strategy:** {firm.get('strategy', 'Unknown')}")
-                
-                with col2:
-                    if st.button("📋 View Details", key=f"view_firm_{firm['id']}", use_container_width=True):
-                        go_to_firm_details(firm['id'])
-                        st.rerun()
                 
                 # Firm details in columns
                 col1, col2, col3, col4 = st.columns(4)
@@ -2012,12 +1240,22 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
         go_to_firms()
         st.rerun()
     
-    # Back button
-    if st.button("← Back to Firms"):
-        go_to_firms()
-        st.rerun()
-    
-    st.header(f"🏢 {firm['name']}")
+    # Firm header
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.header(f"🏢 {firm['name']}")
+        st.markdown(f"**{firm['strategy']} Hedge Fund** • {firm['location']}")
+    with col2:
+        col2a, col2b = st.columns(2)
+        with col2a:
+            if st.button("← Back"):
+                go_to_firms()
+                st.rerun()
+        with col2b:
+            if st.button("✏️ Edit"):
+                st.session_state.edit_firm_data = firm
+                st.session_state.show_edit_firm_modal = True
+                st.rerun()
     
     # Firm details
     col1, col2, col3 = st.columns(3)
@@ -2048,25 +1286,41 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
     firm_people = get_people_by_firm(firm['name'])
     if firm_people:
         for person in firm_people:
-            with st.expander(f"{person['name']} - {person['current_title']}"):
-                col1, col2 = st.columns(2)
+            with st.container():
+                # Person header
+                col1, col2 = st.columns([3, 1])
+                
                 with col1:
-                    if person.get('email'):
-                        st.markdown(f"📧 {person['email']}")
-                    if person.get('phone'):
-                        st.markdown(f"📱 {person['phone']}")
-                    if person.get('education'):
-                        st.markdown(f"🎓 {person['education']}")
+                    st.write(f"**👤 {person.get('name', 'Unknown')}**")
+                    st.write(f"*{person.get('current_title', 'Unknown')}*")
                 
                 with col2:
-                    if person.get('expertise'):
-                        st.markdown(f"🏆 **Expertise:** {person['expertise']}")
-                    if person.get('aum_managed'):
-                        st.markdown(f"💰 **AUM:** {person['aum_managed']}")
+                    if st.button("👁️ View Full Profile", key=f"view_full_{person['id']}", use_container_width=True):
+                        go_to_person_details(person['id'])
+                        st.rerun()
                 
-                if st.button("View Full Profile", key=f"view_full_{person['id']}"):
-                    go_to_person_details(person['id'])
-                    st.rerun()
+                # Person details
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if person.get('email'):
+                        st.write(f"📧 {person['email']}")
+                    if person.get('phone'):
+                        st.write(f"📱 {person['phone']}")
+                
+                with col2:
+                    if person.get('education'):
+                        st.write(f"🎓 {person['education']}")
+                    if person.get('aum_managed'):
+                        st.write(f"💰 {person['aum_managed']}")
+                
+                with col3:
+                    if person.get('expertise'):
+                        st.write(f"🎯 {person['expertise']}")
+                    if person.get('linkedin_profile_url'):
+                        st.markdown(f"🔗 [LinkedIn]({person['linkedin_profile_url']})")
+                
+                st.markdown("---")
     else:
         st.info("No people added for this firm yet.")
 
