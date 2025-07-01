@@ -642,34 +642,20 @@ with st.sidebar:
                 char_count = len(newsletter_text)
                 st.info(f"📊 Processing {char_count:,} characters...")
                 
-                # Handle large files with proper confirmation
-                proceed_with_processing = True
-                
+                # Simplified size checking - no complex confirmations
                 if char_count > 150000:  # 150KB hard limit
                     st.error(f"❌ File too large: {char_count:,} characters. Maximum: 150,000")
-                    st.info("💡 **Solutions**: Split into smaller files or copy/paste key sections")
-                    proceed_with_processing = False
+                    st.info("💡 **Try**: Split into smaller files or copy/paste key sections")
+                else:
+                    # Show warning for large files but proceed automatically
+                    if char_count > 50000:
+                        chunks_needed = max(1, char_count // 15000)
+                        est_minutes = chunks_needed * 2
+                        st.warning(f"⚠️ **Large file**: {char_count:,} chars → ~{est_minutes} min processing time")
                     
-                elif char_count > 50000:  # Warning for large files
-                    st.warning(f"⚠️ **Large file detected**: {char_count:,} characters")
-                    chunks_needed = max(1, char_count // 15000)
-                    est_minutes = chunks_needed * 2
-                    st.info(f"🕐 **Estimated processing time**: ~{est_minutes} minutes ({chunks_needed} chunks)")
-                    
-                    # Create a unique key for this processing session
-                    process_key = f"proceed_{char_count}_{hash(newsletter_text[:100])}"
-                    
-                    if st.checkbox("✅ I understand this will take time and want to proceed", key=process_key):
-                        st.success("✅ **Proceeding with large file processing...**")
-                        proceed_with_processing = True
-                    else:
-                        st.info("👆 **Check the box above to proceed with processing**")
-                        proceed_with_processing = False
-                
-                # Only proceed if confirmed
-                if proceed_with_processing:
+                    # Always proceed with processing
                     try:
-                        st.info("🤖 **Starting extraction process...**")
+                        st.info("🤖 **Starting extraction...**")
                         
                         # Show processing status
                         with st.status("Processing newsletter...", expanded=True) as status:
@@ -697,27 +683,27 @@ with st.sidebar:
                             else:
                                 st.error("⚠️ Extraction successful but save failed!")
                             
-                            # Show summary
+                            # Show compact summary
                             companies = set(ext.get('company', 'Unknown') for ext in extractions)
                             col1, col2 = st.columns(2)
                             with col1:
-                                st.metric("👥 People Found", len(extractions))
+                                st.metric("👥 People", len(extractions))
                             with col2:
                                 st.metric("🏢 Companies", len(companies))
                             
                             # Show preview
-                            with st.expander("📋 Preview Results", expanded=True):
+                            with st.expander("📋 Preview Results"):
                                 for i, ext in enumerate(extractions[:5]):
                                     st.write(f"{i+1}. **{ext['name']}** → {ext['company']}")
                                 
                                 if len(extractions) > 5:
                                     st.write(f"... and {len(extractions) - 5} more")
                         else:
-                            st.warning("⚠️ No people found. Try a different model or check if the content contains hedge fund news.")
+                            st.warning("⚠️ No people found. Try a different model or check content.")
                             
                     except Exception as e:
                         st.error(f"💥 **Extraction failed**: {str(e)}")
-                        st.info("**Troubleshooting**: Try a different model, smaller file, or copy/paste instead of upload")
+                        st.info("**Try**: Different model, smaller file, or copy/paste instead")
         
         # Quick test - simplified
         if st.button("🧪 Test with Sample", use_container_width=True):
@@ -1207,51 +1193,37 @@ if st.session_state.current_view == 'firms':
     if not st.session_state.firms:
         st.info("No firms added yet. Use 'Add Firm' button above.")
     else:
-        # Display firms in a more user-friendly way
+        # Display firms in compact cards
         for firm in st.session_state.firms:
             people_count = len(get_people_by_firm(firm['name']))
             
-            # Create an attractive card using Streamlit components
+            # Compact card design
             with st.container():
-                # Main firm header
-                col1, col2 = st.columns([3, 1])
+                col1, col2, col3 = st.columns([2, 2, 1])
                 
                 with col1:
-                    st.subheader(f"🏢 {firm['name']}")
-                    st.write(f"**Strategy:** {firm.get('strategy', 'Unknown')}")
+                    st.markdown(f"**🏢 {firm['name']}**")
+                    st.caption(f"{firm.get('strategy', 'Unknown')} • {firm.get('location', 'Unknown')}")
                 
                 with col2:
                     col2a, col2b = st.columns(2)
                     with col2a:
-                        if st.button("📋 View Details", key=f"view_firm_{firm['id']}", use_container_width=True):
+                        st.metric("💰 AUM", firm.get('aum', 'Unknown'), label_visibility="collapsed")
+                    with col2b:
+                        st.metric("👥 People", people_count, label_visibility="collapsed")
+                
+                with col3:
+                    col3a, col3b = st.columns(2)
+                    with col3a:
+                        if st.button("👁️", key=f"view_firm_{firm['id']}", help="View Details"):
                             go_to_firm_details(firm['id'])
                             st.rerun()
-                    with col2b:
-                        if st.button("✏️ Edit", key=f"edit_firm_{firm['id']}", use_container_width=True):
+                    with col3b:
+                        if st.button("✏️", key=f"edit_firm_{firm['id']}", help="Edit Firm"):
                             st.session_state.edit_firm_data = firm
                             st.session_state.show_edit_firm_modal = True
                             st.rerun()
                 
-                # Firm details in columns
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("📍 Location", firm.get('location', 'Unknown'))
-                
-                with col2:
-                    st.metric("💰 AUM", firm.get('aum', 'Unknown'))
-                
-                with col3:
-                    st.metric("👥 People", people_count)
-                
-                with col4:
-                    st.metric("🏛️ Founded", firm.get('founded', 'Unknown'))
-                
-                # Description if available
-                if firm.get('description'):
-                    st.write(f"*{firm['description']}*")
-                
-                # Add some visual separation
                 st.markdown("---")
 
 # --- PEOPLE VIEW ---
@@ -1284,64 +1256,42 @@ elif st.session_state.current_view == 'people':
         if search_term:
             filtered_people = [p for p in filtered_people if search_term.lower() in p.get('name', '').lower()]
         
-        # Display people in user-friendly cards
+        # Display people in compact cards
         st.write(f"**Showing {len(filtered_people)} people**")
         
         for person in filtered_people:
             with st.container():
-                # Main person header
-                col1, col2 = st.columns([3, 1])
+                col1, col2, col3 = st.columns([2, 2, 1])
                 
                 with col1:
-                    st.subheader(f"👤 {person.get('name', 'Unknown')}")
-                    st.write(f"**{person.get('current_title', 'Unknown')}** at **{person.get('current_company_name', 'Unknown')}**")
+                    st.markdown(f"**👤 {person.get('name', 'Unknown')}**")
+                    st.caption(f"{person.get('current_title', 'Unknown')} • {person.get('current_company_name', 'Unknown')}")
                 
                 with col2:
                     col2a, col2b = st.columns(2)
                     with col2a:
-                        if st.button("👁️ View Profile", key=f"view_person_{person['id']}", use_container_width=True):
+                        location = person.get('location', 'Unknown')
+                        if len(location) > 10:
+                            location = location[:10] + "..."
+                        st.metric("📍", location, label_visibility="collapsed")
+                    with col2b:
+                        aum = person.get('aum_managed', 'Unknown')
+                        if len(aum) > 8:
+                            aum = aum[:8] + "..."
+                        st.metric("💰", aum, label_visibility="collapsed")
+                
+                with col3:
+                    col3a, col3b = st.columns(2)
+                    with col3a:
+                        if st.button("👁️", key=f"view_person_{person['id']}", help="View Profile"):
                             go_to_person_details(person['id'])
                             st.rerun()
-                    with col2b:
-                        if st.button("✏️ Edit", key=f"edit_person_{person['id']}", use_container_width=True):
+                    with col3b:
+                        if st.button("✏️", key=f"edit_person_{person['id']}", help="Edit Person"):
                             st.session_state.edit_person_data = person
                             st.session_state.show_edit_person_modal = True
                             st.rerun()
                 
-                # Person details in columns
-                col1, col2, col3, col4 = st.columns(4)
-                
-                with col1:
-                    st.metric("📍 Location", person.get('location', 'Unknown'))
-                
-                with col2:
-                    st.metric("💰 AUM Managed", person.get('aum_managed', 'Unknown'))
-                
-                with col3:
-                    expertise = person.get('expertise', 'Unknown')
-                    if len(expertise) > 15:
-                        expertise = expertise[:15] + "..."
-                    st.metric("🎯 Expertise", expertise)
-                
-                with col4:
-                    strategy = person.get('strategy', 'Unknown')
-                    if len(strategy) > 15:
-                        strategy = strategy[:15] + "..."
-                    st.metric("📈 Strategy", strategy)
-                
-                # Contact info if available
-                contact_info = []
-                if person.get('email'):
-                    contact_info.append(f"📧 {person['email']}")
-                if person.get('phone'):
-                    contact_info.append(f"📱 {person['phone']}")
-                if person.get('education'):
-                    contact_info.append(f"🎓 {person['education']}")
-                
-                if contact_info:
-                    st.caption(" • ".join(contact_info[:2]))  # Show max 2 items
-                
-                # Add visual separation
                 st.markdown("---")
 
 # --- FIRM DETAILS VIEW ---
@@ -1399,38 +1349,28 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
     if firm_people:
         for person in firm_people:
             with st.container():
-                # Person header
-                col1, col2 = st.columns([3, 1])
+                col1, col2, col3 = st.columns([2, 2, 1])
                 
                 with col1:
-                    st.write(f"**👤 {person.get('name', 'Unknown')}**")
-                    st.write(f"*{person.get('current_title', 'Unknown')}*")
+                    st.markdown(f"**👤 {person.get('name', 'Unknown')}**")
+                    st.caption(person.get('current_title', 'Unknown'))
                 
                 with col2:
-                    if st.button("👁️ View Full Profile", key=f"view_full_{person['id']}", use_container_width=True):
-                        go_to_person_details(person['id'])
-                        st.rerun()
-                
-                # Person details
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
+                    contact_items = []
                     if person.get('email'):
-                        st.write(f"📧 {person['email']}")
-                    if person.get('phone'):
-                        st.write(f"📱 {person['phone']}")
-                
-                with col2:
-                    if person.get('education'):
-                        st.write(f"🎓 {person['education']}")
+                        contact_items.append(f"📧 {person['email']}")
                     if person.get('aum_managed'):
-                        st.write(f"💰 {person['aum_managed']}")
+                        contact_items.append(f"💰 {person['aum_managed']}")
+                    
+                    if contact_items:
+                        st.caption(" • ".join(contact_items[:2]))
+                    else:
+                        st.caption("No contact info")
                 
                 with col3:
-                    if person.get('expertise'):
-                        st.write(f"🎯 {person['expertise']}")
-                    if person.get('linkedin_profile_url'):
-                        st.markdown(f"🔗 [LinkedIn]({person['linkedin_profile_url']})")
+                    if st.button("👁️ Profile", key=f"view_full_{person['id']}", use_container_width=True):
+                        go_to_person_details(person['id'])
+                        st.rerun()
                 
                 st.markdown("---")
     else:
