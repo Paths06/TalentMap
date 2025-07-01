@@ -482,6 +482,22 @@ def initialize_session_state():
         st.session_state.show_review_interface = False
     if 'auto_save_timeout' not in st.session_state:
         st.session_state.auto_save_timeout = 180  # 3 minutes in seconds
+    
+    # NEW: Processing state management
+    if 'processing_state' not in st.session_state:
+        st.session_state.processing_state = {
+            'is_processing': False,
+            'current_chunk': 0,
+            'total_chunks': 0,
+            'extracted_people': [],
+            'extracted_performance': [],
+            'failed_chunks': [],
+            'processing_id': None,
+            'source_info': '',
+            'start_time': None
+        }
+    if 'incremental_saves' not in st.session_state:
+        st.session_state.incremental_saves = []
 
 # --- AI Setup ---
 @st.cache_resource
@@ -1085,20 +1101,15 @@ def extract_single_chunk_safe(text, model):
         st.warning(f"Enhanced extraction failed: {str(e)[:100]}")
         return [], []
 
-# ENHANCED: Configurable chunking with better size options
+# ENHANCED: Configurable chunking with incremental saving for large files
 def extract_multi_chunk_safe(text, model, chunk_size_mode="auto"):
     """
-    Enhanced multi-chunk processing with configurable chunk sizes
+    Enhanced multi-chunk processing with incremental saving and recovery
     
     Args:
         text: Text to process
         model: AI model
         chunk_size_mode: Chunking strategy
-            - "auto": Automatic based on text size (default)
-            - "small": 10K chars (more chunks, better context)
-            - "medium": 20K chars (balanced)
-            - "large": 35K chars (fewer chunks, larger context)
-            - "xlarge": 50K chars (minimal chunks, maximum context)
     """
     
     # Define chunk sizes based on mode
@@ -1112,7 +1123,7 @@ def extract_multi_chunk_safe(text, model, chunk_size_mode="auto"):
     
     chunk_size = chunk_sizes.get(chunk_size_mode, 20000)
     
-    st.info(f"📊 **Chunking Strategy**: {chunk_size_mode} ({chunk_size:,} chars per chunk)")
+    st.info(f"📊 **Enhanced Chunking Strategy**: {chunk_size_mode} ({chunk_size:,} chars per chunk)")
     
     try:
         # Smart chunking - try to break at paragraph boundaries
@@ -1137,7 +1148,12 @@ def extract_multi_chunk_safe(text, model, chunk_size_mode="auto"):
             
             current_pos = end_pos
         
-        st.info(f"📄 Split into {len(chunks)} chunks for processing")
+        # Initialize incremental processing
+        processing_id = start_incremental_processing(f"Large file with {len(chunks)} chunks")
+        st.session_state.processing_state['total_chunks'] = len(chunks)
+        
+        st.info(f"📄 **Starting incremental processing**: {len(chunks)} chunks")
+        st.info("💾 **Each chunk will be saved immediately** - no data loss if process fails!")
         
         # Enhanced rate limiting based on model and file size
         model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
@@ -1155,78 +1171,86 @@ def extract_multi_chunk_safe(text, model, chunk_size_mode="auto"):
             base_delay = int(base_delay * 1.5)  # 50% increase for large files
             st.warning(f"⚠️ Large file: Using extended delays ({base_delay}s between chunks)")
         
-        # Process chunks with progress tracking and exponential backoff
-        all_people = []
-        all_performance = []
+        # Process chunks with incremental saving
         successful = 0
         failed = 0
         consecutive_failures = 0
         current_delay = base_delay
+        total_saved_people = 0
+        total_saved_performance = 0
         
         # Create progress container
         progress_container = st.container()
         
         for i, chunk in enumerate(chunks):
+            # Check if user wants to stop
+            if not st.session_state.processing_state['is_processing']:
+                st.warning("⏹️ Processing stopped by user")
+                break
+                
             try:
+                # Update processing state
+                st.session_state.processing_state['current_chunk'] = i + 1
+                
                 with progress_container:
-                    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+                    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
                     with col1:
-                        progress_pct = (i / len(chunks)) * 100
-                        st.info(f"🔄 Processing chunk {i+1}/{len(chunks)} ({progress_pct:.1f}%)")
+                        progress_pct = ((i + 1) / len(chunks)) * 100
+                        st.info(f"🔄 **Chunk {i+1}/{len(chunks)}** ({progress_pct:.1f}%)")
                     with col2:
                         st.metric("✅ Success", successful)
                     with col3:
-                        st.metric("❌ Failed", failed)
+                        st.metric("💾 Saved People", total_saved_people)
                     with col4:
-                        est_remaining = (len(chunks) - i - 1) * current_delay / 60
-                        st.metric("⏱️ Est. Min", f"{est_remaining:.1f}")
+                        st.metric("💾 Saved Metrics", total_saved_performance)
+                    with col5:
+                        st.metric("❌ Failed", failed)
                 
                 # Rate limiting with exponential backoff
                 if i > 0:
                     st.info(f"⏱️ Rate limit delay: {current_delay}s...")
                     time.sleep(current_delay)
                 
-                # Extract from chunk with retry logic
+                # Extract from chunk
                 chunk_people, chunk_performance = extract_single_chunk_safe(chunk, model)
                 
                 if chunk_people or chunk_performance:
-                    # Simple deduplication
-                    for person in chunk_people:
-                        name_company = f"{person.get('name', '').lower()}|{person.get('company', '').lower()}"
-                        if not any(f"{existing.get('name', '').lower()}|{existing.get('company', '').lower()}" == name_company 
-                                 for existing in all_people):
-                            all_people.append(person)
+                    # Save chunk results immediately
+                    saved_people, saved_perf = save_chunk_results(
+                        i, chunk_people, chunk_performance, len(chunk)
+                    )
                     
-                    for perf in chunk_performance:
-                        fund_metric = f"{perf.get('fund_name', '').lower()}|{perf.get('metric_type', '').lower()}|{perf.get('period', '').lower()}"
-                        if not any(f"{existing.get('fund_name', '').lower()}|{existing.get('metric_type', '').lower()}|{existing.get('period', '').lower()}" == fund_metric
-                                 for existing in all_performance):
-                            all_performance.append(perf)
+                    total_saved_people += saved_people
+                    total_saved_performance += saved_perf
                     
                     successful += 1
                     consecutive_failures = 0  # Reset failure counter
                     current_delay = base_delay  # Reset delay on success
-                    st.success(f"✅ Chunk {i+1}: Found {len(chunk_people)} people, {len(chunk_performance)} metrics")
+                    
+                    st.success(f"✅ **Chunk {i+1}**: Found {len(chunk_people)} people, {len(chunk_performance)} metrics → Saved {saved_people}/{saved_perf}")
                 else:
                     failed += 1
                     consecutive_failures += 1
-                    st.warning(f"⚠️ Chunk {i+1}: No results")
+                    st.warning(f"⚠️ Chunk {i+1}: No results found")
+                    st.session_state.processing_state['failed_chunks'].append(i)
                 
                 # Exponential backoff on consecutive failures
                 if consecutive_failures >= 3:
                     current_delay = min(current_delay * 1.5, base_delay * 3)  # Cap at 3x base delay
                     st.warning(f"⚠️ Multiple failures detected. Increasing delay to {current_delay}s")
                 
-                # Safety: Stop if too many failures
-                if failed > 5 and failed > successful * 2:
-                    st.error("Too many chunk failures. Stopping to prevent issues.")
+                # Safety: Stop if too many failures but save what we have
+                if failed > 10 and failed > successful * 3:
+                    st.error(f"⚠️ **Too many failures** ({failed} failed, {successful} successful)")
+                    st.error("💾 **Stopping processing but PRESERVING extracted data**")
                     break
                     
             except Exception as chunk_error:
                 failed += 1
                 consecutive_failures += 1
                 error_msg = str(chunk_error)
-                st.error(f"❌ Chunk {i+1} failed: {error_msg[:100]}")
+                st.error(f"❌ **Chunk {i+1} failed**: {error_msg[:100]}")
+                st.session_state.processing_state['failed_chunks'].append(i)
                 
                 # Handle specific error types
                 if "rate" in error_msg.lower() or "quota" in error_msg.lower():
@@ -1245,16 +1269,33 @@ def extract_multi_chunk_safe(text, model, chunk_size_mode="auto"):
         # Clear progress display
         progress_container.empty()
         
-        # Final summary with rates
-        processing_time = len(chunks) * base_delay / 60
-        st.info(f"📊 **Processing Complete**: {successful} successful, {failed} failed chunks")
-        st.info(f"⏱️ **Estimated processing time**: {processing_time:.1f} minutes")
-        st.success(f"🎯 **Total Extracted**: {len(all_people)} people, {len(all_performance)} performance metrics")
+        # Get final results
+        final_people = st.session_state.processing_state['extracted_people']
+        final_performance = st.session_state.processing_state['extracted_performance']
         
-        return all_people, all_performance
+        # Final summary
+        processing_time = len(chunks) * base_delay / 60
+        st.success(f"🎉 **Large File Processing Complete!**")
+        st.info(f"📊 **Results**: {successful} successful, {failed} failed chunks")
+        st.info(f"⏱️ **Time**: ~{processing_time:.1f} minutes estimated")
+        st.success(f"💾 **SAVED**: {total_saved_people} people, {total_saved_performance} metrics")
+        st.info(f"📋 **Total Extracted**: {len(final_people)} people, {len(final_performance)} performance metrics")
+        
+        # Handle any remaining unsaved data
+        if st.session_state.enable_review_mode and (final_people or final_performance):
+            st.info(f"📋 **Review Mode**: All data queued for review")
+        
+        # Mark processing as complete
+        st.session_state.processing_state['is_processing'] = False
+        
+        return final_people, final_performance
         
     except Exception as e:
-        st.error(f"Multi-chunk processing failed: {e}")
+        st.error(f"💥 **Multi-chunk processing failed**: {e}")
+        # Try to save any data we collected before failing
+        if st.session_state.processing_state['extracted_people'] or st.session_state.processing_state['extracted_performance']:
+            st.warning("💾 **Attempting to save partially extracted data...**")
+            stop_processing(save_remaining=True)
         return [], []
 
 # ENHANCED: Main extraction function with configurable options
@@ -2012,6 +2053,210 @@ def display_review_interface():
         
         st.markdown("---")
 
+# --- INCREMENTAL PROCESSING FUNCTIONS ---
+
+def start_incremental_processing(source_info="Large File Processing"):
+    """Initialize incremental processing state"""
+    processing_id = str(uuid.uuid4())
+    st.session_state.processing_state = {
+        'is_processing': True,
+        'current_chunk': 0,
+        'total_chunks': 0,
+        'extracted_people': [],
+        'extracted_performance': [],
+        'failed_chunks': [],
+        'processing_id': processing_id,
+        'source_info': source_info,
+        'start_time': datetime.now()
+    }
+    return processing_id
+
+def save_chunk_results(chunk_index, people_results, performance_results, chunk_size):
+    """Save results from a single chunk immediately"""
+    try:
+        if people_results or performance_results:
+            # Add timestamp and chunk info
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            for person in people_results:
+                person['chunk_index'] = chunk_index
+                person['timestamp'] = timestamp
+                person['processing_id'] = st.session_state.processing_state['processing_id']
+            
+            for perf in performance_results:
+                perf['chunk_index'] = chunk_index
+                perf['timestamp'] = timestamp
+                perf['processing_id'] = st.session_state.processing_state['processing_id']
+            
+            # Add to cumulative results
+            st.session_state.processing_state['extracted_people'].extend(people_results)
+            st.session_state.processing_state['extracted_performance'].extend(performance_results)
+            
+            # Process and save people immediately if not in review mode
+            if not st.session_state.enable_review_mode and people_results:
+                new_people, pending_updates = process_extractions_with_update_detection(people_results)
+                saved_people, saved_performance = save_approved_extractions(people_results, performance_results)
+                
+                # Track incremental saves
+                save_record = {
+                    'chunk_index': chunk_index,
+                    'timestamp': timestamp,
+                    'people_saved': saved_people,
+                    'performance_saved': saved_performance,
+                    'processing_id': st.session_state.processing_state['processing_id']
+                }
+                st.session_state.incremental_saves.append(save_record)
+                
+                return saved_people, saved_performance
+            else:
+                # In review mode, just accumulate for later review
+                return len(people_results), len(performance_results)
+        
+        return 0, 0
+        
+    except Exception as e:
+        st.error(f"Failed to save chunk {chunk_index}: {str(e)}")
+        return 0, 0
+
+def get_processing_summary():
+    """Get summary of current processing state"""
+    state = st.session_state.processing_state
+    if not state['is_processing'] and state['total_chunks'] == 0:
+        return None
+    
+    total_people = len(state['extracted_people'])
+    total_performance = len(state['extracted_performance'])
+    failed_chunks = len(state['failed_chunks'])
+    
+    # Calculate saved vs pending
+    total_saved_people = sum(save['people_saved'] for save in st.session_state.incremental_saves)
+    total_saved_performance = sum(save['performance_saved'] for save in st.session_state.incremental_saves)
+    
+    elapsed_time = ""
+    if state['start_time']:
+        elapsed = datetime.now() - state['start_time']
+        elapsed_time = f"{elapsed.total_seconds():.0f}s"
+    
+    return {
+        'current_chunk': state['current_chunk'],
+        'total_chunks': state['total_chunks'], 
+        'total_people': total_people,
+        'total_performance': total_performance,
+        'failed_chunks': failed_chunks,
+        'saved_people': total_saved_people,
+        'saved_performance': total_saved_performance,
+        'pending_people': total_people - total_saved_people,
+        'pending_performance': total_performance - total_saved_performance,
+        'elapsed_time': elapsed_time,
+        'is_processing': state['is_processing'],
+        'source_info': state['source_info']
+    }
+
+def stop_processing(save_remaining=True):
+    """Stop processing and optionally save remaining data"""
+    state = st.session_state.processing_state
+    
+    if save_remaining and (state['extracted_people'] or state['extracted_performance']):
+        # Save any remaining unprocessed data
+        if st.session_state.enable_review_mode:
+            # Add to review queue
+            review_id = add_to_review_queue(
+                state['extracted_people'], 
+                state['extracted_performance'], 
+                f"Partial Processing: {state['source_info']}"
+            )
+            st.success(f"💾 Added {len(state['extracted_people'])} people and {len(state['extracted_performance'])} metrics to review queue")
+        else:
+            # Save directly
+            saved_people, saved_performance = save_approved_extractions(
+                state['extracted_people'], 
+                state['extracted_performance']
+            )
+            st.success(f"💾 Saved {saved_people} people and {saved_performance} metrics to database")
+    
+    # Reset processing state
+    st.session_state.processing_state = {
+        'is_processing': False,
+        'current_chunk': 0,
+        'total_chunks': 0,
+        'extracted_people': [],
+        'extracted_performance': [],
+        'failed_chunks': [],
+        'processing_id': None,
+        'source_info': '',
+        'start_time': None
+    }
+
+def display_processing_status():
+    """Display current processing status"""
+    summary = get_processing_summary()
+    if not summary:
+        return
+    
+    st.markdown("---")
+    st.markdown("### 🔄 Large File Processing Status")
+    
+    # Progress bar
+    if summary['total_chunks'] > 0:
+        progress = summary['current_chunk'] / summary['total_chunks']
+        st.progress(progress, text=f"Processing chunk {summary['current_chunk']}/{summary['total_chunks']}")
+    
+    # Status metrics
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    with col1:
+        st.metric("👥 People", summary['total_people'])
+    with col2:
+        st.metric("📊 Metrics", summary['total_performance'])
+    with col3:
+        st.metric("💾 Saved People", summary['saved_people'])
+    with col4:
+        st.metric("💾 Saved Metrics", summary['saved_performance'])
+    with col5:
+        st.metric("❌ Failed", summary['failed_chunks'])
+    with col6:
+        st.metric("⏱️ Time", summary['elapsed_time'])
+    
+    # Control buttons
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if summary['is_processing']:
+            if st.button("⏹️ Stop Processing", use_container_width=True, key="stop_processing_button"):
+                stop_processing(save_remaining=True)
+                st.rerun()
+    with col2:
+        if summary['pending_people'] > 0 or summary['pending_performance'] > 0:
+            if st.button("💾 Save Pending Data", use_container_width=True, key="save_pending_button"):
+                state = st.session_state.processing_state
+                if st.session_state.enable_review_mode:
+                    review_id = add_to_review_queue(
+                        state['extracted_people'], 
+                        state['extracted_performance'], 
+                        f"Manual Save: {state['source_info']}"
+                    )
+                    st.success("Added to review queue!")
+                else:
+                    saved_people, saved_performance = save_approved_extractions(
+                        state['extracted_people'], 
+                        state['extracted_performance']
+                    )
+                    st.success(f"Saved {saved_people} people, {saved_performance} metrics!")
+                st.rerun()
+    with col3:
+        if st.button("📊 View Details", use_container_width=True, key="view_details_button"):
+            with st.expander("📋 Processing Details", expanded=True):
+                st.write(f"**Source**: {summary['source_info']}")
+                st.write(f"**Processing ID**: {st.session_state.processing_state['processing_id']}")
+                
+                if st.session_state.incremental_saves:
+                    st.write("**Incremental Saves:**")
+                    for save in st.session_state.incremental_saves[-5:]:  # Show last 5
+                        st.write(f"• Chunk {save['chunk_index']}: {save['people_saved']} people, {save['performance_saved']} metrics at {save['timestamp']}")
+                
+                if st.session_state.processing_state['failed_chunks']:
+                    st.write("**Failed Chunks:**")
+                    for chunk_idx in st.session_state.processing_state['failed_chunks']:
+                        st.write(f"• Chunk {chunk_idx}")
+
 # --- DATA EXPORT FUNCTIONS ---
 
 def export_people_to_dataframe():
@@ -2414,7 +2659,31 @@ with st.sidebar:
             else:
                 st.error("⏰ Review timeout reached!")
     else:
-        st.info("Review mode disabled - data will be saved directly")
+        st.info("Review mode disabled - data will be saved directly during processing")
+    
+    # ENHANCED: Large File Processing Mode
+    st.markdown("---")
+    st.subheader("🚀 Large File Processing")
+    
+    processing_summary = get_processing_summary()
+    if processing_summary:
+        st.warning(f"🔄 **Processing in progress**: {processing_summary['current_chunk']}/{processing_summary['total_chunks']} chunks")
+        st.info(f"💾 **Saved so far**: {processing_summary['saved_people']} people, {processing_summary['saved_performance']} metrics")
+        
+        if st.button("⏹️ Stop Current Processing", use_container_width=True, key="sidebar_stop_processing"):
+            stop_processing(save_remaining=True)
+            st.rerun()
+    else:
+        incremental_mode = st.checkbox(
+            "💾 Incremental Saving",
+            value=True,
+            help="Save data from each chunk immediately (recommended for large files)"
+        )
+        
+        if incremental_mode:
+            st.success("✅ **Incremental mode**: Data saved immediately, no loss if process fails")
+        else:
+            st.warning("⚠️ **Batch mode**: All data saved at end (risk of loss on failure)")
     
     # Setup model with selected version
     model = None
@@ -2630,7 +2899,7 @@ with st.sidebar:
                 st.metric("📊 Performance", total_metrics)
             
             # Add people from extractions with safe defaults
-            if st.button("📥 Import New People Only", use_container_width=True):
+            if st.button("📥 Import New People Only", use_container_width=True, key="import_new_people_button"):
                 # Only import extractions that don't have existing people
                 added_count = 0
                 skipped_existing = 0
@@ -2707,7 +2976,7 @@ with st.sidebar:
         st.subheader("🔄 Review Updates")
         st.warning(f"Found {len(st.session_state.pending_updates)} potential updates")
         
-        if st.button("📝 Review & Approve Updates", use_container_width=True):
+        if st.button("📝 Review & Approve Updates", use_container_width=True, key="review_approve_updates_button"):
             st.session_state.show_update_review = True
             st.rerun()
 
@@ -2717,6 +2986,10 @@ with st.sidebar:
 # --- MAIN CONTENT AREA ---
 st.title("👥 Asian Hedge Fund Talent Network")
 st.markdown("### Professional intelligence platform for Asia's hedge fund industry")
+
+# --- PROCESSING STATUS (Priority Display) ---
+if st.session_state.processing_state['is_processing'] or get_processing_summary():
+    display_processing_status()
 
 # --- REVIEW INTERFACE (Priority Display) ---
 if st.session_state.show_review_interface and st.session_state.pending_review_data:
@@ -3888,7 +4161,7 @@ with col2:
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    if st.button("📊 Export Selected Data", use_container_width=True, disabled=total_records == 0):
+    if st.button("📊 Export Selected Data", use_container_width=True, disabled=total_records == 0, key="export_selected_data_button"):
         try:
             # Prepare export data based on selections
             export_data = {}
@@ -3995,7 +4268,7 @@ with col1:
 
 with col2:
     excel_available_text = "📊 Export Everything (Excel)" if EXCEL_AVAILABLE else "📊 Excel (Install openpyxl)"
-    if st.button(excel_available_text, use_container_width=True, disabled=not EXCEL_AVAILABLE):
+    if st.button(excel_available_text, use_container_width=True, disabled=not EXCEL_AVAILABLE, key="export_everything_excel_button"):
         if EXCEL_AVAILABLE:
             try:
                 export_data = create_comprehensive_export()
@@ -4022,7 +4295,7 @@ with col2:
             st.error("Excel export requires openpyxl. Install with: pip install openpyxl")
 
 with col3:
-    if st.button("📄 Export Everything (CSV)", use_container_width=True):
+    if st.button("📄 Export Everything (CSV)", use_container_width=True, key="export_everything_csv_button"):
         try:
             export_data = create_comprehensive_export()
             if export_data:
