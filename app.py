@@ -702,7 +702,7 @@ def extract_single_chunk_safe(text, model):
         return [], []
 
 def extract_multi_chunk_safe(text, model, chunk_size=15000):
-    """Enhanced multi-chunk processing with intelligent rate limiting"""
+    """Enhanced multi-chunk processing with intelligent rate limiting and exponential backoff"""
     
     try:
         # Smart chunking - try to break at paragraph boundaries
@@ -729,18 +729,29 @@ def extract_multi_chunk_safe(text, model, chunk_size=15000):
         
         st.info(f"📄 Split into {len(chunks)} chunks for processing")
         
-        # Intelligent delay based on model
+        # Enhanced rate limiting based on model and file size
         model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
-        if '1.5-pro' in model_id:
-            delay = 35  # Conservative for Pro
-        else:
-            delay = 8   # Faster for Flash models
         
-        # Process chunks with progress tracking
+        # Base delays (conservative for large files)
+        if '1.5-pro' in model_id:
+            base_delay = 45  # Very conservative for Pro (2 RPM = 30s, so 45s is safe)
+        elif '2.0-flash' in model_id:
+            base_delay = 12  # Conservative for 2.0 Flash 
+        else:
+            base_delay = 10  # Conservative for 1.5 Flash (15 RPM = 4s, so 10s is very safe)
+        
+        # Increase delay for large files to be extra safe
+        if len(chunks) > 50:
+            base_delay = int(base_delay * 1.5)  # 50% increase for large files
+            st.warning(f"⚠️ Large file: Using extended delays ({base_delay}s between chunks)")
+        
+        # Process chunks with progress tracking and exponential backoff
         all_people = []
         all_performance = []
         successful = 0
         failed = 0
+        consecutive_failures = 0
+        current_delay = base_delay
         
         # Create progress container
         progress_container = st.container()
@@ -748,19 +759,24 @@ def extract_multi_chunk_safe(text, model, chunk_size=15000):
         for i, chunk in enumerate(chunks):
             try:
                 with progress_container:
-                    col1, col2, col3 = st.columns([2, 1, 1])
+                    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
                     with col1:
-                        st.info(f"🔄 Processing chunk {i+1}/{len(chunks)}")
+                        progress_pct = (i / len(chunks)) * 100
+                        st.info(f"🔄 Processing chunk {i+1}/{len(chunks)} ({progress_pct:.1f}%)")
                     with col2:
                         st.metric("✅ Success", successful)
                     with col3:
                         st.metric("❌ Failed", failed)
+                    with col4:
+                        est_remaining = (len(chunks) - i - 1) * current_delay / 60
+                        st.metric("⏱️ Est. Min", f"{est_remaining:.1f}")
                 
+                # Rate limiting with exponential backoff
                 if i > 0:
-                    st.info(f"⏱️ Rate limit delay: {delay}s...")
-                    time.sleep(delay)
+                    st.info(f"⏱️ Rate limit delay: {current_delay}s...")
+                    time.sleep(current_delay)
                 
-                # Extract from chunk
+                # Extract from chunk with retry logic
                 chunk_people, chunk_performance = extract_single_chunk_safe(chunk, model)
                 
                 if chunk_people or chunk_performance:
@@ -778,32 +794,51 @@ def extract_multi_chunk_safe(text, model, chunk_size=15000):
                             all_performance.append(perf)
                     
                     successful += 1
+                    consecutive_failures = 0  # Reset failure counter
+                    current_delay = base_delay  # Reset delay on success
                     st.success(f"✅ Chunk {i+1}: Found {len(chunk_people)} people, {len(chunk_performance)} metrics")
                 else:
                     failed += 1
+                    consecutive_failures += 1
                     st.warning(f"⚠️ Chunk {i+1}: No results")
                 
+                # Exponential backoff on consecutive failures
+                if consecutive_failures >= 3:
+                    current_delay = min(current_delay * 1.5, base_delay * 3)  # Cap at 3x base delay
+                    st.warning(f"⚠️ Multiple failures detected. Increasing delay to {current_delay}s")
+                
                 # Safety: Stop if too many failures
-                if failed > 3 and failed > successful:
+                if failed > 5 and failed > successful * 2:
                     st.error("Too many chunk failures. Stopping to prevent issues.")
                     break
                     
             except Exception as chunk_error:
                 failed += 1
-                st.error(f"❌ Chunk {i+1} failed: {str(chunk_error)[:100]}")
+                consecutive_failures += 1
+                error_msg = str(chunk_error)
+                st.error(f"❌ Chunk {i+1} failed: {error_msg[:100]}")
                 
-                # Stop on API errors
-                if "rate" in str(chunk_error).lower() or "quota" in str(chunk_error).lower():
-                    st.error("Rate limit hit. Stopping processing.")
+                # Handle specific error types
+                if "rate" in error_msg.lower() or "quota" in error_msg.lower():
+                    st.error("🚫 Rate limit hit. Increasing delay...")
+                    current_delay = min(current_delay * 2, 120)  # Cap at 2 minutes
+                    time.sleep(current_delay)
+                elif "404" in error_msg or "not found" in error_msg.lower():
+                    st.error("🚫 Model not found. Stopping processing.")
                     break
+                else:
+                    # Exponential backoff for other errors
+                    current_delay = min(current_delay * 1.2, base_delay * 2)
                 
                 continue
         
         # Clear progress display
         progress_container.empty()
         
-        # Final summary
+        # Final summary with rates
+        processing_time = len(chunks) * base_delay / 60
         st.info(f"📊 **Processing Complete**: {successful} successful, {failed} failed chunks")
+        st.info(f"⏱️ **Estimated processing time**: {processing_time:.1f} minutes")
         st.success(f"🎯 **Total Extracted**: {len(all_people)} people, {len(all_performance)} performance metrics")
         
         return all_people, all_performance
