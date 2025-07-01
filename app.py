@@ -288,7 +288,7 @@ def initialize_session_state():
     if 'performance_metrics' not in st.session_state:
         st.session_state.performance_metrics = performance_metrics
     if 'current_view' not in st.session_state:
-        st.session_state.current_view = 'firms'
+        st.session_state.current_view = 'people'  # Changed from 'firms' to 'people'
     if 'selected_person_id' not in st.session_state:
         st.session_state.selected_person_id = None
     if 'selected_firm_id' not in st.session_state:
@@ -311,6 +311,8 @@ def initialize_session_state():
         st.session_state.show_update_review = False
     if 'performance_metrics' not in st.session_state:
         st.session_state.performance_metrics = []
+    if 'global_search' not in st.session_state:
+        st.session_state.global_search = ""
 
 # --- AI Setup ---
 @st.cache_resource
@@ -699,12 +701,22 @@ def preprocess_newsletter_text(text):
     # Show original size
     original_size = len(text)
     
-    # Step 1: Remove email headers (From, To, Subject, Sent, etc.)
+    # Step 1: Extract and preserve subject lines that contain relevant info
+    subject_line = ""
+    subject_match = re.search(r'Subject:\s*(.+?)(?:\n|$)', text, re.IGNORECASE)
+    if subject_match:
+        subject_line = subject_match.group(1).strip()
+        # Keep subject if it contains hedge fund keywords
+        hf_keywords_in_subject = ['appoints', 'joins', 'launches', 'hires', 'promotes', 'moves', 'cio', 'ceo', 'pm', 'portfolio manager', 'hedge fund', 'capital', 'management']
+        if any(keyword in subject_line.lower() for keyword in hf_keywords_in_subject):
+            text = f"NEWSLETTER SUBJECT: {subject_line}\n\n{text}"
+    
+    # Step 2: Remove email headers (but preserve subject if already extracted above)
     email_header_patterns = [
         r'From:\s*.*?\n',
         r'To:\s*.*?\n', 
         r'Sent:\s*.*?\n',
-        r'Subject:\s*.*?\n',
+        r'Subject:\s*.*?\n',  # Remove original subject since we preserved it above
         r'Date:\s*.*?\n',
         r'Reply-To:\s*.*?\n',
         r'Return-Path:\s*.*?\n'
@@ -713,7 +725,7 @@ def preprocess_newsletter_text(text):
     for pattern in email_header_patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.MULTILINE)
     
-    # Step 2: Remove URLs and tracking links
+    # Step 3: Remove URLs and tracking links
     url_patterns = [
         r'https?://[^\s<>"{}|\\^`\[\]]+',  # Standard URLs
         r'<https?://[^>]+>',  # URLs in angle brackets
@@ -725,7 +737,7 @@ def preprocess_newsletter_text(text):
     for pattern in url_patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     
-    # Step 3: Remove email disclaimers and legal text
+    # Step 4: Remove email disclaimers and legal text
     disclaimer_patterns = [
         r'This section contains materials produced by third parties.*?(?=\n\n|\Z)',
         r'This message is confidential and subject to terms.*?(?=\n\n|\Z)',
@@ -742,7 +754,7 @@ def preprocess_newsletter_text(text):
     for pattern in disclaimer_patterns:
         text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
     
-    # Step 4: Remove HTML artifacts and email formatting
+    # Step 5: Remove HTML artifacts and email formatting
     html_patterns = [
         r'<[^>]+>',  # HTML tags
         r'&[a-zA-Z0-9#]+;',  # HTML entities
@@ -754,13 +766,10 @@ def preprocess_newsletter_text(text):
     for pattern in html_patterns:
         text = re.sub(pattern, '', text)
     
-    # Step 5: Remove tracking and navigation elements
+    # Step 6: Remove tracking and navigation elements (but preserve content context)
     navigation_patterns = [
         r'View article\s*View mandate\s*',
         r'View investor\s*View mandate\s*',
-        r'Asset class:.*?(?=\n)',
-        r'Region:.*?(?=\n)',
-        r'Strategy:.*?(?=\n)',
         r'Contact us\s*',
         r'SEE ALL ARTICLES.*?(?=\n)',
         r'CAPITAL ADVISORY GROUP.*?(?=\n)',
@@ -769,7 +778,7 @@ def preprocess_newsletter_text(text):
     for pattern in navigation_patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     
-    # Step 6: Clean up excessive whitespace and formatting
+    # Step 7: Clean up excessive whitespace and formatting
     # Remove multiple consecutive newlines
     text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
     
@@ -786,7 +795,7 @@ def preprocess_newsletter_text(text):
     
     text = '\n'.join(cleaned_lines)
     
-    # Step 7: Focus on hedge fund relevant content
+    # Step 8: Focus on hedge fund relevant content
     # Look for common hedge fund keywords and keep paragraphs containing them
     hf_keywords = [
         'hedge fund', 'portfolio manager', 'pm', 'cio', 'chief investment officer',
@@ -807,8 +816,15 @@ def preprocess_newsletter_text(text):
         'aum', 'assets', 'billion', 'million', 'fund size', 'nav', 'net asset value'
     ]
     
+    # Additional keywords for better extraction
+    movement_keywords = [
+        'appoints', 'appointed', 'hiring', 'hired', 'departure', 'departing', 
+        'leaving', 'joining', 'joined', 'moved', 'moving', 'promoted', 'promotion',
+        'named', 'named as', 'becomes', 'became', 'takes over', 'steps down'
+    ]
+    
     # Combine all keywords
-    all_keywords = hf_keywords + performance_keywords
+    all_keywords = hf_keywords + performance_keywords + movement_keywords
     
     # Split into paragraphs and keep relevant ones
     paragraphs = text.split('\n\n')
@@ -840,6 +856,10 @@ def preprocess_newsletter_text(text):
     st.write(f"• **Cleaned size**: {final_size:,} characters") 
     st.write(f"• **Reduction**: {reduction_pct:.1f}% noise removed")
     st.write(f"• **Relevant paragraphs**: {len(relevant_paragraphs)} found")
+    
+    # Show if subject line was preserved
+    if subject_line and any(keyword in subject_line.lower() for keyword in hf_keywords_in_subject):
+        st.success(f"✅ **Preserved subject line**: {subject_line[:100]}...")
     
     return cleaned_text
 
@@ -912,6 +932,74 @@ def detect_updates_needed(existing_person, extracted_person):
         }
     
     return updates
+
+def map_performance_to_entities(performance_metrics):
+    """Map performance metrics to people and firms where possible"""
+    for metric in performance_metrics:
+        fund_name = safe_get(metric, 'fund_name').lower()
+        
+        # Try to find matching firm
+        matching_firm = None
+        for firm in st.session_state.firms:
+            firm_name = safe_get(firm, 'name').lower()
+            if fund_name in firm_name or firm_name in fund_name:
+                matching_firm = firm
+                break
+        
+        if matching_firm:
+            metric['firm_id'] = matching_firm['id']
+            metric['firm_name'] = safe_get(matching_firm, 'name')
+        
+        # Try to find people associated with this fund/firm
+        # Look for people who work at this company or have this fund in their history
+        matching_people = []
+        for person in st.session_state.people:
+            person_company = safe_get(person, 'current_company_name').lower()
+            if fund_name in person_company or person_company in fund_name:
+                matching_people.append(person['id'])
+        
+        if matching_people:
+            metric['related_people'] = matching_people[:3]  # Limit to 3 people max
+    
+    return performance_metrics
+
+def get_person_performance_metrics(person_id):
+    """Get performance metrics related to a specific person"""
+    person = get_person_by_id(person_id)
+    if not person:
+        return []
+    
+    person_company = safe_get(person, 'current_company_name').lower()
+    related_metrics = []
+    
+    for metric in st.session_state.performance_metrics:
+        # Check if metric is directly linked to this person
+        if metric.get('related_people') and person_id in metric.get('related_people', []):
+            related_metrics.append(metric)
+        # Check if metric is for person's current company
+        elif person_company in safe_get(metric, 'fund_name', '').lower():
+            related_metrics.append(metric)
+    
+    return related_metrics
+
+def get_firm_performance_metrics(firm_id):
+    """Get performance metrics related to a specific firm"""
+    firm = get_firm_by_id(firm_id)
+    if not firm:
+        return []
+    
+    firm_name = safe_get(firm, 'name').lower()
+    related_metrics = []
+    
+    for metric in st.session_state.performance_metrics:
+        # Check if metric is directly linked to this firm
+        if metric.get('firm_id') == firm_id:
+            related_metrics.append(metric)
+        # Check if metric fund name matches firm name
+        elif firm_name in safe_get(metric, 'fund_name', '').lower():
+            related_metrics.append(metric)
+    
+    return related_metrics
 
 def process_extractions_with_update_detection(extractions):
     """Process extractions and detect potential updates for existing people"""
@@ -1272,6 +1360,10 @@ with st.sidebar:
                                 perf['timestamp'] = timestamp
                                 perf['id'] = str(uuid.uuid4())
                             
+                            # Map performance metrics to people and firms
+                            if performance_extractions:
+                                performance_extractions = map_performance_to_entities(performance_extractions)
+                            
                             # Process people extractions and detect updates
                             if people_extractions:
                                 st.info("🔍 Checking for existing people and potential updates...")
@@ -1339,25 +1431,31 @@ with st.sidebar:
         # Quick test - simplified
         if st.button("🧪 Test with Sample + Context Caching", use_container_width=True):
             sample = """
-            From: Newsletter <newsletter@hedgefund.com>
-            Sent: Friday, June 27, 2025 4:56 PM
-            Subject: Daily Hedge Fund News
+            From: With Intelligence <alerts@withintelligence-email.com>
+            Sent: Friday, June 27, 2025 7:50 PM
+            To: Aayesha Ghanekar
+            Subject: Dakota Wealth appoints FoHFs PM to CIO | BNP Paribas adds credit strats
+            
+            Dakota Wealth appoints FoHFs PM to CIO
+            Florida RIA with $6.3bn AuM plots 2025 ETF launch
             
             Goldman Sachs veteran John Smith joins Citadel Asia as Managing Director in Hong Kong.
             Former JPMorgan portfolio manager Lisa Chen launches her own hedge fund, Dragon Capital, 
-            focusing on Asian equities. Millennium Partners promotes Alex Wang to head of quant trading 
-            in Singapore. Sarah Kim moves from Bridgewater to become CIO at newly formed Tiger Asia.
+            focusing on Asian equities. 
             
             Engineers Gate has topped $4 billion in assets and is up 12% this year, continuing 
             a streak of double-digit returns. The fund's Sharpe ratio improved to 1.8 from 1.2 last year.
-            Citadel's flagship fund returned 15.2% net in Q2 with maximum drawdown of only 2.1%.
             
             This message is confidential. Please visit https://tracking.example.com for more.
             Unsubscribe: https://unsubscribe.example.com
             """
             
             try:
-                st.info("🧪 Testing preprocessing + cached extraction...")
+                st.info("🧪 Testing with improved extraction + debug mode...")
+                
+                # Temporarily enable debug mode for this test
+                original_debug = st.session_state.get('debug_mode', False)
+                st.session_state.debug_mode = True
                 
                 # Show token breakdown
                 cached_context = create_cached_context()
@@ -1377,8 +1475,11 @@ with st.sidebar:
                 with st.expander("📝 Preprocessing Results", expanded=True):
                     cleaned_sample = preprocess_newsletter_text(sample)
                 
-                # Then extract with caching
+                # Then extract with caching and debug info
                 people_results, performance_results = extract_single_chunk_safe(cleaned_sample, model)
+                
+                # Restore original debug mode
+                st.session_state.debug_mode = original_debug
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -1391,7 +1492,11 @@ with st.sidebar:
                     for perf in performance_results:
                         st.write(f"• {perf.get('fund_name', 'Unknown')}: {perf.get('metric_type', 'Unknown')} = {perf.get('value', 'N/A')}")
                 
-                st.success("✅ **Context caching in action!** Instructions reused, only sample content was new tokens.")
+                if len(people_results) == 0:
+                    st.warning("⚠️ **No people extracted** - This indicates the AI couldn't find specific names in the text")
+                    st.info("💡 **Common causes**: Subject line mentions roles but not names, or preprocessing removed key content")
+                
+                st.success("✅ **Improved extraction with debug info!** Check debug sections above for details.")
                     
             except Exception as e:
                 st.error(f"Test failed: {e}")
@@ -1643,8 +1748,93 @@ elif not GENAI_AVAILABLE:
     st.error("Please install: pip install google-generativeai")
 
 # --- MAIN CONTENT AREA ---
-st.title("🏢 Asian Hedge Fund Talent Map")
-st.markdown("### Professional network mapping for Asia's hedge fund industry")
+st.title("👥 Asian Hedge Fund Talent Network")
+st.markdown("### Professional intelligence platform for Asia's hedge fund industry")
+
+# --- GLOBAL SEARCH BAR ---
+st.markdown("---")
+col1, col2 = st.columns([4, 1])
+
+with col1:
+    search_query = st.text_input(
+        "🔍 Search people, firms, or performance...", 
+        value=st.session_state.global_search,
+        placeholder="Try: 'Goldman Sachs', 'Portfolio Manager', 'Citadel', 'Sharpe ratio'...",
+        key="global_search_input"
+    )
+
+with col2:
+    if st.button("🔍 Search", use_container_width=True):
+        st.session_state.global_search = search_query
+        st.rerun()
+
+# Handle global search results
+if search_query and len(search_query.strip()) >= 2:
+    st.session_state.global_search = search_query
+    matching_people, matching_firms, matching_metrics = global_search(search_query)
+    
+    if matching_people or matching_firms or matching_metrics:
+        st.markdown("### 🔍 Search Results")
+        
+        # Show search results in tabs
+        if matching_people:
+            st.markdown(f"**👥 People ({len(matching_people)} found)**")
+            for person in matching_people[:5]:  # Show top 5 results
+                col1, col2, col3 = st.columns([3, 2, 1])
+                with col1:
+                    st.markdown(f"**{safe_get(person, 'name')}**")
+                    st.caption(f"{safe_get(person, 'current_title')} at {safe_get(person, 'current_company_name')}")
+                with col2:
+                    st.caption(f"📍 {safe_get(person, 'location')}")
+                with col3:
+                    if st.button("👁️ View", key=f"search_person_{person['id']}", use_container_width=True):
+                        go_to_person_details(person['id'])
+                        st.rerun()
+            
+            if len(matching_people) > 5:
+                st.caption(f"... and {len(matching_people) - 5} more people")
+        
+        if matching_firms:
+            st.markdown(f"**🏢 Firms ({len(matching_firms)} found)**")
+            for firm in matching_firms[:3]:  # Show top 3 results
+                col1, col2, col3 = st.columns([3, 2, 1])
+                with col1:
+                    st.markdown(f"**{safe_get(firm, 'name')}**")
+                    st.caption(f"{safe_get(firm, 'strategy')}")
+                with col2:
+                    st.caption(f"📍 {safe_get(firm, 'location')} • 💰 {safe_get(firm, 'aum')}")
+                with col3:
+                    if st.button("👁️ View", key=f"search_firm_{firm['id']}", use_container_width=True):
+                        go_to_firm_details(firm['id'])
+                        st.rerun()
+            
+            if len(matching_firms) > 3:
+                st.caption(f"... and {len(matching_firms) - 3} more firms")
+        
+        if matching_metrics:
+            st.markdown(f"**📊 Performance ({len(matching_metrics)} found)**")
+            for metric in matching_metrics[:3]:  # Show top 3 results
+                metric_display = f"{safe_get(metric, 'fund_name')} - {safe_get(metric, 'metric_type')}: {safe_get(metric, 'value')}"
+                if metric.get('period'):
+                    metric_display += f" ({safe_get(metric, 'period')})"
+                st.write(f"• {metric_display}")
+            
+            if len(matching_metrics) > 3:
+                st.caption(f"... and {len(matching_metrics) - 3} more metrics")
+        
+        # Clear search button
+        if st.button("❌ Clear Search"):
+            st.session_state.global_search = ""
+            st.rerun()
+        
+        st.markdown("---")
+    
+    else:
+        st.info(f"🔍 No results found for '{search_query}'. Try different keywords.")
+        if st.button("❌ Clear Search"):
+            st.session_state.global_search = ""
+            st.rerun()
+        st.markdown("---")
 
 # Data persistence status indicator
 with st.container():
@@ -1695,15 +1885,15 @@ if st.sidebar.button("💾 Save Data"):
 col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 2])
 
 with col1:
-    if st.button("🏢 Firms", use_container_width=True, 
-                 type="primary" if st.session_state.current_view == 'firms' else "secondary"):
-        go_to_firms()
-        st.rerun()
-
-with col2:
     if st.button("👥 People", use_container_width=True, 
                  type="primary" if st.session_state.current_view == 'people' else "secondary"):
         go_to_people()
+        st.rerun()
+
+with col2:
+    if st.button("🏢 Firms", use_container_width=True, 
+                 type="primary" if st.session_state.current_view == 'firms' else "secondary"):
+        go_to_firms()
         st.rerun()
 
 with col3:
@@ -2045,8 +2235,81 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
                 st.session_state.edit_firm_data = None
                 st.rerun()
 
+# --- PEOPLE VIEW (Now the primary/default view) ---
+if st.session_state.current_view == 'people':
+    st.markdown("---")
+    st.header("👥 Hedge Fund Professionals")
+    
+    if not st.session_state.people:
+        st.info("No people added yet. Use 'Add Person' button above or extract from newsletters using AI.")
+    else:
+        # Filters
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            # Filter out None values before sorting
+            locations = ["All"] + sorted(list(set(safe_get(p, 'location') for p in st.session_state.people if safe_get(p, 'location') != 'Unknown')))
+            location_filter = st.selectbox("Filter by Location", locations)
+        with col2:
+            # Filter out None values before sorting
+            companies = ["All"] + sorted(list(set(safe_get(p, 'current_company_name') for p in st.session_state.people if safe_get(p, 'current_company_name') != 'Unknown')))
+            company_filter = st.selectbox("Filter by Company", companies)
+        with col3:
+            search_term = st.text_input("Search by Name", placeholder="Enter name...")
+        
+        # Apply filters
+        filtered_people = st.session_state.people
+        if location_filter != "All":
+            filtered_people = [p for p in filtered_people if safe_get(p, 'location') == location_filter]
+        if company_filter != "All":
+            filtered_people = [p for p in filtered_people if safe_get(p, 'current_company_name') == company_filter]
+        if search_term:
+            filtered_people = [p for p in filtered_people if search_term.lower() in safe_get(p, 'name').lower()]
+        
+        # Display people in compact cards
+        st.write(f"**Showing {len(filtered_people)} people**")
+        
+        for person in filtered_people:
+            with st.container():
+                col1, col2, col3 = st.columns([2, 2, 1])
+                
+                with col1:
+                    st.markdown(f"**👤 {safe_get(person, 'name')}**")
+                    st.caption(f"{safe_get(person, 'current_title')} • {safe_get(person, 'current_company_name')}")
+                
+                with col2:
+                    col2a, col2b = st.columns(2)
+                    with col2a:
+                        location = safe_get(person, 'location')
+                        if len(location) > 10:
+                            location = location[:10] + "..."
+                        st.metric("📍", location, label_visibility="collapsed")
+                    with col2b:
+                        # Show performance metrics count if available
+                        person_metrics = get_person_performance_metrics(person['id'])
+                        if person_metrics:
+                            st.metric("📊", f"{len(person_metrics)} metrics", label_visibility="collapsed")
+                        else:
+                            aum = safe_get(person, 'aum_managed')
+                            if len(aum) > 8:
+                                aum = aum[:8] + "..."
+                            st.metric("💰", aum, label_visibility="collapsed")
+                
+                with col3:
+                    col3a, col3b = st.columns(2)
+                    with col3a:
+                        if st.button("👁️", key=f"view_person_{person['id']}", help="View Profile"):
+                            go_to_person_details(person['id'])
+                            st.rerun()
+                    with col3b:
+                        if st.button("✏️", key=f"edit_person_{person['id']}", help="Edit Person"):
+                            st.session_state.edit_person_data = person
+                            st.session_state.show_edit_person_modal = True
+                            st.rerun()
+                
+                st.markdown("---")
+
 # --- FIRMS VIEW ---
-if st.session_state.current_view == 'firms':
+elif st.session_state.current_view == 'firms':
     st.markdown("---")
     st.header("🏢 Hedge Funds in Asia")
     
