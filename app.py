@@ -289,7 +289,7 @@ def handle_dynamic_input(field_name, current_value, table_name, context="", in_f
             st.session_state.edit_person_data = None
             st.rerun()
 
-    return user_input.strip() if user_input else ""
+    return st.session_state.get(unique_key, "").strip()
 
 
 def enhanced_global_search(query):
