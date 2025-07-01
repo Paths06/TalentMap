@@ -2466,7 +2466,7 @@ if st.session_state.current_view == 'people':
             company_filter = st.selectbox("Filter by Company", companies)
         with col3:
             search_term = st.text_input("Search by Name", placeholder="Enter name...")
-        
+
         # Apply filters
         filtered_people = st.session_state.people
         if location_filter != "All":
@@ -2961,16 +2961,16 @@ elif st.session_state.current_view == 'performance':
         # Filter controls
         col1, col2, col3 = st.columns(3)
         with col1:
-            # Get unique fund names
-            fund_names = ["All"] + sorted(list(set(safe_get(p, 'fund_name') for p in st.session_state.performance_metrics if safe_get(p, 'fund_name') != 'Unknown')))
+            # Dynamic fund name filter
+            fund_names = ["All"] + sorted(list(set(safe_get(p, 'fund_name') for p in st.session_state.performance_metrics if safe_get(p, 'fund_name') not in ['Unknown', 'N/A', ''])))
             fund_filter = st.selectbox("Filter by Fund", fund_names)
         with col2:
-            # Get unique metric types
-            metric_types = ["All"] + sorted(list(set(safe_get(p, 'metric_type') for p in st.session_state.performance_metrics if safe_get(p, 'metric_type') != 'Unknown')))
+            # Dynamic metric type filter
+            metric_types = ["All"] + sorted(list(set(safe_get(p, 'metric_type') for p in st.session_state.performance_metrics if safe_get(p, 'metric_type') not in ['Unknown', 'N/A', ''])))
             metric_filter = st.selectbox("Filter by Metric Type", metric_types)
         with col3:
-            # Get unique periods
-            periods = ["All"] + sorted(list(set(safe_get(p, 'period') for p in st.session_state.performance_metrics if safe_get(p, 'period') != 'Unknown')))
+            # Dynamic period filter
+            periods = ["All"] + sorted(list(set(safe_get(p, 'period') for p in st.session_state.performance_metrics if safe_get(p, 'period') not in ['Unknown', 'N/A', ''])))
             period_filter = st.selectbox("Filter by Period", periods)
         
         # Apply filters
