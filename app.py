@@ -34,41 +34,72 @@ EMPLOYMENTS_FILE = DATA_DIR / "employments.json"
 EXTRACTIONS_FILE = DATA_DIR / "extractions.json"
 
 def save_data():
-    """Save all data to JSON files"""
+    """Save all data to JSON files with better error handling"""
     try:
+        # Ensure directory exists
+        DATA_DIR.mkdir(exist_ok=True)
+        
+        # Save people
         with open(PEOPLE_FILE, 'w', encoding='utf-8') as f:
             json.dump(st.session_state.people, f, indent=2, default=str)
         
+        # Save firms
         with open(FIRMS_FILE, 'w', encoding='utf-8') as f:
             json.dump(st.session_state.firms, f, indent=2, default=str)
         
+        # Save employments
         with open(EMPLOYMENTS_FILE, 'w', encoding='utf-8') as f:
             json.dump(st.session_state.employments, f, indent=2, default=str)
         
+        # Save extractions
         if 'all_extractions' in st.session_state:
             with open(EXTRACTIONS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(st.session_state.all_extractions, f, indent=2, default=str)
         
+        # Verify files were actually written
+        files_saved = []
+        if PEOPLE_FILE.exists():
+            files_saved.append(f"people.json ({PEOPLE_FILE.stat().st_size} bytes)")
+        if FIRMS_FILE.exists():
+            files_saved.append(f"firms.json ({FIRMS_FILE.stat().st_size} bytes)")
+        if EMPLOYMENTS_FILE.exists():
+            files_saved.append(f"employments.json ({EMPLOYMENTS_FILE.stat().st_size} bytes)")
+        if EXTRACTIONS_FILE.exists():
+            files_saved.append(f"extractions.json ({EXTRACTIONS_FILE.stat().st_size} bytes)")
+        
+        st.sidebar.success(f"💾 Data saved: {', '.join(files_saved)}")
         return True
+        
     except Exception as e:
-        st.error(f"Error saving data: {e}")
+        st.sidebar.error(f"❌ Save error: {e}")
+        st.sidebar.error(f"📁 Attempted to save to: {DATA_DIR.absolute()}")
         return False
 
 def load_data():
-    """Load data from JSON files"""
+    """Load data from JSON files with detailed logging"""
     try:
+        people = []
+        firms = []
+        employments = []
+        extractions = []
+        
+        # Load people
         if PEOPLE_FILE.exists():
             with open(PEOPLE_FILE, 'r', encoding='utf-8') as f:
                 people = json.load(f)
+            print(f"✅ Loaded {len(people)} people from {PEOPLE_FILE}")
         else:
-            people = []
+            print(f"⚠️ No people file found at {PEOPLE_FILE}")
         
+        # Load firms
         if FIRMS_FILE.exists():
             with open(FIRMS_FILE, 'r', encoding='utf-8') as f:
                 firms = json.load(f)
+            print(f"✅ Loaded {len(firms)} firms from {FIRMS_FILE}")
         else:
-            firms = []
+            print(f"⚠️ No firms file found at {FIRMS_FILE}")
         
+        # Load employments
         if EMPLOYMENTS_FILE.exists():
             with open(EMPLOYMENTS_FILE, 'r', encoding='utf-8') as f:
                 employments = json.load(f)
@@ -78,18 +109,24 @@ def load_data():
                         emp['start_date'] = datetime.strptime(emp['start_date'], '%Y-%m-%d').date()
                     if emp.get('end_date'):
                         emp['end_date'] = datetime.strptime(emp['end_date'], '%Y-%m-%d').date()
+            print(f"✅ Loaded {len(employments)} employments from {EMPLOYMENTS_FILE}")
         else:
-            employments = []
+            print(f"⚠️ No employments file found at {EMPLOYMENTS_FILE}")
         
+        # Load extractions
         if EXTRACTIONS_FILE.exists():
             with open(EXTRACTIONS_FILE, 'r', encoding='utf-8') as f:
                 extractions = json.load(f)
+            print(f"✅ Loaded {len(extractions)} extractions from {EXTRACTIONS_FILE}")
         else:
-            extractions = []
+            print(f"⚠️ No extractions file found at {EXTRACTIONS_FILE}")
+        
+        print(f"📁 Data directory: {DATA_DIR.absolute()}")
         
         return people, firms, employments, extractions
+        
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        print(f"❌ Error loading data: {e}")
         return [], [], [], []
 
 # --- Initialize Session State with Rich Dummy Data ---
@@ -603,47 +640,84 @@ with st.sidebar:
                 st.error("Please provide API key")
             else:
                 char_count = len(newsletter_text)
+                st.info(f"📊 Processing {char_count:,} characters...")
                 
-                # Simple size checks
+                # Handle large files with proper confirmation
+                proceed_with_processing = True
+                
                 if char_count > 150000:  # 150KB hard limit
-                    st.error(f"File too large: {char_count:,} characters. Try a smaller file or copy/paste sections.")
-                elif char_count > 50000:  # Warning for large files
-                    st.warning(f"Large file: {char_count:,} characters. This may take 5-10 minutes.")
-                    if not st.checkbox("I want to proceed anyway"):
-                        st.stop()
-                
-                # Simple processing without complex error handling
-                try:
-                    st.info("🤖 Starting extraction...")
-                    extractions = extract_talent_simple(newsletter_text, model)
+                    st.error(f"❌ File too large: {char_count:,} characters. Maximum: 150,000")
+                    st.info("💡 **Solutions**: Split into smaller files or copy/paste key sections")
+                    proceed_with_processing = False
                     
-                    if extractions:
-                        # Add metadata
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        for ext in extractions:
-                            ext['timestamp'] = timestamp
-                            ext['id'] = str(uuid.uuid4())
-                        
-                        # Save results
-                        st.session_state.all_extractions.extend(extractions)
-                        save_data()
-                        
-                        # Show results
-                        st.success(f"🎉 Found {len(extractions)} people!")
-                        
-                        # Simple preview
-                        st.write("**Preview:**")
-                        for i, ext in enumerate(extractions[:5]):
-                            st.write(f"{i+1}. {ext['name']} → {ext['company']}")
-                        
-                        if len(extractions) > 5:
-                            st.write(f"... and {len(extractions) - 5} more")
+                elif char_count > 50000:  # Warning for large files
+                    st.warning(f"⚠️ **Large file detected**: {char_count:,} characters")
+                    chunks_needed = max(1, char_count // 15000)
+                    est_minutes = chunks_needed * 2
+                    st.info(f"🕐 **Estimated processing time**: ~{est_minutes} minutes ({chunks_needed} chunks)")
+                    
+                    # Create a unique key for this processing session
+                    process_key = f"proceed_{char_count}_{hash(newsletter_text[:100])}"
+                    
+                    if st.checkbox("✅ I understand this will take time and want to proceed", key=process_key):
+                        st.success("✅ **Proceeding with large file processing...**")
+                        proceed_with_processing = True
                     else:
-                        st.warning("No people found. Try a different text or model.")
+                        st.info("👆 **Check the box above to proceed with processing**")
+                        proceed_with_processing = False
+                
+                # Only proceed if confirmed
+                if proceed_with_processing:
+                    try:
+                        st.info("🤖 **Starting extraction process...**")
                         
-                except Exception as e:
-                    st.error(f"Extraction failed: {e}")
-                    st.info("Try: different model, smaller file, or copy/paste instead of upload")
+                        # Show processing status
+                        with st.status("Processing newsletter...", expanded=True) as status:
+                            st.write("🔄 Initializing extraction...")
+                            extractions = extract_talent_simple(newsletter_text, model)
+                            
+                            if extractions:
+                                st.write(f"✅ Found {len(extractions)} people!")
+                                status.update(label="✅ Extraction complete!", state="complete")
+                            else:
+                                st.write("⚠️ No people found")
+                                status.update(label="⚠️ No results found", state="complete")
+                        
+                        if extractions:
+                            # Add metadata
+                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            for ext in extractions:
+                                ext['timestamp'] = timestamp
+                                ext['id'] = str(uuid.uuid4())
+                            
+                            # Save results immediately
+                            st.session_state.all_extractions.extend(extractions)
+                            if save_data():
+                                st.success(f"🎉 **Success!** Found and saved {len(extractions)} people!")
+                            else:
+                                st.error("⚠️ Extraction successful but save failed!")
+                            
+                            # Show summary
+                            companies = set(ext.get('company', 'Unknown') for ext in extractions)
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("👥 People Found", len(extractions))
+                            with col2:
+                                st.metric("🏢 Companies", len(companies))
+                            
+                            # Show preview
+                            with st.expander("📋 Preview Results", expanded=True):
+                                for i, ext in enumerate(extractions[:5]):
+                                    st.write(f"{i+1}. **{ext['name']}** → {ext['company']}")
+                                
+                                if len(extractions) > 5:
+                                    st.write(f"... and {len(extractions) - 5} more")
+                        else:
+                            st.warning("⚠️ No people found. Try a different model or check if the content contains hedge fund news.")
+                            
+                    except Exception as e:
+                        st.error(f"💥 **Extraction failed**: {str(e)}")
+                        st.info("**Troubleshooting**: Try a different model, smaller file, or copy/paste instead of upload")
         
         # Quick test - simplified
         if st.button("🧪 Test with Sample", use_container_width=True):
@@ -733,6 +807,44 @@ with st.sidebar:
 # --- MAIN CONTENT AREA ---
 st.title("🏢 Asian Hedge Fund Talent Map")
 st.markdown("### Professional network mapping for Asia's hedge fund industry")
+
+# Data persistence status indicator
+with st.container():
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    
+    with col1:
+        st.markdown("**📊 Database Status:**")
+    
+    with col2:
+        # Check if data files exist and show status
+        if PEOPLE_FILE.exists() or FIRMS_FILE.exists():
+            last_modified = max(
+                PEOPLE_FILE.stat().st_mtime if PEOPLE_FILE.exists() else 0,
+                FIRMS_FILE.stat().st_mtime if FIRMS_FILE.exists() else 0
+            )
+            last_save = datetime.fromtimestamp(last_modified).strftime("%H:%M:%S")
+            st.success(f"✅ Saved at {last_save}")
+        else:
+            st.warning("⚠️ No saved data")
+    
+    with col3:
+        if st.button("💾 Force Save"):
+            if save_data():
+                st.success("✅ Saved!")
+            st.rerun()
+    
+    with col4:
+        # Auto-save every time data changes
+        total_items = len(st.session_state.people) + len(st.session_state.firms) + len(st.session_state.all_extractions)
+        if 'last_saved_count' not in st.session_state:
+            st.session_state.last_saved_count = total_items
+        
+        if total_items != st.session_state.last_saved_count:
+            st.info("💾 Auto-saving...")
+            save_data()
+            st.session_state.last_saved_count = total_items
+        
+        st.caption(f"📁 {DATA_DIR.absolute()}")
 
 # Auto-save indicator
 if st.sidebar.button("💾 Save Data"):
@@ -1492,7 +1604,33 @@ with col2:
 with col3:
     st.markdown("**💾 Persistent Data Storage**")
 
-# Auto-save data on any changes
-if st.session_state.get('data_changed', False):
+# Automatic data saving and backup
+if st.button("📥 Export Database Backup", use_container_width=True):
+    export_data = {
+        "people": st.session_state.people,
+        "firms": st.session_state.firms,
+        "employments": st.session_state.employments,
+        "extractions": st.session_state.all_extractions,
+        "export_timestamp": datetime.now().isoformat(),
+        "total_records": len(st.session_state.people) + len(st.session_state.firms)
+    }
+    
+    export_json = json.dumps(export_data, indent=2, default=str)
+    st.download_button(
+        "💾 Download Complete Database",
+        export_json,
+        f"hedge_fund_db_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+        "application/json",
+        use_container_width=True
+    )
+
+# Force save data periodically
+current_time = datetime.now()
+if 'last_auto_save' not in st.session_state:
+    st.session_state.last_auto_save = current_time
+
+# Auto-save every 30 seconds if there's data
+time_since_save = (current_time - st.session_state.last_auto_save).total_seconds()
+if time_since_save > 30 and (st.session_state.people or st.session_state.firms or st.session_state.all_extractions):
     save_data()
-    st.session_state.data_changed = False
+    st.session_state.last_auto_save = current_time
