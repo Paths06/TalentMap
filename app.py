@@ -295,7 +295,14 @@ def init_dummy_data():
             "education": "Harvard Business School, Tsinghua University",
             "expertise": "Technology, Healthcare",
             "aum_managed": "2.5B USD",
-            "strategy": "Long-only Growth Equity"
+            "strategy": "Long-only Growth Equity",
+            "created_date": (datetime.now() - timedelta(days=30)).isoformat(),
+            "last_updated": (datetime.now() - timedelta(days=5)).isoformat(),
+            "extraction_history": [{
+                "extraction_date": (datetime.now() - timedelta(days=30)).isoformat(),
+                "source_type": "sample_data",
+                "context_preview": "Sample data for demo purposes"
+            }]
         },
         {
             "id": str(uuid.uuid4()),
@@ -309,7 +316,14 @@ def init_dummy_data():
             "education": "Tokyo University, Wharton",
             "expertise": "Quantitative Trading, Fixed Income",
             "aum_managed": "1.8B USD",
-            "strategy": "Multi-Strategy Quantitative"
+            "strategy": "Multi-Strategy Quantitative",
+            "created_date": (datetime.now() - timedelta(days=15)).isoformat(),
+            "last_updated": (datetime.now() - timedelta(days=2)).isoformat(),
+            "extraction_history": [{
+                "extraction_date": (datetime.now() - timedelta(days=15)).isoformat(),
+                "source_type": "sample_data",
+                "context_preview": "Sample data for demo purposes"
+            }]
         },
         {
             "id": str(uuid.uuid4()),
@@ -323,7 +337,14 @@ def init_dummy_data():
             "education": "Seoul National University, MIT Sloan",
             "expertise": "Equity Research, ESG",
             "aum_managed": "800M USD",
-            "strategy": "Equity Long/Short"
+            "strategy": "Equity Long/Short",
+            "created_date": (datetime.now() - timedelta(days=7)).isoformat(),
+            "last_updated": datetime.now().isoformat(),
+            "extraction_history": [{
+                "extraction_date": (datetime.now() - timedelta(days=7)).isoformat(),
+                "source_type": "sample_data",
+                "context_preview": "Sample data for demo purposes"
+            }]
         }
     ]
     
@@ -339,6 +360,13 @@ def init_dummy_data():
             "strategy": "Long-only, Growth Equity",
             "website": "https://hillhousecap.com",
             "description": "Asia's largest hedge fund focusing on technology and healthcare investments",
+            "created_date": (datetime.now() - timedelta(days=45)).isoformat(),
+            "last_updated": (datetime.now() - timedelta(days=10)).isoformat(),
+            "extraction_history": [{
+                "extraction_date": (datetime.now() - timedelta(days=45)).isoformat(),
+                "source_type": "sample_data",
+                "context_preview": "Sample firm data for demo purposes"
+            }],
             "performance_metrics": [
                 {
                     "id": str(uuid.uuid4()),
@@ -346,7 +374,9 @@ def init_dummy_data():
                     "value": "12.5",
                     "period": "YTD",
                     "date": "2025",
-                    "additional_info": "Net return"
+                    "additional_info": "Net return",
+                    "recorded_date": (datetime.now() - timedelta(days=10)).isoformat(),
+                    "source_reliability": "sample_data"
                 }
             ]
         },
@@ -360,6 +390,13 @@ def init_dummy_data():
             "strategy": "Multi-strategy, Quantitative",
             "website": "https://millennium.com",
             "description": "Global hedge fund with significant Asian operations",
+            "created_date": (datetime.now() - timedelta(days=20)).isoformat(),
+            "last_updated": (datetime.now() - timedelta(days=3)).isoformat(),
+            "extraction_history": [{
+                "extraction_date": (datetime.now() - timedelta(days=20)).isoformat(),
+                "source_type": "sample_data",
+                "context_preview": "Sample firm data for demo purposes"
+            }],
             "performance_metrics": [
                 {
                     "id": str(uuid.uuid4()),
@@ -367,7 +404,9 @@ def init_dummy_data():
                     "value": "1.8",
                     "period": "Current",
                     "date": "2025",
-                    "additional_info": "Improved from 1.2"
+                    "additional_info": "Improved from 1.2",
+                    "recorded_date": (datetime.now() - timedelta(days=3)).isoformat(),
+                    "source_reliability": "sample_data"
                 }
             ]
         },
@@ -381,6 +420,13 @@ def init_dummy_data():
             "strategy": "Multi-strategy, Market Making",
             "website": "https://citadel.com",
             "description": "Leading global hedge fund with growing Asian presence",
+            "created_date": (datetime.now() - timedelta(days=5)).isoformat(),
+            "last_updated": datetime.now().isoformat(),
+            "extraction_history": [{
+                "extraction_date": (datetime.now() - timedelta(days=5)).isoformat(),
+                "source_type": "sample_data",
+                "context_preview": "Sample firm data for demo purposes"
+            }],
             "performance_metrics": []
         }
     ]
@@ -399,7 +445,12 @@ def init_dummy_data():
             "start_date": date(2018, 3, 1),
             "end_date": date(2021, 8, 15),
             "location": "Hong Kong",
-            "strategy": "Investment Banking"
+            "strategy": "Investment Banking",
+            "created_date": (datetime.now() - timedelta(days=30)).isoformat(),
+            "extraction_context": {
+                "extraction_date": (datetime.now() - timedelta(days=30)).isoformat(),
+                "source_type": "sample_data"
+            }
         },
         {
             "id": str(uuid.uuid4()),
@@ -409,7 +460,12 @@ def init_dummy_data():
             "start_date": date(2021, 9, 1),
             "end_date": None,
             "location": "Hong Kong",
-            "strategy": "Growth Equity"
+            "strategy": "Growth Equity",
+            "created_date": (datetime.now() - timedelta(days=30)).isoformat(),
+            "extraction_context": {
+                "extraction_date": (datetime.now() - timedelta(days=30)).isoformat(),
+                "source_type": "sample_data"
+            }
         }
     ])
     
@@ -482,7 +538,7 @@ def initialize_session_state():
     if 'auto_save_timeout' not in st.session_state:
         st.session_state.auto_save_timeout = 180
     
-    # BACKGROUND PROCESSING STATE
+    # BACKGROUND PROCESSING STATE with timeout tracking
     if 'background_processing' not in st.session_state:
         st.session_state.background_processing = {
             'is_running': False,
@@ -492,8 +548,105 @@ def initialize_session_state():
             'status_message': '',
             'results': {'people': [], 'performance': []},
             'errors': [],
-            'start_time': None
+            'start_time': None,
+            'last_activity': None,
+            'saved_people': 0,
+            'saved_performance': 0,
+            'processing_id': None,
+            'failed_chunks': []
         }
+
+def check_and_recover_stuck_processing():
+    """Check for and recover from stuck background processing"""
+    bg_proc = st.session_state.background_processing
+    
+    if not bg_proc['is_running']:
+        return
+    
+    # Check for timeout
+    if 'last_activity' in bg_proc and bg_proc['last_activity']:
+        time_since_activity = (datetime.now() - bg_proc['last_activity']).total_seconds()
+        
+        if time_since_activity > 300:  # 5 minutes timeout
+            logger.warning(f"Processing timeout detected after {time_since_activity}s inactivity")
+            
+            # Force stop and save any results
+            total_people = bg_proc.get('saved_people', 0) + len(bg_proc['results']['people'])
+            total_metrics = bg_proc.get('saved_performance', 0) + len(bg_proc['results']['performance'])
+            
+            bg_proc.update({
+                'is_running': False,
+                'status_message': f'Auto-stopped due to timeout. Recovered {total_people} people, {total_metrics} metrics',
+                'errors': bg_proc['errors'] + ['Processing timeout - automatically recovered']
+            })
+            
+            # Try to save any remaining results
+            if bg_proc['results']['people'] or bg_proc['results']['performance']:
+                if st.session_state.enable_review_mode:
+                    add_to_review_queue(
+                        bg_proc['results']['people'], 
+                        bg_proc['results']['performance'], 
+                        "Auto-recovered from timeout"
+                    )
+                else:
+                    try:
+                        saved_p, saved_perf = save_approved_extractions(
+                            bg_proc['results']['people'], 
+                            bg_proc['results']['performance']
+                        )
+                        bg_proc['saved_people'] += saved_p
+                        bg_proc['saved_performance'] += saved_perf
+                        logger.info(f"Auto-recovery saved {saved_p} people, {saved_perf} metrics")
+                    except Exception as e:
+                        logger.error(f"Auto-recovery save failed: {e}")
+            
+            return True  # Indicate recovery occurred
+    
+    return False
+
+def emergency_stop_processing():
+    """Emergency stop function for stuck processing"""
+    bg_proc = st.session_state.background_processing
+    
+    if bg_proc['is_running']:
+        logger.warning("Emergency stop triggered")
+        
+        # Try to save current results before stopping
+        results_saved = False
+        if bg_proc['results']['people'] or bg_proc['results']['performance']:
+            try:
+                if st.session_state.enable_review_mode:
+                    add_to_review_queue(
+                        bg_proc['results']['people'], 
+                        bg_proc['results']['performance'], 
+                        "Emergency Stop Recovery"
+                    )
+                    results_saved = True
+                else:
+                    saved_p, saved_perf = save_approved_extractions(
+                        bg_proc['results']['people'], 
+                        bg_proc['results']['performance']
+                    )
+                    bg_proc['saved_people'] += saved_p
+                    bg_proc['saved_performance'] += saved_perf
+                    results_saved = True
+                    logger.info(f"Emergency save: {saved_p} people, {saved_perf} metrics")
+            except Exception as e:
+                logger.error(f"Emergency save failed: {e}")
+        
+        # Force stop
+        total_people = bg_proc.get('saved_people', 0) + len(bg_proc['results']['people'])
+        total_metrics = bg_proc.get('saved_performance', 0) + len(bg_proc['results']['performance'])
+        
+        bg_proc.update({
+            'is_running': False,
+            'status_message': f'Emergency stop. {"Results saved" if results_saved else "No results to save"}. Found {total_people} people, {total_metrics} metrics',
+            'errors': bg_proc['errors'] + ['Emergency stop triggered']
+        })
+        
+        return True
+    
+    return False
 
 def get_unique_values_from_session_state(table_name, field_name):
     """Get unique values for a field from session state data"""
@@ -533,18 +686,35 @@ def setup_gemini(api_key, model_id="gemini-1.5-flash"):
         return None
 
 def get_model_rate_limits(model_id):
-    """Get rate limits for different Gemini models"""
+    """Get rate limits for different Gemini models with proper 2.0/2.5 handling"""
     rate_limits = {
         "gemini-1.5-flash": {"requests_per_minute": 15, "delay": 4},
         "gemini-1.5-flash-latest": {"requests_per_minute": 15, "delay": 4},
         "gemini-1.5-flash-8b": {"requests_per_minute": 15, "delay": 4},
         "gemini-1.5-pro": {"requests_per_minute": 2, "delay": 30},
         "gemini-1.5-pro-latest": {"requests_per_minute": 2, "delay": 30},
-        "gemini-2.0-flash-exp": {"requests_per_minute": 10, "delay": 6},
+        # Conservative limits for 2.0 models (unclear official limits)
+        "gemini-2.0-flash-thinking-exp": {"requests_per_minute": 5, "delay": 12},  # Actual 2.0 
+        "gemini-2.0-flash-exp": {"requests_per_minute": 4, "delay": 15},  # Experimental 2.0
+        "gemini-2.5-flash-exp": {"requests_per_minute": 3, "delay": 20},  # Very conservative for 2.5
         "gemini-exp-1114": {"requests_per_minute": 2, "delay": 30},
         "gemini-exp-1121": {"requests_per_minute": 2, "delay": 30}
     }
-    return rate_limits.get(model_id, {"requests_per_minute": 5, "delay": 12})
+    
+    # Get base limits
+    base_limits = rate_limits.get(model_id, {"requests_per_minute": 5, "delay": 12})
+    
+    # Special handling for 2.0+ models which can be unstable
+    if any(version in model_id for version in ["2.0", "2.5"]):
+        base_limits["delay"] = max(base_limits["delay"], 12)  # Minimum 12s delay
+        base_limits["max_retries"] = 3
+        base_limits["timeout_seconds"] = 90  # Longer timeout for newer models
+        base_limits["experimental"] = True
+    else:
+        base_limits["timeout_seconds"] = 60
+        base_limits["experimental"] = False
+    
+    return base_limits
 
 @st.cache_data(ttl=3600)
 def create_cached_context():
@@ -666,72 +836,138 @@ def preprocess_newsletter_text(text, mode="balanced"):
     return text
 
 def extract_single_chunk_safe(text, model):
-    """Enhanced single chunk extraction with improved error handling"""
+    """Enhanced single chunk extraction with timeout and improved error handling"""
     try:
         cached_context = create_cached_context()
         prompt = build_extraction_prompt_with_cache(text, cached_context)
         
-        response = model.generate_content(prompt)
-        if not response or not response.text:
-            logger.warning("Empty response from AI model")
+        # Get model-specific timeout
+        rate_limits = get_model_rate_limits(model.model_id)
+        timeout = rate_limits.get('timeout_seconds', 30)
+        
+        # Set generation config for more reliable responses
+        generation_config = {
+            'temperature': 0.1,  # Lower temperature for more consistent results
+            'top_p': 0.8,
+            'top_k': 40,
+            'max_output_tokens': 8192,
+        }
+        
+        # Add timeout for Flash 2.0
+        if "2.0-flash" in model.model_id:
+            generation_config['candidate_count'] = 1  # Single candidate for stability
+        
+        logger.info(f"Extracting with model {model.model_id}, timeout: {timeout}s, chunk size: {len(text)}")
+        
+        # Generate content with timeout handling
+        try:
+            response = model.generate_content(prompt, generation_config=generation_config)
+            
+            if not response or not response.text:
+                logger.warning("Empty response from AI model")
+                return [], []
+            
+            # Check for content filtering
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                if hasattr(response.prompt_feedback, 'block_reason'):
+                    logger.warning(f"Content blocked: {response.prompt_feedback.block_reason}")
+                    return [], []
+            
+        except Exception as generation_error:
+            logger.error(f"Generation failed: {generation_error}")
+            if "timeout" in str(generation_error).lower():
+                raise TimeoutError(f"Model request timed out after {timeout}s")
+            else:
+                raise generation_error
+        
+        # Parse JSON safely with better error handling
+        response_text = response.text.strip()
+        json_start = response_text.find('{')
+        json_end = response_text.rfind('}') + 1
+        
+        if json_start == -1 or json_end <= json_start:
+            logger.warning("No valid JSON found in AI response")
+            # Try to find JSON in different formats
+            import re
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                json_text = json_match.group()
+            else:
+                logger.warning("No JSON found even with regex")
+                return [], []
+        else:
+            json_text = response_text[json_start:json_end]
+        
+        try:
+            result = json.loads(json_text)
+        except json.JSONDecodeError as json_error:
+            logger.error(f"JSON parsing failed: {json_error}")
+            logger.error(f"JSON text: {json_text[:500]}...")
             return [], []
         
-        # Parse JSON safely
-        json_start = response.text.find('{')
-        json_end = response.text.rfind('}') + 1
-        
-        if json_start == -1:
-            logger.warning("No JSON found in AI response")
-            return [], []
-        
-        result = json.loads(response.text[json_start:json_end])
         people = result.get('people', [])
         performance = result.get('performance', [])
         
-        # Enhanced validation
+        # Enhanced validation with better logging
         valid_people = []
         valid_performance = []
         
-        for p in people:
-            name = safe_get(p, 'name', '').strip()
-            current_company = safe_get(p, 'current_company', '').strip()
-            
-            if (name and current_company and 
-                name.lower() not in ['full name', 'full legal name', 'name', 'unknown'] and
-                current_company.lower() not in ['company', 'current firm name', 'firm name', 'unknown'] and
-                len(name) > 2 and len(current_company) > 2):
+        for i, p in enumerate(people):
+            try:
+                name = safe_get(p, 'name', '').strip()
+                current_company = safe_get(p, 'current_company', '').strip()
                 
-                # Map to legacy structure for compatibility
-                legacy_person = {
-                    'name': name,
-                    'company': current_company,
-                    'title': safe_get(p, 'current_title', 'Unknown'),
-                    'movement_type': safe_get(p, 'movement_type', 'Unknown'),
-                    'location': safe_get(p, 'location', 'Unknown'),
-                    'current_company': current_company,
-                    'current_title': safe_get(p, 'current_title', 'Unknown'),
-                    'previous_company': safe_get(p, 'previous_company', 'Unknown'),
-                    'experience_years': safe_get(p, 'experience_years', 'Unknown'),
-                    'expertise': safe_get(p, 'expertise', 'Unknown'),
-                    'seniority_level': safe_get(p, 'seniority_level', 'Unknown')
-                }
-                valid_people.append(legacy_person)
+                if (name and current_company and 
+                    name.lower() not in ['full name', 'full legal name', 'name', 'unknown'] and
+                    current_company.lower() not in ['company', 'current firm name', 'firm name', 'unknown'] and
+                    len(name) > 2 and len(current_company) > 2):
+                    
+                    # Map to legacy structure for compatibility
+                    legacy_person = {
+                        'name': name,
+                        'company': current_company,
+                        'title': safe_get(p, 'current_title', 'Unknown'),
+                        'movement_type': safe_get(p, 'movement_type', 'Unknown'),
+                        'location': safe_get(p, 'location', 'Unknown'),
+                        'current_company': current_company,
+                        'current_title': safe_get(p, 'current_title', 'Unknown'),
+                        'previous_company': safe_get(p, 'previous_company', 'Unknown'),
+                        'experience_years': safe_get(p, 'experience_years', 'Unknown'),
+                        'expertise': safe_get(p, 'expertise', 'Unknown'),
+                        'seniority_level': safe_get(p, 'seniority_level', 'Unknown')
+                    }
+                    valid_people.append(legacy_person)
+                else:
+                    logger.debug(f"Person {i} failed validation: name='{name}', company='{current_company}'")
+            except Exception as person_error:
+                logger.warning(f"Error processing person {i}: {person_error}")
+                continue
         
-        for p in performance:
-            fund_name = safe_get(p, 'fund_name', '').strip()
-            metric_type = safe_get(p, 'metric_type', '').strip()
-            value = safe_get(p, 'value', '').strip()
-            
-            if (fund_name and metric_type and value and
-                fund_name.lower() not in ['fund name', 'exact fund name', 'unknown'] and
-                metric_type.lower() not in ['metric', 'metric type', 'unknown'] and
-                value.lower() not in ['value', 'numeric value only', 'unknown']):
-                valid_performance.append(p)
+        for i, p in enumerate(performance):
+            try:
+                fund_name = safe_get(p, 'fund_name', '').strip()
+                metric_type = safe_get(p, 'metric_type', '').strip()
+                value = safe_get(p, 'value', '').strip()
+                
+                if (fund_name and metric_type and value and
+                    fund_name.lower() not in ['fund name', 'exact fund name', 'unknown'] and
+                    metric_type.lower() not in ['metric', 'metric type', 'unknown'] and
+                    value.lower() not in ['value', 'numeric value only', 'unknown']):
+                    valid_performance.append(p)
+                else:
+                    logger.debug(f"Performance {i} failed validation: fund='{fund_name}', metric='{metric_type}', value='{value}'")
+            except Exception as perf_error:
+                logger.warning(f"Error processing performance {i}: {perf_error}")
+                continue
         
+        logger.info(f"Extraction complete: {len(valid_people)} people, {len(valid_performance)} performance metrics")
         return valid_people, valid_performance
         
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing failed: {e}")
+    except TimeoutError as timeout_error:
+        logger.error(f"Extraction timed out: {timeout_error}")
+        raise timeout_error
+    except json.JSONDecodeError as json_error:
+        logger.error(f"JSON parsing failed: {json_error}")
         return [], []
     except Exception as e:
         logger.error(f"Enhanced extraction failed: {e}")
@@ -739,7 +975,7 @@ def extract_single_chunk_safe(text, model):
 
 # --- BACKGROUND PROCESSING FUNCTIONS ---
 def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode):
-    """Start background extraction process"""
+    """Start background extraction process with improved error handling and auto-save"""
     st.session_state.background_processing = {
         'is_running': True,
         'progress': 0,
@@ -748,10 +984,13 @@ def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode
         'status_message': 'Starting extraction...',
         'results': {'people': [], 'performance': []},
         'errors': [],
-        'start_time': datetime.now()
+        'start_time': datetime.now(),
+        'last_activity': datetime.now(),
+        'saved_people': 0,
+        'saved_performance': 0,
+        'processing_id': str(uuid.uuid4())
     }
     
-    # Simulate background processing with chunking
     try:
         # Preprocess text
         cleaned_text = preprocess_newsletter_text(text, preprocessing_mode)
@@ -780,18 +1019,27 @@ def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode
             current_pos = end_pos
         
         st.session_state.background_processing['total_chunks'] = len(chunks)
+        logger.info(f"Starting background extraction: {len(chunks)} chunks, model: {model.model_id}")
         
-        # Process chunks
+        # Process chunks with incremental saving
         rate_limits = get_model_rate_limits(model.model_id)
         delay = rate_limits['delay']
         
         all_people = []
         all_performance = []
+        failed_chunks = []
+        consecutive_failures = 0
         
         for i, chunk in enumerate(chunks):
+            # Check if processing should stop
             if not st.session_state.background_processing['is_running']:
+                logger.info(f"Processing stopped by user at chunk {i+1}")
                 break
-                
+            
+            # Update activity timestamp
+            st.session_state.background_processing['last_activity'] = datetime.now()
+            
+            # Update progress
             st.session_state.background_processing.update({
                 'current_chunk': i + 1,
                 'progress': int(((i + 1) / len(chunks)) * 100),
@@ -799,29 +1047,112 @@ def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode
             })
             
             try:
+                logger.info(f"Processing chunk {i+1}/{len(chunks)} (size: {len(chunk)} chars)")
                 people, performance = extract_single_chunk_safe(chunk, model)
-                all_people.extend(people)
-                all_performance.extend(performance)
                 
+                if people or performance:
+                    all_people.extend(people)
+                    all_performance.extend(performance)
+                    consecutive_failures = 0  # Reset failure counter
+                    
+                    # Auto-save every 10 chunks or if we have 50+ items
+                    if (i + 1) % 10 == 0 or len(all_people) >= 50:
+                        if not st.session_state.enable_review_mode:
+                            # Direct save
+                            saved_p, saved_perf = save_approved_extractions(all_people, all_performance)
+                            st.session_state.background_processing['saved_people'] += saved_p
+                            st.session_state.background_processing['saved_performance'] += saved_perf
+                            
+                            # Clear saved items from memory
+                            all_people = []
+                            all_performance = []
+                            
+                            logger.info(f"Auto-saved {saved_p} people, {saved_perf} metrics at chunk {i+1}")
+                    
+                    logger.info(f"Chunk {i+1} success: {len(people)} people, {len(performance)} metrics")
+                else:
+                    consecutive_failures += 1
+                    logger.warning(f"Chunk {i+1}: No results found")
+                
+                # Store results
                 st.session_state.background_processing['results'] = {
                     'people': all_people,
                     'performance': all_performance
                 }
                 
+                # Rate limiting with exponential backoff on failures
+                if consecutive_failures >= 3:
+                    actual_delay = min(delay * (1.5 ** consecutive_failures), delay * 5)
+                    logger.warning(f"Multiple failures detected, increasing delay to {actual_delay}s")
+                else:
+                    actual_delay = delay
+                
                 if i < len(chunks) - 1:  # Don't delay after last chunk
-                    time.sleep(delay)
+                    time.sleep(actual_delay)
+                
+                # Emergency stop if too many consecutive failures
+                if consecutive_failures >= 10:
+                    logger.error(f"Too many consecutive failures ({consecutive_failures}), stopping processing")
+                    st.session_state.background_processing['errors'].append(f"Stopped due to {consecutive_failures} consecutive failures")
+                    break
+                    
+            except TimeoutError as timeout_error:
+                consecutive_failures += 1
+                error_msg = f"Chunk {i + 1} timed out: {str(timeout_error)}"
+                st.session_state.background_processing['errors'].append(error_msg)
+                failed_chunks.append(i + 1)
+                logger.error(error_msg)
+                
+                # For timeouts, wait longer before retrying
+                time.sleep(delay * 2)
+                
+                if consecutive_failures >= 5:
+                    logger.error(f"Too many timeouts ({consecutive_failures}), stopping processing")
+                    break
                     
             except Exception as e:
+                consecutive_failures += 1
                 error_msg = f"Chunk {i + 1} failed: {str(e)}"
                 st.session_state.background_processing['errors'].append(error_msg)
+                failed_chunks.append(i + 1)
                 logger.error(error_msg)
+                
+                # Handle specific errors
+                if "rate" in str(e).lower() or "quota" in str(e).lower():
+                    logger.warning(f"Rate limit hit at chunk {i+1}, waiting longer...")
+                    time.sleep(delay * 3)  # Wait 3x longer on rate limits
+                elif "503" in str(e) or "502" in str(e):
+                    logger.warning(f"Server error at chunk {i+1}, waiting...")
+                    time.sleep(delay * 2)
+                elif consecutive_failures >= 5:
+                    logger.error(f"Too many failures ({consecutive_failures}), stopping processing")
+                    break
+        
+        # Final save of any remaining items
+        if all_people or all_performance:
+            if st.session_state.enable_review_mode:
+                # Add to review queue
+                add_to_review_queue(all_people, all_performance, f"Background Extraction ({len(chunks)} chunks)")
+                logger.info(f"Added {len(all_people)} people, {len(all_performance)} metrics to review queue")
+            else:
+                # Direct save
+                saved_p, saved_perf = save_approved_extractions(all_people, all_performance)
+                st.session_state.background_processing['saved_people'] += saved_p
+                st.session_state.background_processing['saved_performance'] += saved_perf
+                logger.info(f"Final save: {saved_p} people, {saved_perf} metrics")
         
         # Complete processing
+        total_found = st.session_state.background_processing['saved_people'] + len(st.session_state.background_processing['results']['people'])
+        total_metrics = st.session_state.background_processing['saved_performance'] + len(st.session_state.background_processing['results']['performance'])
+        
         st.session_state.background_processing.update({
             'is_running': False,
-            'status_message': f'Completed! Found {len(all_people)} people, {len(all_performance)} metrics',
-            'progress': 100
+            'status_message': f'Completed! Found {total_found} people, {total_metrics} metrics',
+            'progress': 100,
+            'failed_chunks': failed_chunks
         })
+        
+        logger.info(f"Background extraction completed: {total_found} people, {total_metrics} metrics, {len(failed_chunks)} failed chunks")
         
     except Exception as e:
         st.session_state.background_processing.update({
@@ -832,44 +1163,81 @@ def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode
         logger.error(f"Background extraction failed: {e}")
 
 def display_background_processing_widget():
-    """Display compact background processing widget"""
-    if not st.session_state.background_processing['is_running'] and st.session_state.background_processing['progress'] == 0:
+    """Display compact background processing widget with timeout detection"""
+    bg_proc = st.session_state.background_processing
+    
+    if not bg_proc['is_running'] and bg_proc['progress'] == 0:
         return
     
+    # Check for timeout/stuck processing
+    if bg_proc['is_running'] and 'last_activity' in bg_proc:
+        time_since_activity = (datetime.now() - bg_proc['last_activity']).total_seconds()
+        if time_since_activity > 300:  # 5 minutes timeout
+            st.session_state.background_processing['is_running'] = False
+            st.session_state.background_processing['status_message'] = 'Timeout - Processing stopped automatically'
+            st.session_state.background_processing['errors'].append('Processing timeout after 5 minutes of inactivity')
+    
     with st.container():
-        if st.session_state.background_processing['is_running']:
-            progress = st.session_state.background_processing['progress']
-            current = st.session_state.background_processing['current_chunk']
-            total = st.session_state.background_processing['total_chunks']
+        if bg_proc['is_running']:
+            progress = bg_proc['progress']
+            current = bg_proc['current_chunk']
+            total = bg_proc['total_chunks']
             
+            # Calculate elapsed time properly
+            if 'start_time' in bg_proc and bg_proc['start_time']:
+                elapsed_seconds = (datetime.now() - bg_proc['start_time']).total_seconds()
+                if elapsed_seconds < 60:
+                    time_str = f"{int(elapsed_seconds)}s"
+                elif elapsed_seconds < 3600:
+                    time_str = f"{int(elapsed_seconds // 60)}m {int(elapsed_seconds % 60)}s"
+                else:
+                    time_str = f"{int(elapsed_seconds // 3600)}h {int((elapsed_seconds % 3600) // 60)}m"
+            else:
+                time_str = "0s"
+            
+            # Enhanced progress display
             col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
-                st.progress(progress / 100, text=f"🤖 AI Extraction: {progress}% ({current}/{total})")
+                st.progress(progress / 100, text=f"🤖 AI Extraction: {progress}% • Chunk {current}/{total} • {time_str}")
             with col2:
                 if st.button("⏹️ Stop", key="stop_background", help="Stop processing"):
                     st.session_state.background_processing['is_running'] = False
                     st.rerun()
             with col3:
-                st.metric("Found", f"{len(st.session_state.background_processing['results']['people'])}")
+                people_count = bg_proc.get('saved_people', 0) + len(bg_proc['results']['people'])
+                metrics_count = bg_proc.get('saved_performance', 0) + len(bg_proc['results']['performance'])
+                st.metric("Found", f"{people_count}P/{metrics_count}M", label_visibility="collapsed")
+            
+            # Show live stats
+            if bg_proc.get('saved_people', 0) > 0 or bg_proc.get('saved_performance', 0) > 0:
+                st.caption(f"💾 Saved: {bg_proc.get('saved_people', 0)} people, {bg_proc.get('saved_performance', 0)} metrics")
         
         else:
             # Show completion status
-            results = st.session_state.background_processing['results']
-            errors = st.session_state.background_processing['errors']
+            results = bg_proc['results']
+            errors = bg_proc['errors']
+            failed_chunks = bg_proc.get('failed_chunks', [])
             
-            if results['people'] or results['performance']:
+            if results['people'] or results['performance'] or bg_proc.get('saved_people', 0) > 0:
+                total_people = bg_proc.get('saved_people', 0) + len(results['people'])
+                total_metrics = bg_proc.get('saved_performance', 0) + len(results['performance'])
+                
                 col1, col2, col3 = st.columns([2, 1, 1])
                 with col1:
-                    st.success(f"✅ Extraction complete! {len(results['people'])} people, {len(results['performance'])} metrics")
+                    if failed_chunks:
+                        st.warning(f"✅ Extraction complete! {total_people} people, {total_metrics} metrics • {len(failed_chunks)} chunks failed")
+                    else:
+                        st.success(f"✅ Extraction complete! {total_people} people, {total_metrics} metrics")
                 with col2:
-                    if st.button("📋 Review", key="review_results"):
-                        # Add to review queue
-                        add_to_review_queue(results['people'], results['performance'], "Background Extraction")
-                        st.session_state.background_processing = {
-                            'is_running': False, 'progress': 0, 'total_chunks': 0, 'current_chunk': 0,
-                            'status_message': '', 'results': {'people': [], 'performance': []}, 'errors': [], 'start_time': None
-                        }
-                        st.rerun()
+                    if results['people'] or results['performance']:  # Only show if there's unsaved data
+                        if st.button("📋 Review", key="review_results"):
+                            source_info = f"Background Extraction ({bg_proc.get('processing_id', 'unknown')[:8]})"
+                            add_to_review_queue(results['people'], results['performance'], source_info)
+                            # Clear results after adding to review
+                            st.session_state.background_processing['results'] = {'people': [], 'performance': []}
+                            st.rerun()
+                    else:
+                        st.success("💾 All Saved")
                 with col3:
                     if st.button("❌ Dismiss", key="dismiss_results"):
                         st.session_state.background_processing = {
@@ -877,13 +1245,36 @@ def display_background_processing_widget():
                             'status_message': '', 'results': {'people': [], 'performance': []}, 'errors': [], 'start_time': None
                         }
                         st.rerun()
+                
+                # Show detailed stats in expander
+                if failed_chunks or errors:
+                    with st.expander("📊 Processing Details", expanded=False):
+                        if failed_chunks:
+                            st.error(f"Failed chunks: {', '.join(map(str, failed_chunks))}")
+                        if errors:
+                            st.error("Recent errors:")
+                            for error in errors[-3:]:  # Show last 3 errors
+                                st.code(error)
             
             elif errors:
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    st.error(f"❌ Extraction failed: {errors[-1]}")
+                    st.error(f"❌ Extraction failed: {errors[-1] if errors else 'Unknown error'}")
                 with col2:
                     if st.button("❌ Dismiss", key="dismiss_error"):
+                        st.session_state.background_processing = {
+                            'is_running': False, 'progress': 0, 'total_chunks': 0, 'current_chunk': 0,
+                            'status_message': '', 'results': {'people': [], 'performance': []}, 'errors': [], 'start_time': None
+                        }
+                        st.rerun()
+            
+            else:
+                # No results found
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.info("ℹ️ No results found in processed text")
+                with col2:
+                    if st.button("❌ Dismiss", key="dismiss_no_results"):
                         st.session_state.background_processing = {
                             'is_running': False, 'progress': 0, 'total_chunks': 0, 'current_chunk': 0,
                             'status_message': '', 'results': {'people': [], 'performance': []}, 'errors': [], 'start_time': None
@@ -1087,7 +1478,8 @@ def display_review_interface():
                 saved_count = 0
                 for review_item in st.session_state.pending_review_data:
                     approved_people, approved_performance = approve_all_in_review(review_item['id'])
-                    people_saved, perf_saved = save_approved_extractions(approved_people, approved_performance)
+                    source_context = f"Review batch approved: {review_item['source']}. Timestamp: {review_item['timestamp']}"
+                    people_saved, perf_saved = save_approved_extractions(approved_people, approved_performance, source_context)
                     saved_count += people_saved
                 
                 st.session_state.pending_review_data = []
@@ -1156,18 +1548,28 @@ def approve_all_in_review(review_id):
     
     return review_item['reviewed_people'], review_item['reviewed_performance']
 
-def save_approved_extractions(approved_people, approved_performance):
-    """Save approved extractions to main database"""
+def save_approved_extractions(approved_people, approved_performance, source_context=""):
+    """Save approved extractions to main database with historical context"""
     saved_people = 0
     saved_performance = 0
     
-    # Process people
+    # Create source metadata
+    source_metadata = {
+        "extraction_date": datetime.now().isoformat(),
+        "source_type": "newsletter_extraction", 
+        "context_preview": source_context[:500] + "..." if len(source_context) > 500 else source_context,
+        "total_people_in_batch": len(approved_people),
+        "total_metrics_in_batch": len(approved_performance)
+    }
+    
+    # Process people with historical context
     for person_data in approved_people:
         new_person_id = str(uuid.uuid4())
         company_name = person_data.get('current_company') or person_data.get('company', 'Unknown')
         title = person_data.get('current_title') or person_data.get('title', 'Unknown')
         
-        st.session_state.people.append({
+        # Create person with historical notes
+        new_person = {
             "id": new_person_id,
             "name": safe_get(person_data, 'name'),
             "current_title": title,
@@ -1179,12 +1581,24 @@ def save_approved_extractions(approved_people, approved_performance):
             "education": "",
             "expertise": safe_get(person_data, 'expertise'),
             "aum_managed": "",
-            "strategy": safe_get(person_data, 'expertise', 'Unknown')
-        })
+            "strategy": safe_get(person_data, 'expertise', 'Unknown'),
+            "created_date": datetime.now().isoformat(),
+            "last_updated": datetime.now().isoformat(),
+            # Historical context
+            "extraction_history": [{
+                **source_metadata,
+                "movement_type": safe_get(person_data, 'movement_type'),
+                "previous_company": safe_get(person_data, 'previous_company'),
+                "seniority_level": safe_get(person_data, 'seniority_level'),
+                "original_extraction": person_data
+            }]
+        }
+        
+        st.session_state.people.append(new_person)
         
         # Add firm if doesn't exist
         if not get_firm_by_name(company_name):
-            st.session_state.firms.append({
+            new_firm = {
                 "id": str(uuid.uuid4()),
                 "name": company_name,
                 "location": safe_get(person_data, 'location'),
@@ -1194,10 +1608,19 @@ def save_approved_extractions(approved_people, approved_performance):
                 "strategy": safe_get(person_data, 'expertise', 'Hedge Fund'),
                 "website": "",
                 "description": f"Hedge fund - extracted from newsletter intelligence",
-                "performance_metrics": []
-            })
+                "performance_metrics": [],
+                "created_date": datetime.now().isoformat(),
+                "last_updated": datetime.now().isoformat(),
+                # Historical context for firm
+                "extraction_history": [{
+                    **source_metadata,
+                    "discovered_through": f"Employee extraction: {safe_get(person_data, 'name')}",
+                    "original_context": person_data
+                }]
+            }
+            st.session_state.firms.append(new_firm)
         
-        # Add employment record
+        # Add employment record with context
         st.session_state.employments.append({
             "id": str(uuid.uuid4()),
             "person_id": new_person_id,
@@ -1206,12 +1629,14 @@ def save_approved_extractions(approved_people, approved_performance):
             "start_date": date.today(),
             "end_date": None,
             "location": safe_get(person_data, 'location'),
-            "strategy": safe_get(person_data, 'expertise', 'Unknown')
+            "strategy": safe_get(person_data, 'expertise', 'Unknown'),
+            "created_date": datetime.now().isoformat(),
+            "extraction_context": source_metadata
         })
         
         saved_people += 1
     
-    # Process performance metrics
+    # Process performance metrics with historical context
     for metric in approved_performance:
         fund_name = safe_get(metric, 'fund_name')
         matching_firm = None
@@ -1226,11 +1651,44 @@ def save_approved_extractions(approved_people, approved_performance):
             if 'performance_metrics' not in matching_firm:
                 matching_firm['performance_metrics'] = []
             
-            if 'id' not in metric:
-                metric['id'] = str(uuid.uuid4())
+            # Add metric with historical context
+            enhanced_metric = {
+                **metric,
+                "id": str(uuid.uuid4()),
+                "recorded_date": datetime.now().isoformat(),
+                "extraction_context": source_metadata,
+                "source_reliability": "newsletter_extraction"
+            }
             
-            matching_firm['performance_metrics'].append(metric)
-            saved_performance += 1
+            # Check for duplicates
+            existing = any(
+                m.get('metric_type') == metric.get('metric_type') and 
+                m.get('period') == metric.get('period') and
+                m.get('date') == metric.get('date')
+                for m in matching_firm['performance_metrics']
+            )
+            
+            if not existing:
+                matching_firm['performance_metrics'].append(enhanced_metric)
+                
+                # Update firm's last_updated
+                matching_firm['last_updated'] = datetime.now().isoformat()
+                
+                # Add to firm's extraction history if it exists
+                if 'extraction_history' not in matching_firm:
+                    matching_firm['extraction_history'] = []
+                
+                matching_firm['extraction_history'].append({
+                    **source_metadata,
+                    "content_type": "performance_metric",
+                    "metric_added": {
+                        "type": safe_get(metric, 'metric_type'),
+                        "value": safe_get(metric, 'value'),
+                        "period": safe_get(metric, 'period')
+                    }
+                })
+                
+                saved_performance += 1
     
     save_data()
     return saved_people, saved_performance
@@ -1296,6 +1754,11 @@ def go_to_firm_details(firm_id):
 # Initialize session state
 initialize_session_state()
 
+# Check for stuck processing and auto-recover
+recovery_occurred = check_and_recover_stuck_processing()
+if recovery_occurred:
+    st.rerun()  # Refresh UI after recovery
+
 # --- HEADER WITH QUICK DOWNLOAD ---
 col1, col2, col3 = st.columns([2, 1, 1])
 with col1:
@@ -1307,17 +1770,26 @@ with col2:
     display_background_processing_widget()
 
 with col3:
-    # Quick CSV download
-    csv_data, filename = export_to_csv()
-    if csv_data:
-        st.download_button(
-            "📊 Quick CSV Export",
-            csv_data,
-            filename,
-            "text/csv",
-            use_container_width=True,
-            help="Download all data as CSV"
-        )
+    # Quick CSV download and emergency controls
+    col3a, col3b = st.columns(2)
+    with col3a:
+        csv_data, filename = export_to_csv()
+        if csv_data:
+            st.download_button(
+                "📊 Quick CSV Export",
+                csv_data,
+                filename,
+                "text/csv",
+                use_container_width=True,
+                help="Download all data as CSV"
+            )
+    with col3b:
+        # Emergency stop button (only show if processing is running)
+        if st.session_state.background_processing['is_running']:
+            if st.button("🚨 Emergency Stop", use_container_width=True, help="Force stop stuck processing", type="secondary"):
+                if emergency_stop_processing():
+                    st.warning("🚨 Emergency stop executed!")
+                    st.rerun()
 
 # --- SIDEBAR: AI Talent Extractor ---
 with st.sidebar:
@@ -1336,7 +1808,7 @@ with st.sidebar:
         api_key = st.text_input("Gemini API Key", type="password", 
                               help="Get from: https://makersuite.google.com/app/apikey")
     
-    # Enhanced Model Selection
+    # Enhanced Model Selection with actual 2.0/2.5 models
     st.markdown("---")
     st.subheader("🤖 Model Selection")
     
@@ -1346,7 +1818,9 @@ with st.sidebar:
         "Gemini 1.5 Flash 8B": "gemini-1.5-flash-8b",
         "Gemini 1.5 Pro": "gemini-1.5-pro",
         "Gemini 1.5 Pro Latest": "gemini-1.5-pro-latest",
-        "Gemini 2.0 Flash (Experimental)": "gemini-2.0-flash-exp",
+        "Gemini 2.0 Flash": "gemini-2.0-flash-thinking-exp",  # Actual 2.0
+        "Gemini 2.0 Flash Experimental": "gemini-2.0-flash-exp",
+        "Gemini 2.5 Flash": "gemini-2.5-flash-exp",  # Latest 2.5
         "Gemini Experimental 1114": "gemini-exp-1114",
         "Gemini Experimental 1121": "gemini-exp-1121"
     }
@@ -1360,9 +1834,51 @@ with st.sidebar:
     
     selected_model_id = model_options[selected_model_name]
     
-    # Show rate limits
+    # Show rate limits and processing status
     rate_limits = get_model_rate_limits(selected_model_id)
     st.caption(f"⏱️ Rate limit: {rate_limits['requests_per_minute']} req/min, {rate_limits['delay']}s delay")
+    
+    # Show current processing status if running
+    if st.session_state.background_processing['is_running']:
+        with st.container(border=True):
+            st.warning("🔄 **Processing in Progress**")
+            bg_proc = st.session_state.background_processing
+            
+            # Calculate time properly
+            if bg_proc['start_time']:
+                elapsed = (datetime.now() - bg_proc['start_time']).total_seconds()
+                if elapsed < 60:
+                    time_str = f"{int(elapsed)}s"
+                elif elapsed < 3600:
+                    time_str = f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+                else:
+                    time_str = f"{int(elapsed // 3600)}h {int((elapsed % 3600) // 60)}m"
+            else:
+                time_str = "Unknown"
+            
+            st.caption(f"⏱️ Running: {time_str}")
+            st.caption(f"📊 Chunk: {bg_proc['current_chunk']}/{bg_proc['total_chunks']}")
+            st.caption(f"✅ Found: {bg_proc.get('saved_people', 0) + len(bg_proc['results']['people'])} people")
+            st.caption(f"📈 Metrics: {bg_proc.get('saved_performance', 0) + len(bg_proc['results']['performance'])}")
+            
+            if bg_proc.get('errors'):
+                st.caption(f"❌ Errors: {len(bg_proc['errors'])}")
+            
+            # Check for timeout warning
+            if 'last_activity' in bg_proc and bg_proc['last_activity']:
+                time_since_activity = (datetime.now() - bg_proc['last_activity']).total_seconds()
+                if time_since_activity > 120:  # Warn after 2 minutes
+                    st.warning(f"⚠️ No activity for {int(time_since_activity)}s")
+            
+            col_stop, col_emergency = st.columns(2)
+            with col_stop:
+                if st.button("⏹️ Stop", key="sidebar_stop", use_container_width=True):
+                    st.session_state.background_processing['is_running'] = False
+                    st.rerun()
+            with col_emergency:
+                if st.button("🚨 Emergency", key="sidebar_emergency", use_container_width=True):
+                    emergency_stop_processing()
+                    st.rerun()
     
     # Processing Configuration
     st.markdown("---")
@@ -1445,12 +1961,43 @@ with st.sidebar:
         else:
             uploaded_file = st.file_uploader("Upload newsletter:", type=['txt'])
             if uploaded_file:
-                try:
-                    newsletter_text = uploaded_file.getvalue().decode('utf-8')
+                success, content, error_msg, encoding_used = load_file_content_enhanced(uploaded_file)
+                
+                if success:
+                    newsletter_text = content
                     char_count = len(newsletter_text)
-                    st.success(f"✅ File loaded: {char_count:,} characters")
-                except Exception as e:
-                    st.error(f"Error reading file: {e}")
+                    
+                    # Show file info with encoding
+                    st.success(f"✅ **File loaded successfully!**")
+                    col_info1, col_info2 = st.columns(2)
+                    with col_info1:
+                        st.info(f"📁 **Size**: {char_count:,} characters")
+                        st.info(f"🔤 **Encoding**: {encoding_used}")
+                    with col_info2:
+                        # Calculate estimates based on current settings
+                        if chunk_size_mode == "auto":
+                            estimated_chunk_size = min(max(char_count // 50, 15000), 35000)
+                        else:
+                            chunk_sizes = {"single": 25000, "small": 10000, "medium": 20000, "large": 35000, "xlarge": 50000}
+                            estimated_chunk_size = chunk_sizes.get(chunk_size_mode, 20000)
+                        
+                        estimated_chunks = max(1, char_count // estimated_chunk_size)
+                        estimated_time = estimated_chunks * 2  # 2 minutes per chunk estimate
+                        
+                        st.info(f"📊 **Est. chunks**: {estimated_chunks} ({chunk_size_mode} mode)")
+                        st.info(f"⏱️ **Est. time**: ~{estimated_time} minutes")
+                    
+                    # Show warning message if there was one
+                    if error_msg:
+                        st.warning(f"⚠️ {error_msg}")
+                    
+                    # Show preview of content
+                    with st.expander("👀 Content Preview", expanded=False):
+                        preview_text = newsletter_text[:1000] + "..." if len(newsletter_text) > 1000 else newsletter_text
+                        st.text_area("Preview:", value=preview_text, height=150, disabled=True)
+                else:
+                    st.error(f"❌ {error_msg}")
+                    st.info("💡 **Tips**: Try saving the file as UTF-8 text, or check if it contains special characters")
 
         # Extract button
         if st.button("🚀 Start Background Extraction", use_container_width=True):
@@ -1645,7 +2192,15 @@ if st.session_state.show_add_person_modal:
                     "education": education,
                     "expertise": expertise,
                     "aum_managed": aum_managed,
-                    "strategy": strategy
+                    "strategy": strategy,
+                    "created_date": datetime.now().isoformat(),
+                    "last_updated": datetime.now().isoformat(),
+                    "extraction_history": [{
+                        "extraction_date": datetime.now().isoformat(),
+                        "source_type": "manual_entry",
+                        "context_preview": f"Manually added person: {name} at {company}",
+                        "entry_method": "add_person_form"
+                    }]
                 })
                 
                 # Add employment record
@@ -1657,7 +2212,12 @@ if st.session_state.show_add_person_modal:
                     "start_date": date.today(),
                     "end_date": None,
                     "location": location,
-                    "strategy": strategy or "Unknown"
+                    "strategy": strategy or "Unknown",
+                    "created_date": datetime.now().isoformat(),
+                    "extraction_context": {
+                        "extraction_date": datetime.now().isoformat(),
+                        "source_type": "manual_entry"
+                    }
                 })
                 
                 save_data()
@@ -1705,7 +2265,15 @@ if st.session_state.show_add_firm_modal:
                     "strategy": strategy,
                     "website": website,
                     "description": description if description else f"{strategy} hedge fund based in {location}",
-                    "performance_metrics": []
+                    "performance_metrics": [],
+                    "created_date": datetime.now().isoformat(),
+                    "last_updated": datetime.now().isoformat(),
+                    "extraction_history": [{
+                        "extraction_date": datetime.now().isoformat(),
+                        "source_type": "manual_entry",
+                        "context_preview": f"Manually added firm: {firm_name} in {location}",
+                        "entry_method": "add_firm_form"
+                    }]
                 })
                 
                 save_data()
@@ -1719,7 +2287,7 @@ if st.session_state.show_add_firm_modal:
         st.session_state.show_add_firm_modal = False
         st.rerun()
 
-# --- PEOPLE VIEW ---
+# --- PEOPLE VIEW WITH CARD LAYOUT ---
 if st.session_state.current_view == 'people':
     st.markdown("---")
     st.header("👥 Hedge Fund Professionals")
@@ -1747,49 +2315,92 @@ if st.session_state.current_view == 'people':
         if search_term:
             filtered_people = [p for p in filtered_people if search_term.lower() in safe_get(p, 'name').lower()]
         
+        # Sort by most recent first (using created_date or last_updated if available)
+        def get_person_date(person):
+            # Try multiple date fields, default to very old date if none found
+            for date_field in ['last_updated', 'created_date']:
+                if date_field in person and person[date_field]:
+                    try:
+                        return datetime.fromisoformat(person[date_field].replace('Z', '+00:00'))
+                    except:
+                        continue
+            return datetime(2000, 1, 1)  # Default old date
+        
+        filtered_people.sort(key=get_person_date, reverse=True)
+        
         # Paginate results
-        people_to_show, people_page_info = paginate_data(filtered_people, st.session_state.people_page, 10)
+        people_to_show, people_page_info = paginate_data(filtered_people, st.session_state.people_page, 12)  # 12 cards per page
         
-        st.write(f"**Showing {people_page_info['start_idx'] + 1}-{people_page_info['end_idx']} of {people_page_info['total_items']} people**")
+        st.write(f"**Showing {people_page_info['start_idx'] + 1}-{people_page_info['end_idx']} of {people_page_info['total_items']} people** (most recent first)")
         
-        # Display people
-        for person in people_to_show:
-            with st.container():
-                col1, col2, col3 = st.columns([2, 2, 1])
-                
-                with col1:
-                    st.markdown(f"**👤 {safe_get(person, 'name')}**")
-                    st.caption(f"{safe_get(person, 'current_title')} • {safe_get(person, 'current_company_name')}")
-                
-                with col2:
-                    # Show performance metrics count and location
-                    person_metrics = get_person_performance_metrics(person['id'])
-                    col2a, col2b = st.columns(2)
-                    with col2a:
-                        st.metric("📍", safe_get(person, 'location')[:10], label_visibility="collapsed")
-                    with col2b:
-                        if person_metrics:
-                            st.metric("📊", f"{len(person_metrics)} metrics", label_visibility="collapsed")
-                        else:
-                            st.metric("💰", safe_get(person, 'aum_managed')[:8], label_visibility="collapsed")
-                
-                with col3:
-                    col3a, col3b = st.columns(2)
-                    with col3a:
-                        if st.button("👁️", key=f"view_person_{person['id']}", help="View Profile"):
-                            go_to_person_details(person['id'])
-                            st.rerun()
-                    with col3b:
-                        if st.button("✏️", key=f"edit_person_{person['id']}", help="Edit Person"):
-                            st.session_state.edit_person_data = person
-                            st.session_state.show_edit_person_modal = True
-                            st.rerun()
-                
-                st.markdown("---")
+        # Display people in card grid (3 columns)
+        if people_to_show:
+            for i in range(0, len(people_to_show), 3):
+                cols = st.columns(3)
+                for j, col in enumerate(cols):
+                    if i + j < len(people_to_show):
+                        person = people_to_show[i + j]
+                        
+                        with col:
+                            # Create card container
+                            with st.container(border=True):
+                                # Person header
+                                st.markdown(f"**👤 {safe_get(person, 'name')}**")
+                                st.caption(f"{safe_get(person, 'current_title')}")
+                                st.caption(f"🏢 {safe_get(person, 'current_company_name')}")
+                                
+                                # Person details
+                                location = safe_get(person, 'location')
+                                if location != 'Unknown':
+                                    st.text(f"📍 {location}")
+                                
+                                expertise = safe_get(person, 'expertise')
+                                if expertise and expertise != 'Unknown':
+                                    st.text(f"🏆 {expertise}")
+                                
+                                aum = safe_get(person, 'aum_managed')
+                                if aum and aum != 'Unknown':
+                                    st.text(f"💰 {aum}")
+                                
+                                # Performance metrics count
+                                person_metrics = get_person_performance_metrics(person['id'])
+                                if person_metrics:
+                                    st.text(f"📊 {len(person_metrics)} metrics")
+                                
+                                # Show when added/updated
+                                if 'created_date' in person or 'last_updated' in person:
+                                    date_to_show = person.get('last_updated') or person.get('created_date')
+                                    if date_to_show:
+                                        try:
+                                            date_obj = datetime.fromisoformat(date_to_show.replace('Z', '+00:00'))
+                                            days_ago = (datetime.now(date_obj.tzinfo) - date_obj).days
+                                            if days_ago == 0:
+                                                st.caption("🕒 Added today")
+                                            elif days_ago == 1:
+                                                st.caption("🕒 Added yesterday")
+                                            elif days_ago < 7:
+                                                st.caption(f"🕒 Added {days_ago} days ago")
+                                            else:
+                                                st.caption(f"🕒 Added {date_obj.strftime('%b %d, %Y')}")
+                                        except:
+                                            pass
+                                
+                                # Action buttons
+                                col_view, col_edit = st.columns(2)
+                                with col_view:
+                                    if st.button("👁️ View", key=f"view_person_card_{person['id']}", use_container_width=True):
+                                        go_to_person_details(person['id'])
+                                        st.rerun()
+                                with col_edit:
+                                    if st.button("✏️ Edit", key=f"edit_person_card_{person['id']}", use_container_width=True):
+                                        st.session_state.edit_person_data = person
+                                        st.session_state.show_edit_person_modal = True
+                                        st.rerun()
         
+        # Pagination controls
         display_pagination_controls(people_page_info, "people")
 
-# --- FIRMS VIEW ---
+# --- FIRMS VIEW WITH CARD LAYOUT ---
 elif st.session_state.current_view == 'firms':
     st.markdown("---")
     st.header("🏢 Hedge Funds in Asia")
@@ -1797,44 +2408,96 @@ elif st.session_state.current_view == 'firms':
     if not st.session_state.firms:
         st.info("No firms added yet. Use 'Add Firm' button above.")
     else:
-        firms_to_show, firms_page_info = paginate_data(st.session_state.firms, st.session_state.firms_page, 10)
+        # Sort firms by most recent first
+        def get_firm_date(firm):
+            for date_field in ['last_updated', 'created_date']:
+                if date_field in firm and firm[date_field]:
+                    try:
+                        return datetime.fromisoformat(firm[date_field].replace('Z', '+00:00'))
+                    except:
+                        continue
+            return datetime(2000, 1, 1)  # Default old date
         
-        st.write(f"**Showing {firms_page_info['start_idx'] + 1}-{firms_page_info['end_idx']} of {firms_page_info['total_items']} firms**")
+        sorted_firms = sorted(st.session_state.firms, key=get_firm_date, reverse=True)
         
-        for firm in firms_to_show:
-            people_count = len(get_people_by_firm(safe_get(firm, 'name')))
-            metrics_count = len(firm.get('performance_metrics', []))
-            
-            with st.container():
-                col1, col2, col3 = st.columns([2, 2, 1])
-                
-                with col1:
-                    st.markdown(f"**🏢 {safe_get(firm, 'name')}**")
-                    st.caption(f"{safe_get(firm, 'strategy')} • {safe_get(firm, 'location')}")
-                
-                with col2:
-                    col2a, col2b, col2c = st.columns(3)
-                    with col2a:
-                        st.metric("💰", safe_get(firm, 'aum')[:8], label_visibility="collapsed")
-                    with col2b:
-                        st.metric("👥", people_count, label_visibility="collapsed")
-                    with col2c:
-                        st.metric("📊", metrics_count, label_visibility="collapsed")
-                
-                with col3:
-                    col3a, col3b = st.columns(2)
-                    with col3a:
-                        if st.button("👁️", key=f"view_firm_{firm['id']}", help="View Details"):
-                            go_to_firm_details(firm['id'])
-                            st.rerun()
-                    with col3b:
-                        if st.button("✏️", key=f"edit_firm_{firm['id']}", help="Edit Firm"):
-                            st.session_state.edit_firm_data = firm
-                            st.session_state.show_edit_firm_modal = True
-                            st.rerun()
-                
-                st.markdown("---")
+        # Paginate results
+        firms_to_show, firms_page_info = paginate_data(sorted_firms, st.session_state.firms_page, 12)  # 12 cards per page
         
+        st.write(f"**Showing {firms_page_info['start_idx'] + 1}-{firms_page_info['end_idx']} of {firms_page_info['total_items']} firms** (most recent first)")
+        
+        # Display firms in card grid (3 columns)
+        if firms_to_show:
+            for i in range(0, len(firms_to_show), 3):
+                cols = st.columns(3)
+                for j, col in enumerate(cols):
+                    if i + j < len(firms_to_show):
+                        firm = firms_to_show[i + j]
+                        people_count = len(get_people_by_firm(safe_get(firm, 'name')))
+                        metrics_count = len(firm.get('performance_metrics', []))
+                        
+                        with col:
+                            # Create card container
+                            with st.container(border=True):
+                                # Firm header
+                                st.markdown(f"**🏢 {safe_get(firm, 'name')}**")
+                                st.caption(f"{safe_get(firm, 'strategy')}")
+                                
+                                # Firm details
+                                location = safe_get(firm, 'location')
+                                if location != 'Unknown':
+                                    st.text(f"📍 {location}")
+                                
+                                aum = safe_get(firm, 'aum')
+                                if aum and aum != 'Unknown':
+                                    st.text(f"💰 {aum}")
+                                
+                                founded = safe_get(firm, 'founded')
+                                if founded and founded != 'Unknown':
+                                    st.text(f"📅 Founded {founded}")
+                                
+                                # Metrics
+                                col_people, col_metrics = st.columns(2)
+                                with col_people:
+                                    st.metric("👥", people_count, label_visibility="collapsed", help="People")
+                                with col_metrics:
+                                    st.metric("📊", metrics_count, label_visibility="collapsed", help="Performance Metrics")
+                                
+                                # Website
+                                website = safe_get(firm, 'website')
+                                if website and website != 'Unknown':
+                                    st.text(f"🌐 Website")
+                                
+                                # Show when added/updated
+                                if 'created_date' in firm or 'last_updated' in firm:
+                                    date_to_show = firm.get('last_updated') or firm.get('created_date')
+                                    if date_to_show:
+                                        try:
+                                            date_obj = datetime.fromisoformat(date_to_show.replace('Z', '+00:00'))
+                                            days_ago = (datetime.now(date_obj.tzinfo) - date_obj).days
+                                            if days_ago == 0:
+                                                st.caption("🕒 Added today")
+                                            elif days_ago == 1:
+                                                st.caption("🕒 Added yesterday")
+                                            elif days_ago < 7:
+                                                st.caption(f"🕒 Added {days_ago} days ago")
+                                            else:
+                                                st.caption(f"🕒 Added {date_obj.strftime('%b %d, %Y')}")
+                                        except:
+                                            pass
+                                
+                                # Action buttons
+                                col_view, col_edit = st.columns(2)
+                                with col_view:
+                                    if st.button("👁️ View", key=f"view_firm_card_{firm['id']}", use_container_width=True):
+                                        go_to_firm_details(firm['id'])
+                                        st.rerun()
+                                with col_edit:
+                                    if st.button("✏️ Edit", key=f"edit_firm_card_{firm['id']}", use_container_width=True):
+                                        st.session_state.edit_firm_data = firm
+                                        st.session_state.show_edit_firm_modal = True
+                                        st.rerun()
+        
+        # Pagination controls
         display_pagination_controls(firms_page_info, "firms")
 
 # --- FIRM DETAILS VIEW (with integrated performance) ---
