@@ -38,6 +38,7 @@ PEOPLE_FILE = DATA_DIR / "people.json"
 FIRMS_FILE = DATA_DIR / "firms.json"
 EMPLOYMENTS_FILE = DATA_DIR / "employments.json"
 EXTRACTIONS_FILE = DATA_DIR / "extractions.json"
+PERFORMANCE_FILE = DATA_DIR / "performance_metrics.json"
 
 def save_data():
     """Save all data to JSON files with better error handling"""
@@ -62,6 +63,11 @@ def save_data():
             with open(EXTRACTIONS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(st.session_state.all_extractions, f, indent=2, default=str)
         
+        # Save performance metrics
+        if 'performance_metrics' in st.session_state:
+            with open(PERFORMANCE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(st.session_state.performance_metrics, f, indent=2, default=str)
+        
         # Verify files were actually written
         files_saved = []
         if PEOPLE_FILE.exists():
@@ -72,6 +78,8 @@ def save_data():
             files_saved.append(f"employments.json ({EMPLOYMENTS_FILE.stat().st_size} bytes)")
         if EXTRACTIONS_FILE.exists():
             files_saved.append(f"extractions.json ({EXTRACTIONS_FILE.stat().st_size} bytes)")
+        if PERFORMANCE_FILE.exists():
+            files_saved.append(f"performance.json ({PERFORMANCE_FILE.stat().st_size} bytes)")
         
         st.sidebar.success(f"💾 Data saved: {', '.join(files_saved)}")
         return True
@@ -88,6 +96,7 @@ def load_data():
         firms = []
         employments = []
         extractions = []
+        performance_metrics = []
         
         # Load people
         if PEOPLE_FILE.exists():
@@ -127,13 +136,21 @@ def load_data():
         else:
             print(f"⚠️ No extractions file found at {EXTRACTIONS_FILE}")
         
+        # Load performance metrics
+        if PERFORMANCE_FILE.exists():
+            with open(PERFORMANCE_FILE, 'r', encoding='utf-8') as f:
+                performance_metrics = json.load(f)
+            print(f"✅ Loaded {len(performance_metrics)} performance metrics from {PERFORMANCE_FILE}")
+        else:
+            print(f"⚠️ No performance metrics file found at {PERFORMANCE_FILE}")
+        
         print(f"📁 Data directory: {DATA_DIR.absolute()}")
         
-        return people, firms, employments, extractions
+        return people, firms, employments, extractions, performance_metrics
         
     except Exception as e:
         print(f"❌ Error loading data: {e}")
-        return [], [], [], []
+        return [], [], [], [], []
 
 # --- Initialize Session State with Rich Dummy Data ---
 def init_dummy_data():
@@ -254,7 +271,7 @@ def init_dummy_data():
 
 def initialize_session_state():
     """Initialize session state with saved or dummy data"""
-    people, firms, employments, extractions = load_data()
+    people, firms, employments, extractions, performance_metrics = load_data()
     
     # If no saved data, use dummy data
     if not people and not firms:
@@ -268,6 +285,8 @@ def initialize_session_state():
         st.session_state.employments = employments
     if 'all_extractions' not in st.session_state:
         st.session_state.all_extractions = extractions
+    if 'performance_metrics' not in st.session_state:
+        st.session_state.performance_metrics = performance_metrics
     if 'current_view' not in st.session_state:
         st.session_state.current_view = 'firms'
     if 'selected_person_id' not in st.session_state:
@@ -290,6 +309,8 @@ def initialize_session_state():
         st.session_state.pending_updates = []
     if 'show_update_review' not in st.session_state:
         st.session_state.show_update_review = False
+    if 'performance_metrics' not in st.session_state:
+        st.session_state.performance_metrics = []
 
 # --- AI Setup ---
 @st.cache_resource
@@ -308,39 +329,64 @@ def setup_gemini(api_key, model_id="gemini-1.5-flash"):
         return None
 
 def extract_single_chunk_safe(text, model):
-    """Safe single chunk extraction with timeout"""
+    """Safe single chunk extraction with timeout - extracts both people and performance metrics"""
     try:
-        prompt = f"""Extract hedge fund talent movements from this text. Return JSON only:
+        prompt = f"""Extract hedge fund talent movements AND performance metrics from this text. Return JSON only with BOTH sections:
 
 {text}
 
-{{"people": [{{"name": "Full Name", "company": "Company", "title": "Position", "movement_type": "hire|promotion|launch|departure", "location": "Location"}}]}}
+{{
+  "people": [
+    {{
+      "name": "Full Name",
+      "company": "Company",
+      "title": "Position",
+      "movement_type": "hire|promotion|launch|departure",
+      "location": "Location"
+    }}
+  ],
+  "performance": [
+    {{
+      "fund_name": "Fund Name",
+      "metric_type": "return|irr|sharpe|drawdown|alpha|beta|volatility|aum",
+      "value": "numeric value only",
+      "period": "YTD|1Y|3Y|5Y|ITD|Q1|Q2|etc",
+      "date": "YYYY-MM-DD or period",
+      "benchmark": "comparison benchmark if mentioned",
+      "additional_info": "any other relevant details"
+    }}
+  ]
+}}
 
-Find ALL people in professional contexts."""
+Find ALL people movements AND ALL performance metrics (returns, IRR, Sharpe ratios, drawdowns, AUM, alpha, beta, volatility, etc.)."""
         
         response = model.generate_content(prompt)
         if not response or not response.text:
-            return []
+            return [], []
         
         # Parse JSON
         json_start = response.text.find('{')
         json_end = response.text.rfind('}') + 1
         
         if json_start == -1:
-            return []
+            return [], []
         
         result = json.loads(response.text[json_start:json_end])
         people = result.get('people', [])
+        performance = result.get('performance', [])
         
         # Filter valid entries
-        return [p for p in people if p.get('name') and p.get('company')]
+        valid_people = [p for p in people if p.get('name') and p.get('company')]
+        valid_performance = [p for p in performance if p.get('fund_name') and p.get('metric_type') and p.get('value')]
+        
+        return valid_people, valid_performance
         
     except Exception as e:
         st.warning(f"Single chunk failed: {str(e)[:100]}")
-        return []
+        return [], []
 
 def extract_multi_chunk_safe(text, model, chunk_size):
-    """Crash-proof multi-chunk processing with minimal UI"""
+    """Crash-proof multi-chunk processing with minimal UI - extracts both people and performance"""
     
     try:
         # Simple chunking without complex overlap logic
@@ -360,7 +406,8 @@ def extract_multi_chunk_safe(text, model, chunk_size):
             delay = 10  # Conservative for all Flash models
         
         # Process chunks with minimal UI updates
-        all_extractions = []
+        all_people = []
+        all_performance = []
         successful = 0
         failed = 0
         
@@ -374,24 +421,37 @@ def extract_multi_chunk_safe(text, model, chunk_size):
                 st.info(f"Processing chunk {i+1}/{len(chunks)}...")
                 
                 # Extract from chunk
-                chunk_results = extract_single_chunk_safe(chunk, model)
+                chunk_people, chunk_performance = extract_single_chunk_safe(chunk, model)
                 
-                if chunk_results:
-                    # Simple deduplication
-                    for result in chunk_results:
-                        name_company = f"{result.get('name', '').lower()}|{result.get('company', '').lower()}"
+                if chunk_people or chunk_performance:
+                    # Simple deduplication for people
+                    for person in chunk_people:
+                        name_company = f"{person.get('name', '').lower()}|{person.get('company', '').lower()}"
                         
                         # Check if already exists
                         exists = any(
                             f"{existing.get('name', '').lower()}|{existing.get('company', '').lower()}" == name_company 
-                            for existing in all_extractions
+                            for existing in all_people
                         )
                         
                         if not exists:
-                            all_extractions.append(result)
+                            all_people.append(person)
+                    
+                    # Simple deduplication for performance
+                    for perf in chunk_performance:
+                        fund_metric = f"{perf.get('fund_name', '').lower()}|{perf.get('metric_type', '').lower()}|{perf.get('period', '').lower()}"
+                        
+                        # Check if already exists
+                        exists = any(
+                            f"{existing.get('fund_name', '').lower()}|{existing.get('metric_type', '').lower()}|{existing.get('period', '').lower()}" == fund_metric
+                            for existing in all_performance
+                        )
+                        
+                        if not exists:
+                            all_performance.append(perf)
                     
                     successful += 1
-                    st.success(f"✅ Chunk {i+1}: Found {len(chunk_results)} people")
+                    st.success(f"✅ Chunk {i+1}: Found {len(chunk_people)} people, {len(chunk_performance)} metrics")
                 else:
                     failed += 1
                     st.warning(f"⚠️ Chunk {i+1}: No results")
@@ -415,18 +475,18 @@ def extract_multi_chunk_safe(text, model, chunk_size):
         
         # Final summary
         st.info(f"Completed: {successful} successful, {failed} failed chunks")
-        st.success(f"Total unique extractions: {len(all_extractions)}")
+        st.success(f"Total extracted: {len(all_people)} people, {len(all_performance)} performance metrics")
         
-        return all_extractions
+        return all_people, all_performance
         
     except Exception as e:
         st.error(f"Multi-chunk processing failed: {e}")
-        return []
+        return [], []
 
 def extract_talent_simple(text, model):
-    """Crash-proof extraction with minimal UI updates"""
+    """Crash-proof extraction with minimal UI updates - extracts both people and performance"""
     if not model:
-        return []
+        return [], []
     
     # Preprocess and clean the text first
     cleaned_text = preprocess_newsletter_text(text)
@@ -548,13 +608,26 @@ def preprocess_newsletter_text(text):
         'quantitative', 'macro', 'multi-strategy', 'arbitrage'
     ]
     
+    # Performance-related keywords
+    performance_keywords = [
+        'irr', 'internal rate of return', 'sharpe', 'sharpe ratio', 'drawdown', 
+        'maximum drawdown', 'max drawdown', 'alpha', 'beta', 'volatility', 'vol',
+        'return', 'returns', 'performance', 'ytd', 'year to date', 'annualized',
+        'net return', 'gross return', 'benchmark', 'outperformed', 'underperformed',
+        'basis points', 'bps', '%', 'percent', 'up ', 'down ', 'gained', 'lost',
+        'aum', 'assets', 'billion', 'million', 'fund size', 'nav', 'net asset value'
+    ]
+    
+    # Combine all keywords
+    all_keywords = hf_keywords + performance_keywords
+    
     # Split into paragraphs and keep relevant ones
     paragraphs = text.split('\n\n')
     relevant_paragraphs = []
     
     for para in paragraphs:
         para_lower = para.lower()
-        if any(keyword in para_lower for keyword in hf_keywords):
+        if any(keyword in para_lower for keyword in all_keywords):
             relevant_paragraphs.append(para)
         elif len(para) > 100 and ('capital' in para_lower or 'management' in para_lower):
             # Keep longer paragraphs that might be relevant
@@ -768,6 +841,9 @@ def go_to_firm_details(firm_id):
     st.session_state.selected_firm_id = firm_id
     st.session_state.current_view = 'firm_details'
 
+def go_to_performance():
+    st.session_state.current_view = 'performance'
+
 # Initialize session state
 initialize_session_state()
 
@@ -923,33 +999,45 @@ with st.sidebar:
                         # Show processing status
                         with st.status("Processing newsletter...", expanded=True) as status:
                             st.write("🔄 Initializing extraction...")
-                            extractions = extract_talent_simple(newsletter_text, model)
+                            people_extractions, performance_extractions = extract_talent_simple(newsletter_text, model)
                             
-                            if extractions:
-                                st.write(f"✅ Found {len(extractions)} people!")
+                            if people_extractions or performance_extractions:
+                                st.write(f"✅ Found {len(people_extractions)} people, {len(performance_extractions)} performance metrics!")
                                 status.update(label="✅ Extraction complete!", state="complete")
                             else:
-                                st.write("⚠️ No people found")
+                                st.write("⚠️ No data found")
                                 status.update(label="⚠️ No results found", state="complete")
                         
-                        if extractions:
-                            # Add metadata
+                        if people_extractions or performance_extractions:
+                            # Add metadata to people extractions
                             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            for ext in extractions:
+                            for ext in people_extractions:
                                 ext['timestamp'] = timestamp
                                 ext['id'] = str(uuid.uuid4())
                             
-                            # Process extractions and detect updates
-                            st.info("🔍 Checking for existing people and potential updates...")
-                            new_people, pending_updates = process_extractions_with_update_detection(extractions)
+                            # Add metadata to performance extractions
+                            for perf in performance_extractions:
+                                perf['timestamp'] = timestamp
+                                perf['id'] = str(uuid.uuid4())
+                            
+                            # Process people extractions and detect updates
+                            if people_extractions:
+                                st.info("🔍 Checking for existing people and potential updates...")
+                                new_people, pending_updates = process_extractions_with_update_detection(people_extractions)
+                                
+                                # Add pending updates to session state
+                                if pending_updates:
+                                    st.session_state.pending_updates.extend(pending_updates)
+                                    st.session_state.show_update_review = True
+                            else:
+                                new_people = []
+                                pending_updates = []
                             
                             # Save new extractions
-                            st.session_state.all_extractions.extend(extractions)
+                            st.session_state.all_extractions.extend(people_extractions)
                             
-                            # Add pending updates to session state
-                            if pending_updates:
-                                st.session_state.pending_updates.extend(pending_updates)
-                                st.session_state.show_update_review = True
+                            # Save performance metrics
+                            st.session_state.performance_metrics.extend(performance_extractions)
                             
                             # Save results
                             if save_data():
@@ -957,14 +1045,16 @@ with st.sidebar:
                             else:
                                 st.error("⚠️ Extraction successful but save failed!")
                             
-                            # Show summary
-                            col1, col2, col3 = st.columns(3)
+                            # Show comprehensive summary
+                            col1, col2, col3, col4 = st.columns(4)
                             with col1:
                                 st.metric("👥 New People", len(new_people))
                             with col2:
                                 st.metric("🔄 Pending Updates", len(pending_updates))
                             with col3:
-                                st.metric("🏢 Total Extracted", len(extractions))
+                                st.metric("📊 Performance Metrics", len(performance_extractions))
+                            with col4:
+                                st.metric("🏢 Total Extracted", len(people_extractions))
                             
                             # Show what happened
                             if new_people:
@@ -972,12 +1062,23 @@ with st.sidebar:
                                     for person in new_people:
                                         st.write(f"• **{person['name']}** → {person['company']}")
                             
+                            if performance_extractions:
+                                with st.expander(f"📊 {len(performance_extractions)} Performance Metrics Found"):
+                                    for perf in performance_extractions[:10]:  # Show first 10
+                                        metric_display = f"{perf.get('fund_name', 'Unknown')} - {perf.get('metric_type', 'Unknown')}: {perf.get('value', 'N/A')}"
+                                        if perf.get('period'):
+                                            metric_display += f" ({perf.get('period')})"
+                                        st.write(f"• {metric_display}")
+                                    
+                                    if len(performance_extractions) > 10:
+                                        st.write(f"... and {len(performance_extractions) - 10} more")
+                            
                             if pending_updates:
                                 st.warning(f"⚠️ Found {len(pending_updates)} potential updates for existing people!")
                                 st.info("👆 **Review updates in the sidebar before they're applied**")
                             
                         else:
-                            st.warning("⚠️ No people found. Try a different model or check content.")
+                            st.warning("⚠️ No people or performance data found. Try a different model or check content.")
                             
                     except Exception as e:
                         st.error(f"💥 **Extraction failed**: {str(e)}")
@@ -995,6 +1096,10 @@ with st.sidebar:
             focusing on Asian equities. Millennium Partners promotes Alex Wang to head of quant trading 
             in Singapore. Sarah Kim moves from Bridgewater to become CIO at newly formed Tiger Asia.
             
+            Engineers Gate has topped $4 billion in assets and is up 12% this year, continuing 
+            a streak of double-digit returns. The fund's Sharpe ratio improved to 1.8 from 1.2 last year.
+            Citadel's flagship fund returned 15.2% net in Q2 with maximum drawdown of only 2.1%.
+            
             This message is confidential. Please visit https://tracking.example.com for more.
             Unsubscribe: https://unsubscribe.example.com
             """
@@ -1007,19 +1112,32 @@ with st.sidebar:
                     cleaned_sample = preprocess_newsletter_text(sample)
                 
                 # Then extract
-                extractions = extract_single_chunk_safe(cleaned_sample, model)
-                st.write(f"**Found {len(extractions)} people:**")
-                for ext in extractions:
-                    st.write(f"• {ext.get('name', 'Unknown')} → {ext.get('company', 'Unknown')}")
+                people_results, performance_results = extract_single_chunk_safe(cleaned_sample, model)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Found {len(people_results)} people:**")
+                    for person in people_results:
+                        st.write(f"• {person.get('name', 'Unknown')} → {person.get('company', 'Unknown')}")
+                
+                with col2:
+                    st.write(f"**Found {len(performance_results)} metrics:**")
+                    for perf in performance_results:
+                        st.write(f"• {perf.get('fund_name', 'Unknown')}: {perf.get('metric_type', 'Unknown')} = {perf.get('value', 'N/A')}")
                     
             except Exception as e:
                 st.error(f"Test failed: {e}")
     
     # Show recent extractions
-    if st.session_state.all_extractions:
+    if st.session_state.all_extractions or st.session_state.performance_metrics:
         st.markdown("---")
         st.subheader("📊 Recent Extractions")
-        st.metric("Total Extracted", len(st.session_state.all_extractions))
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("👥 People", len(st.session_state.all_extractions))
+        with col2:
+            st.metric("📊 Performance", len(st.session_state.performance_metrics))
         
         # Add people from extractions with safe defaults
         if st.button("📥 Import New People Only", use_container_width=True):
@@ -1266,7 +1384,7 @@ with st.container():
     
     with col4:
         # Auto-save every time data changes
-        total_items = len(st.session_state.people) + len(st.session_state.firms) + len(st.session_state.all_extractions)
+        total_items = len(st.session_state.people) + len(st.session_state.firms) + len(st.session_state.all_extractions) + len(st.session_state.performance_metrics)
         if 'last_saved_count' not in st.session_state:
             st.session_state.last_saved_count = total_items
         
@@ -1285,7 +1403,7 @@ if st.sidebar.button("💾 Save Data"):
         st.sidebar.error("❌ Save failed!")
 
 # Top Navigation
-col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
+col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 2])
 
 with col1:
     if st.button("🏢 Firms", use_container_width=True, 
@@ -1300,22 +1418,30 @@ with col2:
         st.rerun()
 
 with col3:
+    if st.button("📊 Performance", use_container_width=True, 
+                 type="primary" if st.session_state.current_view == 'performance' else "secondary"):
+        go_to_performance()
+        st.rerun()
+
+with col4:
     if st.button("➕ Add Person", use_container_width=True):
         st.session_state.show_add_person_modal = True
         st.rerun()
 
-with col4:
+with col5:
     if st.button("🏢➕ Add Firm", use_container_width=True):
         st.session_state.show_add_firm_modal = True
         st.rerun()
 
-with col5:
+with col6:
     # Quick stats
-    col5a, col5b = st.columns(2)
-    with col5a:
+    col6a, col6b, col6c = st.columns(3)
+    with col6a:
         st.metric("People", len(st.session_state.people))
-    with col5b:
+    with col6b:
         st.metric("Firms", len(st.session_state.firms))
+    with col6c:
+        st.metric("Metrics", len(st.session_state.performance_metrics))
 
 # --- ADD PERSON MODAL ---
 if st.session_state.show_add_person_modal:
@@ -1989,6 +2115,145 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
         st.info("No shared work history found with other people in the database.")
         st.write("💡 Add more people who worked at the same companies to see connections!")
 
+# --- PERFORMANCE METRICS VIEW ---
+elif st.session_state.current_view == 'performance':
+    st.markdown("---")
+    st.header("📊 Hedge Fund Performance Metrics")
+    
+    if not st.session_state.performance_metrics:
+        st.info("No performance metrics extracted yet. Use the AI extractor in the sidebar to analyze newsletters.")
+    else:
+        # Filter controls
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            # Get unique fund names
+            fund_names = ["All"] + sorted(list(set(safe_get(p, 'fund_name') for p in st.session_state.performance_metrics if safe_get(p, 'fund_name') != 'Unknown')))
+            fund_filter = st.selectbox("Filter by Fund", fund_names)
+        with col2:
+            # Get unique metric types
+            metric_types = ["All"] + sorted(list(set(safe_get(p, 'metric_type') for p in st.session_state.performance_metrics if safe_get(p, 'metric_type') != 'Unknown')))
+            metric_filter = st.selectbox("Filter by Metric Type", metric_types)
+        with col3:
+            # Get unique periods
+            periods = ["All"] + sorted(list(set(safe_get(p, 'period') for p in st.session_state.performance_metrics if safe_get(p, 'period') != 'Unknown')))
+            period_filter = st.selectbox("Filter by Period", periods)
+        
+        # Apply filters
+        filtered_metrics = st.session_state.performance_metrics
+        if fund_filter != "All":
+            filtered_metrics = [p for p in filtered_metrics if safe_get(p, 'fund_name') == fund_filter]
+        if metric_filter != "All":
+            filtered_metrics = [p for p in filtered_metrics if safe_get(p, 'metric_type') == metric_filter]
+        if period_filter != "All":
+            filtered_metrics = [p for p in filtered_metrics if safe_get(p, 'period') == period_filter]
+        
+        st.write(f"**Showing {len(filtered_metrics)} performance metrics**")
+        
+        if filtered_metrics:
+            # Create DataFrame for display
+            metrics_data = []
+            for metric in filtered_metrics:
+                metrics_data.append({
+                    "Fund": safe_get(metric, 'fund_name'),
+                    "Metric": safe_get(metric, 'metric_type'),
+                    "Value": safe_get(metric, 'value'),
+                    "Period": safe_get(metric, 'period'),
+                    "Date": safe_get(metric, 'date'),
+                    "Benchmark": safe_get(metric, 'benchmark'),
+                    "Additional Info": safe_get(metric, 'additional_info')
+                })
+            
+            df_metrics = pd.DataFrame(metrics_data)
+            
+            # Display as interactive table
+            st.dataframe(df_metrics, use_container_width=True)
+            
+            # Summary statistics
+            st.markdown("---")
+            st.subheader("📈 Summary Statistics")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                unique_funds = len(set(safe_get(m, 'fund_name') for m in filtered_metrics))
+                st.metric("Unique Funds", unique_funds)
+            with col2:
+                unique_metrics = len(set(safe_get(m, 'metric_type') for m in filtered_metrics))
+                st.metric("Metric Types", unique_metrics)
+            with col3:
+                latest_date = max([safe_get(m, 'date', '1900-01-01') for m in filtered_metrics])
+                st.metric("Latest Data", latest_date)
+            with col4:
+                total_metrics = len(filtered_metrics)
+                st.metric("Total Metrics", total_metrics)
+            
+            # Performance visualization
+            if len(filtered_metrics) > 0:
+                st.markdown("---")
+                st.subheader("📊 Performance Visualization")
+                
+                # Group by metric type for visualization
+                metric_types_in_data = list(set(safe_get(m, 'metric_type') for m in filtered_metrics))
+                
+                if len(metric_types_in_data) > 0:
+                    selected_metric_for_chart = st.selectbox("Select metric for chart:", metric_types_in_data)
+                    
+                    # Filter data for selected metric
+                    chart_data = [m for m in filtered_metrics if safe_get(m, 'metric_type') == selected_metric_for_chart]
+                    
+                    if chart_data:
+                        # Prepare data for plotting
+                        chart_df = pd.DataFrame([{
+                            'Fund': safe_get(m, 'fund_name'),
+                            'Value': safe_get(m, 'value'),
+                            'Period': safe_get(m, 'period'),
+                            'Date': safe_get(m, 'date')
+                        } for m in chart_data])
+                        
+                        # Try to convert values to numeric for proper plotting
+                        try:
+                            chart_df['Value_Numeric'] = pd.to_numeric(chart_df['Value'], errors='coerce')
+                            chart_df = chart_df.dropna(subset=['Value_Numeric'])
+                            
+                            if not chart_df.empty:
+                                # Create bar chart
+                                fig = px.bar(
+                                    chart_df,
+                                    x='Fund',
+                                    y='Value_Numeric',
+                                    color='Period',
+                                    title=f'{selected_metric_for_chart.title()} by Fund',
+                                    labels={'Value_Numeric': f'{selected_metric_for_chart.title()}'}
+                                )
+                                fig.update_layout(height=400)
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.info("No numeric data available for visualization")
+                        except Exception as e:
+                            st.warning(f"Could not create chart: {e}")
+                            
+            # Export functionality
+            st.markdown("---")
+            if st.button("📥 Export Performance Data", use_container_width=True):
+                export_data = {
+                    "performance_metrics": filtered_metrics,
+                    "export_timestamp": datetime.now().isoformat(),
+                    "filters_applied": {
+                        "fund": fund_filter,
+                        "metric_type": metric_filter,
+                        "period": period_filter
+                    },
+                    "total_records": len(filtered_metrics)
+                }
+                
+                export_json = json.dumps(export_data, indent=2, default=str)
+                st.download_button(
+                    "💾 Download Performance Metrics",
+                    export_json,
+                    f"performance_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    "application/json",
+                    use_container_width=True
+                )
+
 # --- Footer ---
 st.markdown("---")
 st.markdown("### 🌏 Asian Hedge Fund Talent Intelligence Platform")
@@ -2007,8 +2272,9 @@ if st.button("📥 Export Database Backup", use_container_width=True):
         "firms": st.session_state.firms,
         "employments": st.session_state.employments,
         "extractions": st.session_state.all_extractions,
+        "performance_metrics": st.session_state.performance_metrics,
         "export_timestamp": datetime.now().isoformat(),
-        "total_records": len(st.session_state.people) + len(st.session_state.firms)
+        "total_records": len(st.session_state.people) + len(st.session_state.firms) + len(st.session_state.performance_metrics)
     }
     
     export_json = json.dumps(export_data, indent=2, default=str)
@@ -2027,6 +2293,6 @@ if 'last_auto_save' not in st.session_state:
 
 # Auto-save every 30 seconds if there's data
 time_since_save = (current_time - st.session_state.last_auto_save).total_seconds()
-if time_since_save > 30 and (st.session_state.people or st.session_state.firms or st.session_state.all_extractions):
+if time_since_save > 30 and (st.session_state.people or st.session_state.firms or st.session_state.all_extractions or st.session_state.performance_metrics):
     save_data()
     st.session_state.last_auto_save = current_time
