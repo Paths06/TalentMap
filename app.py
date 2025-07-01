@@ -54,6 +54,71 @@ def safe_get(data, key, default='Unknown'):
         logger.warning(f"Error in safe_get for key {key}: {e}")
         return default
 
+# --- FIXED: Simple text input function for use in forms ---
+def simple_text_input(field_name, current_value, context="", suggestions=None):
+    """
+    Simple text input that works inside forms - no buttons or complex logic
+    """
+    placeholder = f"Enter {field_name.replace('_', ' ')}"
+    if suggestions and len(suggestions) > 0:
+        placeholder += f" (e.g., {suggestions[0]})"
+    
+    return st.text_input(
+        f"{field_name.replace('_', ' ').title()}",
+        value=current_value if current_value and current_value != 'Unknown' else "",
+        placeholder=placeholder,
+        key=f"{field_name}_{context}_{uuid.uuid4().hex[:8]}"
+    )
+
+# --- FIXED: Enhanced dynamic input that works outside forms ---
+def handle_dynamic_input(field_name, current_value, table_name, context=""):
+    """
+    Enhanced dynamic input that prioritizes typing with suggestions
+    ONLY USE OUTSIDE OF FORMS due to button limitations
+    """
+    import streamlit as st
+    
+    # Get existing options from database based on field and table
+    existing_options = get_unique_values_from_session_state(table_name, field_name)
+    
+    # Remove None/empty values and sort
+    existing_options = sorted([opt for opt in existing_options if opt and opt.strip() and opt != 'Unknown'])
+    
+    # Create unique key for input
+    unique_key = f"{field_name}_input_{table_name}_{context}_{uuid.uuid4().hex[:8]}"
+    
+    # Primary text input with current value
+    user_input = st.text_input(
+        f"{field_name.replace('_', ' ').title()}",
+        value=current_value if current_value and current_value != 'Unknown' else "",
+        placeholder=f"Enter {field_name.replace('_', ' ')} or select from suggestions below",
+        key=unique_key,
+        help=f"Type directly or choose from {len(existing_options)} existing options below"
+    )
+    
+    # Show existing options as clickable suggestions if there are any
+    if existing_options and len(existing_options) > 0:
+        st.caption(f"💡 **Suggestions** (click to use):")
+        
+        # Display suggestions in columns for better layout
+        cols_per_row = 3
+        suggestion_cols = st.columns(cols_per_row)
+        
+        for i, option in enumerate(existing_options[:9]):  # Show max 9 suggestions
+            col_idx = i % cols_per_row
+            with suggestion_cols[col_idx]:
+                # Use a button that updates the input when clicked
+                if st.button(f"📍 {option}", key=f"{unique_key}_suggestion_{i}", help=f"Use: {option}"):
+                    # Return the selected suggestion
+                    st.session_state[unique_key] = option
+                    st.rerun()
+        
+        if len(existing_options) > 9:
+            st.caption(f"... and {len(existing_options) - 9} more options available")
+    
+    # Return the user input (either typed or from session state if suggestion was clicked)
+    return user_input.strip() if user_input else ""
+
 # --- Enhanced File Loading with Encoding Detection ---
 def load_file_content_enhanced(uploaded_file):
     """
@@ -236,62 +301,6 @@ def emergency_stop_processing():
         logger.error(f"Error in emergency stop: {e}")
         return False
 
-# --- MISSING FUNCTIONS - MOVED TO TOP ---
-
-def handle_dynamic_input(field_name, current_value, table_name, context="", in_form=False):
-    """
-    Enhanced dynamic input that prioritizes typing with suggestions.
-    Supports both inside and outside of st.form via `in_form` flag.
-    """
-    import streamlit as st
-
-    # Get existing options from session state
-    existing_options = get_unique_values_from_session_state(table_name, field_name)
-    existing_options = sorted([opt for opt in existing_options if opt and opt.strip() and opt != 'Unknown'])
-
-    # Create unique key
-    unique_key = f"{field_name}_input_{table_name}_{context}"
-
-    # Main text input field
-    user_input = st.text_input(
-        f"{field_name.replace('_', ' ').title()}",
-        value=current_value if current_value and current_value != 'Unknown' else "",
-        placeholder=f"Enter {field_name.replace('_', ' ')} or select from suggestions below",
-        key=unique_key,
-        help=f"Type directly or choose from {len(existing_options)} existing options below"
-    )
-
-    # Suggestion buttons (only shown outside form)
-    if not in_form and existing_options:
-        st.caption("💡 **Suggestions** (click to use):")
-        cols_per_row = 3
-        suggestion_cols = st.columns(cols_per_row)
-
-        for i, option in enumerate(existing_options[:9]):
-            col_idx = i % cols_per_row
-            with suggestion_cols[col_idx]:
-                if st.button(f"📍 {option}", key=f"{unique_key}_suggestion_{i}", help=f"Use: {option}"):
-                    st.session_state[unique_key] = option
-                    st.rerun()
-
-        if len(existing_options) > 9:
-            st.caption(f"... and {len(existing_options) - 9} more options available")
-
-    # Cancel buttons (only shown outside form)
-    if not in_form:
-        if st.button("❌ Cancel Edit", key="cancel_edit_firm_outside"):
-            st.session_state.show_edit_firm_modal = False
-            st.session_state.edit_firm_data = None
-            st.rerun()
-
-        if st.button("❌ Cancel Edit", key="cancel_edit_person_outside"):
-            st.session_state.show_edit_person_modal = False
-            st.session_state.edit_person_data = None
-            st.rerun()
-
-    return st.session_state.get(unique_key, "").strip()
-
-
 def enhanced_global_search(query):
     """Enhanced global search function with better matching and debugging"""
     try:
@@ -340,7 +349,8 @@ def enhanced_global_search(query):
                     safe_get(firm, 'description', ''),
                     safe_get(firm, 'headquarters', ''),
                     safe_get(firm, 'aum', ''),
-                    safe_get(firm, 'website', '')
+                    safe_get(firm, 'website', ''),
+                    safe_get(firm, 'firm_type', '')  # Added firm_type to search
                 ]
                 
                 searchable_text = " ".join([field for field in searchable_fields if field and field != 'Unknown']).lower()
@@ -542,13 +552,14 @@ def init_dummy_data():
         {
             "id": str(uuid.uuid4()),
             "name": "Hillhouse Capital",
+            "firm_type": "Asset Manager",  # FIXED: Added firm_type
             "location": "Hong Kong",
             "headquarters": "Beijing, China",
             "aum": "60B USD",
             "founded": 2005,
             "strategy": "Long-only, Growth Equity",
             "website": "https://hillhousecap.com",
-            "description": "Asia's largest hedge fund focusing on technology and healthcare investments",
+            "description": "Asia's largest asset manager focusing on technology and healthcare investments",
             "created_date": (datetime.now() - timedelta(days=45)).isoformat(),
             "last_updated": (datetime.now() - timedelta(days=10)).isoformat(),
             "extraction_history": [{
@@ -572,6 +583,7 @@ def init_dummy_data():
         {
             "id": str(uuid.uuid4()),
             "name": "Millennium Partners Asia",
+            "firm_type": "Hedge Fund",  # FIXED: Added firm_type
             "location": "Singapore",
             "headquarters": "New York, USA",
             "aum": "35B USD",
@@ -602,6 +614,7 @@ def init_dummy_data():
         {
             "id": str(uuid.uuid4()),
             "name": "Citadel Asia",
+            "firm_type": "Hedge Fund",  # FIXED: Added firm_type
             "location": "Hong Kong",
             "headquarters": "Chicago, USA",
             "aum": "45B USD",
@@ -745,120 +758,6 @@ def initialize_session_state():
             'failed_chunks': []
         }
 
-def check_and_recover_stuck_processing():
-    """Check for and recover from stuck background processing"""
-    bg_proc = st.session_state.background_processing
-    
-    if not bg_proc['is_running']:
-        return
-    
-    # Check for timeout
-    if 'last_activity' in bg_proc and bg_proc['last_activity']:
-        time_since_activity = (datetime.now() - bg_proc['last_activity']).total_seconds()
-        
-        if time_since_activity > 300:  # 5 minutes timeout
-            logger.warning(f"Processing timeout detected after {time_since_activity}s inactivity")
-            
-            # Force stop and save any results
-            total_people = bg_proc.get('saved_people', 0) + len(bg_proc['results']['people'])
-            total_metrics = bg_proc.get('saved_performance', 0) + len(bg_proc['results']['performance'])
-            
-            bg_proc.update({
-                'is_running': False,
-                'status_message': f'Auto-stopped due to timeout. Recovered {total_people} people, {total_metrics} metrics',
-                'errors': bg_proc['errors'] + ['Processing timeout - automatically recovered']
-            })
-            
-            # Try to save any remaining results
-            if bg_proc['results']['people'] or bg_proc['results']['performance']:
-                if st.session_state.enable_review_mode:
-                    add_to_review_queue(
-                        bg_proc['results']['people'], 
-                        bg_proc['results']['performance'], 
-                        "Auto-recovered from timeout"
-                    )
-                else:
-                    try:
-                        saved_p, saved_perf = save_approved_extractions(
-                            bg_proc['results']['people'], 
-                            bg_proc['results']['performance']
-                        )
-                        bg_proc['saved_people'] += saved_p
-                        bg_proc['saved_performance'] += saved_perf
-                        logger.info(f"Auto-recovery saved {saved_p} people, {saved_perf} metrics")
-                    except Exception as e:
-                        logger.error(f"Auto-recovery save failed: {e}")
-            
-            return True  # Indicate recovery occurred
-    
-    return False
-
-def emergency_stop_processing():
-    """Emergency stop function for stuck processing"""
-    bg_proc = st.session_state.background_processing
-    
-    if bg_proc['is_running']:
-        logger.warning("Emergency stop triggered")
-        
-        # Try to save current results before stopping
-        results_saved = False
-        if bg_proc['results']['people'] or bg_proc['results']['performance']:
-            try:
-                if st.session_state.enable_review_mode:
-                    add_to_review_queue(
-                        bg_proc['results']['people'], 
-                        bg_proc['results']['performance'], 
-                        "Emergency Stop Recovery"
-                    )
-                    results_saved = True
-                else:
-                    saved_p, saved_perf = save_approved_extractions(
-                        bg_proc['results']['people'], 
-                        bg_proc['results']['performance']
-                    )
-                    bg_proc['saved_people'] += saved_p
-                    bg_proc['saved_performance'] += saved_perf
-                    results_saved = True
-                    logger.info(f"Emergency save: {saved_p} people, {saved_perf} metrics")
-            except Exception as e:
-                logger.error(f"Emergency save failed: {e}")
-        
-        # Force stop
-        total_people = bg_proc.get('saved_people', 0) + len(bg_proc['results']['people'])
-        total_metrics = bg_proc.get('saved_performance', 0) + len(bg_proc['results']['performance'])
-        
-        bg_proc.update({
-            'is_running': False,
-            'status_message': f'Emergency stop. {"Results saved" if results_saved else "No results to save"}. Found {total_people} people, {total_metrics} metrics',
-            'errors': bg_proc['errors'] + ['Emergency stop triggered']
-        })
-        
-        return True
-    
-    return False
-
-def get_unique_values_from_session_state(table_name, field_name):
-    """Get unique values for a field from session state data"""
-    try:
-        values = set()
-        
-        if table_name == 'people' and 'people' in st.session_state:
-            for item in st.session_state.people:
-                value = safe_get(item, field_name)
-                if value and value != 'Unknown':
-                    values.add(value)
-        
-        elif table_name == 'firms' and 'firms' in st.session_state:
-            for item in st.session_state.firms:
-                value = safe_get(item, field_name)
-                if value and value != 'Unknown':
-                    values.add(value)
-        
-        return list(values)
-    except Exception as e:
-        logger.warning(f"Error getting unique values for {table_name}.{field_name}: {e}")
-        return []
-
 # --- AI Setup with Enhanced Model Support ---
 @st.cache_resource
 def setup_gemini(api_key, model_id="gemini-1.5-flash"):
@@ -875,27 +774,28 @@ def setup_gemini(api_key, model_id="gemini-1.5-flash"):
         return None
 
 def get_model_rate_limits(model_id):
-    """Get rate limits for different Gemini models with proper 2.0/2.5 handling"""
+    """Get rate limits for different Gemini models - UPDATED FOR PAID TIER 1"""
     rate_limits = {
-        "gemini-1.5-flash": {"requests_per_minute": 15, "delay": 4},
-        "gemini-1.5-flash-latest": {"requests_per_minute": 15, "delay": 4},
-        "gemini-1.5-flash-8b": {"requests_per_minute": 15, "delay": 4},
-        "gemini-1.5-pro": {"requests_per_minute": 2, "delay": 30},
-        "gemini-1.5-pro-latest": {"requests_per_minute": 2, "delay": 30},
-        # Conservative limits for 2.0 models (unclear official limits)
-        "gemini-2.0-flash-thinking-exp": {"requests_per_minute": 5, "delay": 12},  # Actual 2.0 
-        "gemini-2.0-flash-exp": {"requests_per_minute": 4, "delay": 15},  # Experimental 2.0
-        "gemini-2.5-flash-exp": {"requests_per_minute": 3, "delay": 20},  # Very conservative for 2.5
-        "gemini-exp-1114": {"requests_per_minute": 2, "delay": 30},
-        "gemini-exp-1121": {"requests_per_minute": 2, "delay": 30}
+        # PAID TIER 1 - Much higher limits
+        "gemini-1.5-flash": {"requests_per_minute": 1000, "delay": 0.1},  # 1000 RPM
+        "gemini-1.5-flash-latest": {"requests_per_minute": 1000, "delay": 0.1},
+        "gemini-1.5-flash-8b": {"requests_per_minute": 4000, "delay": 0.05},  # 4000 RPM
+        "gemini-1.5-pro": {"requests_per_minute": 360, "delay": 0.2},  # 360 RPM
+        "gemini-1.5-pro-latest": {"requests_per_minute": 360, "delay": 0.2},
+        # 2.0 models with conservative paid limits
+        "gemini-2.0-flash-thinking-exp": {"requests_per_minute": 300, "delay": 0.3},
+        "gemini-2.0-flash-exp": {"requests_per_minute": 300, "delay": 0.3},
+        "gemini-2.5-flash-exp": {"requests_per_minute": 200, "delay": 0.4},
+        "gemini-exp-1114": {"requests_per_minute": 100, "delay": 0.8},
+        "gemini-exp-1121": {"requests_per_minute": 100, "delay": 0.8}
     }
     
     # Get base limits
-    base_limits = rate_limits.get(model_id, {"requests_per_minute": 5, "delay": 12})
+    base_limits = rate_limits.get(model_id, {"requests_per_minute": 100, "delay": 0.8})
     
     # Special handling for 2.0+ models which can be unstable
     if any(version in model_id for version in ["2.0", "2.5"]):
-        base_limits["delay"] = max(base_limits["delay"], 12)  # Minimum 12s delay
+        base_limits["delay"] = max(base_limits["delay"], 0.3)  # Minimum 0.3s delay
         base_limits["max_retries"] = 3
         base_limits["timeout_seconds"] = 90  # Longer timeout for newer models
         base_limits["experimental"] = True
@@ -909,13 +809,15 @@ def get_model_rate_limits(model_id):
 def create_cached_context():
     """Create cached context for hedge fund extraction with optimized prompts"""
     return {
-        "system_instructions": """You are an expert financial analyst specializing in the hedge fund industry. Your task is to meticulously analyze the following text and extract key intelligence about hedge funds, investment banks, asset managers, private equity firms, and related financial institutions.
+        "system_instructions": """You are an expert financial analyst specializing in the global financial industry. Your task is to meticulously analyze the following text and extract key intelligence about financial institutions, investment firms, and related organizations.
 
 CORE EXTRACTION TARGETS:
 1. PEOPLE: All individuals in professional contexts (current employees, new hires, departures, promotions, launches, appointments)
-2. FIRMS: Hedge funds, investment banks, asset managers, family offices, private equity, sovereign wealth funds
+2. FIRMS: All types of financial institutions including hedge funds, investment banks, asset managers, family offices, private equity, sovereign wealth funds, pension funds, central banks, fintech companies, financial news organizations, rating agencies
 3. PERFORMANCE DATA: Returns, risk metrics, AUM figures, fund performance, benchmarks
-4. MOVEMENTS: Job changes, fund launches, firm transitions, strategic shifts""",
+4. MOVEMENTS: Job changes, fund launches, firm transitions, strategic shifts
+
+IMPORTANT: Accurately classify the type of financial institution based on context clues. Do not default to "Hedge Fund" for all firms.""",
         
         "output_format": """{
   "geographic_focus": "Primary geographic region or 'Global' if multiple regions",
@@ -935,7 +837,7 @@ CORE EXTRACTION TARGETS:
   "firms": [
     {
       "name": "Exact Firm Name",
-      "firm_type": "Hedge Fund|Investment Bank|Asset Manager|Private Equity|Family Office",
+      "firm_type": "Hedge Fund|Investment Bank|Asset Manager|Private Equity|Family Office|Pension Fund|Central Bank|Sovereign Wealth Fund|Fintech Company|News Organization|Rating Agency|Financial Services|Other",
       "strategy": "Investment strategy or business line",
       "geographic_focus": "Geographic focus if mentioned",
       "aum": "Assets under management (numeric only)",
@@ -1096,6 +998,7 @@ def extract_single_chunk_safe(text, model):
         
         people = result.get('people', [])
         performance = result.get('performance', [])
+        firms = result.get('firms', [])  # FIXED: Extract firms data for validation
         
         # Enhanced validation with better logging
         valid_people = []
@@ -1164,7 +1067,7 @@ def extract_single_chunk_safe(text, model):
 
 # --- BACKGROUND PROCESSING FUNCTIONS ---
 def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode):
-    """Start background extraction process with improved error handling and auto-save"""
+    """FIXED: Start background extraction process with non-blocking UI"""
     st.session_state.background_processing = {
         'is_running': True,
         'progress': 0,
@@ -1244,8 +1147,8 @@ def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode
                     all_performance.extend(performance)
                     consecutive_failures = 0  # Reset failure counter
                     
-                    # Auto-save every 10 chunks or if we have 50+ items
-                    if (i + 1) % 10 == 0 or len(all_people) >= 50:
+                    # INCREASED AUTO-SAVE FREQUENCY - Save every 5 chunks or 20+ items
+                    if (i + 1) % 5 == 0 or len(all_people) >= 20:
                         if not st.session_state.enable_review_mode:
                             # Direct save
                             saved_p, saved_perf = save_approved_extractions(all_people, all_performance)
@@ -1277,6 +1180,7 @@ def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode
                     actual_delay = delay
                 
                 if i < len(chunks) - 1:  # Don't delay after last chunk
+                    # Use much shorter delays for paid tier
                     time.sleep(actual_delay)
                 
                 # Emergency stop if too many consecutive failures
@@ -1352,7 +1256,7 @@ def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode
         logger.error(f"Background extraction failed: {e}")
 
 def display_background_processing_widget():
-    """Display compact background processing widget with timeout detection"""
+    """SIMPLIFIED: Display minimal background processing widget in sidebar only"""
     bg_proc = st.session_state.background_processing
     
     if not bg_proc['is_running'] and bg_proc['progress'] == 0:
@@ -1366,109 +1270,126 @@ def display_background_processing_widget():
             st.session_state.background_processing['status_message'] = 'Timeout - Processing stopped automatically'
             st.session_state.background_processing['errors'].append('Processing timeout after 5 minutes of inactivity')
     
+    # SIMPLIFIED WIDGET - Only show in sidebar
     with st.container():
         if bg_proc['is_running']:
             progress = bg_proc['progress']
             current = bg_proc['current_chunk']
             total = bg_proc['total_chunks']
             
-            # Calculate elapsed time properly
-            if 'start_time' in bg_proc and bg_proc['start_time']:
-                elapsed_seconds = (datetime.now() - bg_proc['start_time']).total_seconds()
-                if elapsed_seconds < 60:
-                    time_str = f"{int(elapsed_seconds)}s"
-                elif elapsed_seconds < 3600:
-                    time_str = f"{int(elapsed_seconds // 60)}m {int(elapsed_seconds % 60)}s"
-                else:
-                    time_str = f"{int(elapsed_seconds // 3600)}h {int((elapsed_seconds % 3600) // 60)}m"
-            else:
-                time_str = "0s"
+            # Minimal progress display
+            st.progress(progress / 100, text=f"AI Extracting: {progress}%")
             
-            # Enhanced progress display
-            col1, col2, col3 = st.columns([3, 1, 1])
+            col1, col2 = st.columns(2)
             with col1:
-                st.progress(progress / 100, text=f"🤖 AI Extraction: {progress}% • Chunk {current}/{total} • {time_str}")
+                st.caption(f"Chunk {current}/{total}")
             with col2:
-                if st.button("⏹️ Stop", key="stop_background", help="Stop processing"):
-                    st.session_state.background_processing['is_running'] = False
-                    st.rerun()
-            with col3:
                 people_count = bg_proc.get('saved_people', 0) + len(bg_proc['results']['people'])
                 metrics_count = bg_proc.get('saved_performance', 0) + len(bg_proc['results']['performance'])
-                st.metric("Found", f"{people_count}P/{metrics_count}M", label_visibility="collapsed")
+                st.caption(f"Found: {people_count}P/{metrics_count}M")
             
-            # Show live stats
-            if bg_proc.get('saved_people', 0) > 0 or bg_proc.get('saved_performance', 0) > 0:
-                st.caption(f"💾 Saved: {bg_proc.get('saved_people', 0)} people, {bg_proc.get('saved_performance', 0)} metrics")
+            # Simple stop button
+            if st.button("⏹️ Stop", key="stop_background_simple", use_container_width=True):
+                st.session_state.background_processing['is_running'] = False
+                st.rerun()
         
         else:
-            # Show completion status
+            # Completion status - very minimal
             results = bg_proc['results']
-            errors = bg_proc['errors']
-            failed_chunks = bg_proc.get('failed_chunks', [])
             
             if results['people'] or results['performance'] or bg_proc.get('saved_people', 0) > 0:
                 total_people = bg_proc.get('saved_people', 0) + len(results['people'])
                 total_metrics = bg_proc.get('saved_performance', 0) + len(results['performance'])
                 
-                col1, col2, col3 = st.columns([2, 1, 1])
+                st.success(f"✅ Complete: {total_people}P/{total_metrics}M")
+                
+                col1, col2 = st.columns(2)
                 with col1:
-                    if failed_chunks:
-                        st.warning(f"✅ Extraction complete! {total_people} people, {total_metrics} metrics • {len(failed_chunks)} chunks failed")
-                    else:
-                        st.success(f"✅ Extraction complete! {total_people} people, {total_metrics} metrics")
-                with col2:
                     if results['people'] or results['performance']:  # Only show if there's unsaved data
-                        if st.button("📋 Review", key="review_results"):
-                            source_info = f"Background Extraction ({bg_proc.get('processing_id', 'unknown')[:8]})"
+                        if st.button("📋 Review", key="review_results_simple", use_container_width=True):
+                            source_info = f"Background Extraction"
                             add_to_review_queue(results['people'], results['performance'], source_info)
                             # Clear results after adding to review
                             st.session_state.background_processing['results'] = {'people': [], 'performance': []}
                             st.rerun()
-                    else:
-                        st.success("💾 All Saved")
-                with col3:
-                    if st.button("❌ Dismiss", key="dismiss_results"):
-                        st.session_state.background_processing = {
-                            'is_running': False, 'progress': 0, 'total_chunks': 0, 'current_chunk': 0,
-                            'status_message': '', 'results': {'people': [], 'performance': []}, 'errors': [], 'start_time': None
-                        }
-                        st.rerun()
-                
-                # Show detailed stats in expander
-                if failed_chunks or errors:
-                    with st.expander("📊 Processing Details", expanded=False):
-                        if failed_chunks:
-                            st.error(f"Failed chunks: {', '.join(map(str, failed_chunks))}")
-                        if errors:
-                            st.error("Recent errors:")
-                            for error in errors[-3:]:  # Show last 3 errors
-                                st.code(error)
-            
-            elif errors:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.error(f"❌ Extraction failed: {errors[-1] if errors else 'Unknown error'}")
                 with col2:
-                    if st.button("❌ Dismiss", key="dismiss_error"):
+                    if st.button("❌ Clear", key="dismiss_results_simple", use_container_width=True):
                         st.session_state.background_processing = {
                             'is_running': False, 'progress': 0, 'total_chunks': 0, 'current_chunk': 0,
                             'status_message': '', 'results': {'people': [], 'performance': []}, 'errors': [], 'start_time': None
                         }
                         st.rerun()
             
-            else:
-                # No results found
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.info("ℹ️ No results found in processed text")
-                with col2:
-                    if st.button("❌ Dismiss", key="dismiss_no_results"):
-                        st.session_state.background_processing = {
-                            'is_running': False, 'progress': 0, 'total_chunks': 0, 'current_chunk': 0,
-                            'status_message': '', 'results': {'people': [], 'performance': []}, 'errors': [], 'start_time': None
-                        }
-                        st.rerun()
+            elif bg_proc.get('errors'):
+                st.error("❌ Extraction failed")
+                if st.button("❌ Clear", key="dismiss_error_simple", use_container_width=True):
+                    st.session_state.background_processing = {
+                        'is_running': False, 'progress': 0, 'total_chunks': 0, 'current_chunk': 0,
+                        'status_message': '', 'results': {'people': [], 'performance': []}, 'errors': [], 'start_time': None
+                    }
+                    st.rerun()
+
+# --- ASIA & HEDGE FUND PRIORITIZATION HELPERS ---
+def is_asia_location(location):
+    """Check if location is in Asia"""
+    if not location or location == 'Unknown':
+        return False
+    
+    asia_keywords = [
+        'hong kong', 'singapore', 'tokyo', 'seoul', 'bangkok', 'mumbai', 'delhi', 
+        'shanghai', 'beijing', 'shenzhen', 'guangzhou', 'taipei', 'kuala lumpur',
+        'jakarta', 'manila', 'ho chi minh', 'hanoi', 'macau', 'osaka', 'kyoto',
+        'busan', 'china', 'japan', 'korea', 'india', 'thailand', 'malaysia',
+        'indonesia', 'philippines', 'vietnam', 'taiwan', 'asia', 'asian'
+    ]
+    
+    location_lower = location.lower()
+    return any(keyword in location_lower for keyword in asia_keywords)
+
+def is_hedge_fund_firm(firm):
+    """Check if firm is a hedge fund"""
+    firm_type = safe_get(firm, 'firm_type', '').lower()
+    firm_name = safe_get(firm, 'name', '').lower()
+    strategy = safe_get(firm, 'strategy', '').lower()
+    
+    # Direct type check
+    if 'hedge fund' in firm_type:
+        return True
+    
+    # Name-based check
+    hedge_fund_indicators = ['hedge', 'fund', 'capital', 'investment', 'management', 'partners']
+    name_matches = sum(1 for indicator in hedge_fund_indicators if indicator in firm_name)
+    
+    # Strategy-based check
+    strategy_indicators = ['long/short', 'equity', 'fixed income', 'macro', 'distressed', 'event driven']
+    strategy_matches = any(indicator in strategy for indicator in strategy_indicators)
+    
+    return name_matches >= 2 or strategy_matches
+
+def get_priority_score(item, item_type):
+    """Calculate priority score for sorting (higher = more priority)"""
+    score = 0
+    
+    if item_type == 'person':
+        # Asia location bonus
+        if is_asia_location(safe_get(item, 'location')):
+            score += 100
+        
+        # Check if person works at hedge fund
+        company_name = safe_get(item, 'current_company_name', '').lower()
+        if any(keyword in company_name for keyword in ['hedge', 'fund', 'capital', 'investment']):
+            score += 50
+    
+    elif item_type == 'firm':
+        # Asia location bonus
+        if is_asia_location(safe_get(item, 'location')):
+            score += 100
+        
+        # Hedge fund bonus
+        if is_hedge_fund_firm(item):
+            score += 50
+    
+    return score
 
 # --- Helper Functions ---
 def get_person_by_id(person_id):
@@ -1738,7 +1659,7 @@ def approve_all_in_review(review_id):
     return review_item['reviewed_people'], review_item['reviewed_performance']
 
 def save_approved_extractions(approved_people, approved_performance, source_context=""):
-    """Save approved extractions to main database with historical context"""
+    """FIXED: Save approved extractions to main database with historical context and firm type inference"""
     saved_people = 0
     saved_performance = 0
     
@@ -1785,18 +1706,22 @@ def save_approved_extractions(approved_people, approved_performance, source_cont
         
         st.session_state.people.append(new_person)
         
-        # Add firm if doesn't exist
+        # FIXED: Add firm if doesn't exist with proper firm type inference
         if not get_firm_by_name(company_name):
+            # FIXED: Infer firm type based on company name and person context
+            firm_type = infer_firm_type(company_name, person_data)
+            
             new_firm = {
                 "id": str(uuid.uuid4()),
                 "name": company_name,
+                "firm_type": firm_type,  # FIXED: Added proper firm type
                 "location": safe_get(person_data, 'location'),
                 "headquarters": "Unknown",
                 "aum": "Unknown",
                 "founded": None,
-                "strategy": safe_get(person_data, 'expertise', 'Hedge Fund'),
+                "strategy": safe_get(person_data, 'expertise', 'Various'),
                 "website": "",
-                "description": f"Hedge fund - extracted from newsletter intelligence",
+                "description": f"{firm_type} - extracted from newsletter intelligence",
                 "performance_metrics": [],
                 "created_date": datetime.now().isoformat(),
                 "last_updated": datetime.now().isoformat(),
@@ -1882,6 +1807,57 @@ def save_approved_extractions(approved_people, approved_performance, source_cont
     save_data()
     return saved_people, saved_performance
 
+def infer_firm_type(company_name, person_data=None):
+    """FIXED: Infer firm type based on company name and context"""
+    company_lower = company_name.lower()
+    
+    # Banking keywords
+    if any(word in company_lower for word in ['bank', 'banking', 'goldman sachs', 'morgan stanley', 'jp morgan', 'barclays', 'credit suisse', 'ubs', 'deutsche bank', 'citi']):
+        return "Investment Bank"
+    
+    # Central banks
+    if any(word in company_lower for word in ['central bank', 'federal reserve', 'bank of england', 'ecb', 'boe', 'fed', 'people\'s bank']):
+        return "Central Bank"
+    
+    # Pension funds
+    if any(word in company_lower for word in ['pension', 'retirement', 'calpers', 'canada pension', 'superannuation']):
+        return "Pension Fund"
+    
+    # Sovereign wealth funds
+    if any(word in company_lower for word in ['sovereign wealth', 'temasek', 'gic', 'cpf', 'adia', 'norges']):
+        return "Sovereign Wealth Fund"
+    
+    # Asset managers
+    if any(word in company_lower for word in ['asset management', 'blackrock', 'vanguard', 'fidelity', 'state street', 'invesco', 'franklin templeton']):
+        return "Asset Manager"
+    
+    # Private equity
+    if any(word in company_lower for word in ['private equity', 'kkr', 'blackstone', 'carlyle', 'apollo', 'warburg pincus']):
+        return "Private Equity"
+    
+    # Family offices
+    if any(word in company_lower for word in ['family office', 'family investment']):
+        return "Family Office"
+    
+    # Fintech
+    if any(word in company_lower for word in ['fintech', 'financial technology', 'payments', 'blockchain', 'crypto']):
+        return "Fintech Company"
+    
+    # News/Media
+    if any(word in company_lower for word in ['news', 'media', 'financial times', 'bloomberg', 'reuters', 'wsj', 'wall street journal', 'cnbc']):
+        return "News Organization"
+    
+    # Rating agencies
+    if any(word in company_lower for word in ['rating', 'moody\'s', 'standard & poor', 's&p', 'fitch']):
+        return "Rating Agency"
+    
+    # Hedge fund indicators (check last to avoid false positives)
+    if any(word in company_lower for word in ['hedge', 'capital', 'partners', 'management', 'fund', 'investment']):
+        return "Hedge Fund"
+    
+    # Default to Financial Services if unclear
+    return "Financial Services"
+
 # --- DATA EXPORT FUNCTIONS ---
 def export_to_csv():
     """Quick CSV export of all data"""
@@ -1910,7 +1886,7 @@ def export_to_csv():
                 'Company': safe_get(firm, 'name'),
                 'Location': safe_get(firm, 'location'),
                 'Email': safe_get(firm, 'website'),
-                'Expertise': safe_get(firm, 'strategy'),
+                'Expertise': safe_get(firm, 'firm_type'),  # FIXED: Export firm type
                 'AUM': safe_get(firm, 'aum')
             })
         
@@ -1957,19 +1933,15 @@ except Exception as recovery_error:
     # Continue without recovery
 
 # --- HEADER WITH QUICK DOWNLOAD ---
-col1, col2, col3 = st.columns([2, 1, 1])
+col1, col2 = st.columns([3, 1])
 with col1:
     st.title("👥 Asian Hedge Fund Talent Network")
-    st.markdown("### Professional intelligence platform for Asia's hedge fund industry")
+    st.markdown("### Professional intelligence platform for Asia's financial industry")
 
 with col2:
-    # Background processing widget in header
-    display_background_processing_widget()
-
-with col3:
     # Quick CSV download and emergency controls
-    col3a, col3b = st.columns(2)
-    with col3a:
+    col2a, col2b = st.columns(2)
+    with col2a:
         csv_data, filename = export_to_csv()
         if csv_data:
             st.download_button(
@@ -1980,7 +1952,7 @@ with col3:
                 use_container_width=True,
                 help="Download all data as CSV"
             )
-    with col3b:
+    with col2b:
         # Emergency stop button (only show if processing is running)
         if st.session_state.background_processing['is_running']:
             if st.button("🚨 Emergency Stop", use_container_width=True, help="Force stop stuck processing", type="secondary"):
@@ -2033,49 +2005,21 @@ with st.sidebar:
     
     # Show rate limits and processing status
     rate_limits = get_model_rate_limits(selected_model_id)
-    st.caption(f"⏱️ Rate limit: {rate_limits['requests_per_minute']} req/min, {rate_limits['delay']}s delay")
+    if rate_limits['delay'] < 1:
+        delay_str = f"{int(rate_limits['delay'] * 1000)}ms delay"
+    else:
+        delay_str = f"{rate_limits['delay']}s delay"
+    st.caption(f"⚡ Tier 1: {rate_limits['requests_per_minute']} req/min, {delay_str}")
     
-    # Show current processing status if running
+    # Show current processing status if running - SIMPLIFIED
     if st.session_state.background_processing['is_running']:
-        with st.container(border=True):
-            st.warning("🔄 **Processing in Progress**")
-            bg_proc = st.session_state.background_processing
-            
-            # Calculate time properly
-            if bg_proc['start_time']:
-                elapsed = (datetime.now() - bg_proc['start_time']).total_seconds()
-                if elapsed < 60:
-                    time_str = f"{int(elapsed)}s"
-                elif elapsed < 3600:
-                    time_str = f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
-                else:
-                    time_str = f"{int(elapsed // 3600)}h {int((elapsed % 3600) // 60)}m"
-            else:
-                time_str = "Unknown"
-            
-            st.caption(f"⏱️ Running: {time_str}")
-            st.caption(f"📊 Chunk: {bg_proc['current_chunk']}/{bg_proc['total_chunks']}")
-            st.caption(f"✅ Found: {bg_proc.get('saved_people', 0) + len(bg_proc['results']['people'])} people")
-            st.caption(f"📈 Metrics: {bg_proc.get('saved_performance', 0) + len(bg_proc['results']['performance'])}")
-            
-            if bg_proc.get('errors'):
-                st.caption(f"❌ Errors: {len(bg_proc['errors'])}")
-            
-            # Check for timeout warning
-            if 'last_activity' in bg_proc and bg_proc['last_activity']:
-                time_since_activity = (datetime.now() - bg_proc['last_activity']).total_seconds()
-                if time_since_activity > 120:  # Warn after 2 minutes
-                    st.warning(f"⚠️ No activity for {int(time_since_activity)}s")
-            
-            col_stop, col_emergency = st.columns(2)
-            with col_stop:
-                if st.button("⏹️ Stop", key="sidebar_stop", use_container_width=True):
-                    st.session_state.background_processing['is_running'] = False
-                    st.rerun()
-            with col_emergency:
-                if st.button("🚨 Emergency", key="sidebar_emergency", use_container_width=True):
-                    emergency_stop_processing()
-                    st.rerun()
+        st.markdown("---")
+        st.subheader("🔄 Processing Status")
+        display_background_processing_widget()
+    elif st.session_state.background_processing['progress'] > 0:
+        st.markdown("---")
+        st.subheader("✅ Last Extraction")
+        display_background_processing_widget()
     
     # Processing Configuration
     st.markdown("---")
@@ -2301,7 +2245,13 @@ if st.session_state.global_search and len(st.session_state.global_search.strip()
                 col1, col2, col3 = st.columns([3, 2, 1])
                 with col1:
                     st.markdown(f"**{safe_get(firm, 'name')}**")
-                    st.caption(f"{safe_get(firm, 'strategy')} • {safe_get(firm, 'location')}")
+                    # FIXED: Show firm type instead of strategy only
+                    firm_type = safe_get(firm, 'firm_type', 'Unknown')
+                    strategy = safe_get(firm, 'strategy', '')
+                    display_text = f"{firm_type}"
+                    if strategy and strategy != 'Unknown':
+                        display_text += f" • {strategy}"
+                    st.caption(f"{display_text} • {safe_get(firm, 'location')}")
                 with col2:
                     st.caption(f"💰 {safe_get(firm, 'aum')}")
                 with col3:
@@ -2359,7 +2309,7 @@ with col5:
         total_metrics = sum(len(firm.get('performance_metrics', [])) for firm in st.session_state.firms)
         st.metric("Metrics", total_metrics)
 
-# --- ADD PERSON MODAL ---
+# --- ADD PERSON MODAL (FIXED: Using simple_text_input in forms) ---
 if st.session_state.show_add_person_modal:
     st.markdown("---")
     st.subheader("➕ Add New Person")
@@ -2382,19 +2332,20 @@ if st.session_state.show_add_person_modal:
             else:
                 company = st.text_input("Current Company*", placeholder="Company Name")
             
-            location = handle_dynamic_input("location", "", "people", "add_person", in_form=True)
+            # FIXED: Use simple_text_input in forms
+            location = simple_text_input("location", "", "add_person", ["Hong Kong", "Singapore", "Tokyo"])
         
         with col2:
             email = st.text_input("Email", placeholder="john.smith@company.com")
             phone = st.text_input("Phone", placeholder="+852-1234-5678")
             education = st.text_input("Education", placeholder="Harvard, MIT")
-            expertise = handle_dynamic_input("expertise", "", "people", "add_person",in_form=True)
+            expertise = simple_text_input("expertise", "", "add_person", ["Equity Research", "Fixed Income", "Quantitative"])
         
         col3, col4 = st.columns(2)
         with col3:
             aum_managed = st.text_input("AUM Managed", placeholder="500M USD")
         with col4:
-            strategy = handle_dynamic_input("strategy", "", "people", "add_person",in_form=True)
+            strategy = simple_text_input("strategy", "", "add_person", ["Long/Short Equity", "Multi-Strategy"])
         
         submitted = st.form_submit_button("Add Person", use_container_width=True)
         
@@ -2452,7 +2403,7 @@ if st.session_state.show_add_person_modal:
         st.session_state.show_add_person_modal = False
         st.rerun()
 
-# --- ADD FIRM MODAL ---
+# --- ADD FIRM MODAL (FIXED: Using simple_text_input in forms) ---
 if st.session_state.show_add_firm_modal:
     st.markdown("---")
     st.subheader("🏢 Add New Firm")
@@ -2462,11 +2413,19 @@ if st.session_state.show_add_firm_modal:
         
         with col1:
             firm_name = st.text_input("Firm Name*", placeholder="Tiger Asia Management")
-            location = handle_dynamic_input("location", "", "firms", "add_firm",in_form=True)
+            location = simple_text_input("location", "", "add_firm", ["Hong Kong", "Singapore", "Tokyo"])
             aum = st.text_input("AUM", placeholder="5B USD")
             
+            # FIXED: Add firm type selection
+            firm_type_options = [
+                "Hedge Fund", "Investment Bank", "Asset Manager", "Private Equity", 
+                "Family Office", "Pension Fund", "Central Bank", "Sovereign Wealth Fund", 
+                "Fintech Company", "News Organization", "Rating Agency", "Financial Services"
+            ]
+            firm_type = st.selectbox("Firm Type*", firm_type_options, index=0)
+            
         with col2:
-            strategy = handle_dynamic_input("strategy", "", "firms", "add_firm",in_form=True)
+            strategy = simple_text_input("strategy", "", "add_firm", ["Multi-Strategy", "Long/Short Equity"])
             founded = st.number_input("Founded", min_value=1900, max_value=2025, value=2000)
             website = st.text_input("Website", placeholder="https://company.com")
         
@@ -2479,13 +2438,14 @@ if st.session_state.show_add_firm_modal:
                 st.session_state.firms.append({
                     "id": str(uuid.uuid4()),
                     "name": firm_name,
+                    "firm_type": firm_type,  # FIXED: Added firm_type
                     "location": location,
                     "headquarters": location,
                     "aum": aum,
                     "founded": founded if founded > 1900 else None,
                     "strategy": strategy,
                     "website": website,
-                    "description": description if description else f"{strategy} hedge fund based in {location}",
+                    "description": description if description else f"{firm_type} based in {location}",
                     "performance_metrics": [],
                     "created_date": datetime.now().isoformat(),
                     "last_updated": datetime.now().isoformat(),
@@ -2511,7 +2471,7 @@ if st.session_state.show_add_firm_modal:
 # --- PEOPLE VIEW WITH CARD LAYOUT ---
 if st.session_state.current_view == 'people':
     st.markdown("---")
-    st.header("👥 Hedge Fund Professionals")
+    st.header("👥 Financial Professionals")
     
     if not st.session_state.people:
         st.info("No people added yet. Use 'Add Person' button above or extract from newsletters using AI.")
@@ -2536,23 +2496,28 @@ if st.session_state.current_view == 'people':
         if search_term:
             filtered_people = [p for p in filtered_people if search_term.lower() in safe_get(p, 'name').lower()]
         
-        # Sort by most recent first (using created_date or last_updated if available)
-        def get_person_date(person):
-            # Try multiple date fields, default to very old date if none found
+        # PRIORITIZED SORTING: Asia + Hedge Funds first, then by date
+        def get_person_sort_key(person):
+            # Get priority score (Asia + Hedge Fund bonus)
+            priority_score = get_priority_score(person, 'person')
+            
+            # Get date for secondary sorting
             for date_field in ['last_updated', 'created_date']:
                 if date_field in person and person[date_field]:
                     try:
-                        return datetime.fromisoformat(person[date_field].replace('Z', '+00:00'))
+                        date_obj = datetime.fromisoformat(person[date_field].replace('Z', '+00:00'))
+                        # Return tuple: (priority_score, date) - higher priority first, then recent first
+                        return (-priority_score, -date_obj.timestamp())
                     except:
                         continue
-            return datetime(2000, 1, 1)  # Default old date
+            return (-priority_score, 0)  # Default old date
         
-        filtered_people.sort(key=get_person_date, reverse=True)
+        filtered_people.sort(key=get_person_sort_key)
         
         # Paginate results
         people_to_show, people_page_info = paginate_data(filtered_people, st.session_state.people_page, 12)  # 12 cards per page
         
-        st.write(f"**Showing {people_page_info['start_idx'] + 1}-{people_page_info['end_idx']} of {people_page_info['total_items']} people** (most recent first)")
+        st.write(f"**Showing {people_page_info['start_idx'] + 1}-{people_page_info['end_idx']} of {people_page_info['total_items']} people** (Asia + Hedge Funds prioritized)")
         
         # Display people in card grid (3 columns)
         if people_to_show:
@@ -2565,8 +2530,11 @@ if st.session_state.current_view == 'people':
                         with col:
                             # Create card container
                             with st.container(border=True):
-                                # Person header
-                                st.markdown(f"**👤 {safe_get(person, 'name')}**")
+                                # Person header with priority indicator
+                                person_priority = get_priority_score(person, 'person')
+                                priority_emoji = "🌟" if person_priority >= 100 else "⭐" if person_priority >= 50 else ""
+                                
+                                st.markdown(f"**👤 {safe_get(person, 'name')} {priority_emoji}**")
                                 st.caption(f"{safe_get(person, 'current_title')}")
                                 st.caption(f"🏢 {safe_get(person, 'current_company_name')}")
                                 
@@ -2621,30 +2589,36 @@ if st.session_state.current_view == 'people':
         # Pagination controls
         display_pagination_controls(people_page_info, "people")
 
-# --- FIRMS VIEW WITH CARD LAYOUT ---
+# --- FIRMS VIEW WITH CARD LAYOUT (FIXED: Show firm types) ---
 elif st.session_state.current_view == 'firms':
     st.markdown("---")
-    st.header("🏢 Hedge Funds in Asia")
+    st.header("🏢 Financial Institutions")
     
     if not st.session_state.firms:
         st.info("No firms added yet. Use 'Add Firm' button above.")
     else:
-        # Sort firms by most recent first
-        def get_firm_date(firm):
+        # PRIORITIZED SORTING: Asia + Hedge Funds first, then by date
+        def get_firm_sort_key(firm):
+            # Get priority score (Asia + Hedge Fund bonus)
+            priority_score = get_priority_score(firm, 'firm')
+            
+            # Get date for secondary sorting
             for date_field in ['last_updated', 'created_date']:
                 if date_field in firm and firm[date_field]:
                     try:
-                        return datetime.fromisoformat(firm[date_field].replace('Z', '+00:00'))
+                        date_obj = datetime.fromisoformat(firm[date_field].replace('Z', '+00:00'))
+                        # Return tuple: (priority_score, date) - higher priority first, then recent first
+                        return (-priority_score, -date_obj.timestamp())
                     except:
                         continue
-            return datetime(2000, 1, 1)  # Default old date
+            return (-priority_score, 0)  # Default old date
         
-        sorted_firms = sorted(st.session_state.firms, key=get_firm_date, reverse=True)
+        sorted_firms = sorted(st.session_state.firms, key=get_firm_sort_key)
         
         # Paginate results
         firms_to_show, firms_page_info = paginate_data(sorted_firms, st.session_state.firms_page, 12)  # 12 cards per page
         
-        st.write(f"**Showing {firms_page_info['start_idx'] + 1}-{firms_page_info['end_idx']} of {firms_page_info['total_items']} firms** (most recent first)")
+        st.write(f"**Showing {firms_page_info['start_idx'] + 1}-{firms_page_info['end_idx']} of {firms_page_info['total_items']} firms** (Asia + Hedge Funds prioritized)")
         
         # Display firms in card grid (3 columns)
         if firms_to_show:
@@ -2659,9 +2633,18 @@ elif st.session_state.current_view == 'firms':
                         with col:
                             # Create card container
                             with st.container(border=True):
-                                # Firm header
-                                st.markdown(f"**🏢 {safe_get(firm, 'name')}**")
-                                st.caption(f"{safe_get(firm, 'strategy')}")
+                                # Firm header with priority indicator
+                                firm_priority = get_priority_score(firm, 'firm')
+                                priority_emoji = "🌟" if firm_priority >= 100 else "⭐" if firm_priority >= 50 else ""
+                                
+                                st.markdown(f"**🏢 {safe_get(firm, 'name')} {priority_emoji}**")
+                                # FIXED: Show firm type prominently
+                                firm_type = safe_get(firm, 'firm_type', 'Unknown')
+                                strategy = safe_get(firm, 'strategy', '')
+                                if strategy and strategy != 'Unknown':
+                                    st.caption(f"{firm_type} • {strategy}")
+                                else:
+                                    st.caption(f"{firm_type}")
                                 
                                 # Firm details
                                 location = safe_get(firm, 'location')
@@ -2721,7 +2704,7 @@ elif st.session_state.current_view == 'firms':
         # Pagination controls
         display_pagination_controls(firms_page_info, "firms")
 
-# --- FIRM DETAILS VIEW (with integrated performance) ---
+# --- FIRM DETAILS VIEW (FIXED: Show firm type) ---
 elif st.session_state.current_view == 'firm_details' and st.session_state.selected_firm_id:
     firm = get_firm_by_id(st.session_state.selected_firm_id)
     if not firm:
@@ -2733,7 +2716,14 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
     col1, col2 = st.columns([3, 1])
     with col1:
         st.header(f"🏢 {safe_get(firm, 'name')}")
-        st.markdown(f"**{safe_get(firm, 'strategy')} Hedge Fund** • {safe_get(firm, 'location')}")
+        # FIXED: Show firm type in header
+        firm_type = safe_get(firm, 'firm_type', 'Unknown')
+        strategy = safe_get(firm, 'strategy', '')
+        location = safe_get(firm, 'location')
+        if strategy and strategy != 'Unknown':
+            st.markdown(f"**{firm_type} • {strategy}** • {location}")
+        else:
+            st.markdown(f"**{firm_type}** • {location}")
     with col2:
         col2a, col2b = st.columns(2)
         with col2a:
@@ -2759,6 +2749,7 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
     # Firm details
     col1, col2 = st.columns(2)
     with col1:
+        st.markdown(f"**🏢 Type:** {safe_get(firm, 'firm_type')}")  # FIXED: Show firm type
         st.markdown(f"**📍 Location:** {safe_get(firm, 'location')}")
         st.markdown(f"**🏛️ Headquarters:** {safe_get(firm, 'headquarters')}")
     with col2:
@@ -2975,7 +2966,7 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     else:
         st.info("No shared work history found with other people in the database.")
 
-# --- EDIT PERSON MODAL ---
+# --- EDIT PERSON MODAL (FIXED: Using simple_text_input in forms) ---
 if st.session_state.show_edit_person_modal and st.session_state.edit_person_data:
     st.markdown("---")
     st.subheader(f"✏️ Edit {safe_get(st.session_state.edit_person_data, 'name', 'Person')}")
@@ -2999,7 +2990,7 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
                 help=f"Available firms: {', '.join(company_options[:3])}{'...' if len(company_options) > 3 else ''}"
             )
             
-            location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person",in_form=True)
+            location = simple_text_input("location", safe_get(person_data, 'location'), "edit_person")
         
         with col2:
             email = st.text_input("Email", value=safe_get(person_data, 'email'))
@@ -3009,11 +3000,11 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
         
         col3, col4 = st.columns(2)
         with col3:
-            expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person",in_form=True)
+            expertise = simple_text_input("expertise", safe_get(person_data, 'expertise'), "edit_person")
             aum = st.text_input("AUM Managed", value=safe_get(person_data, 'aum_managed'))
         
         with col4:
-            strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person",in_form=True)
+            strategy = simple_text_input("strategy", safe_get(person_data, 'strategy'), "edit_person")
         
         col_save, col_cancel, col_delete = st.columns(3)
         
@@ -3026,53 +3017,52 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
         
         # Handle form submissions
         if save_submitted:
-                if name and title and company and location:
-                    person_data.update({
-                        "name": name,
-                        "current_title": title,
-                        "current_company_name": company,
-                        "location": location,
-                        "email": email,
-                        "linkedin_profile_url": linkedin,
-                        "phone": phone,
-                        "education": education,
-                        "expertise": expertise,
-                        "aum_managed": aum,
-                        "strategy": strategy
-                    })
-                    
-                    for i, p in enumerate(st.session_state.people):
-                        if p['id'] == person_data['id']:
-                            st.session_state.people[i] = person_data
-                            break
-                    
-                    save_data()
-                    st.success(f"✅ Updated {name}!")
-                    st.session_state.show_edit_person_modal = False
-                    st.session_state.edit_person_data = None
-                    st.rerun()
-                else:
-                    st.error("Please fill required fields (*)")
-        
-        with col_cancel:
-            if st.form_submit_button("❌ Cancel", use_container_width=True):
-                st.session_state.show_edit_person_modal = False
-                st.session_state.edit_person_data = None
-                st.rerun()
-        
-        with col_delete:
-            if st.form_submit_button("🗑️ Delete Person", use_container_width=True):
-                person_id = person_data['id']
-                st.session_state.people = [p for p in st.session_state.people if p['id'] != person_id]
-                st.session_state.employments = [e for e in st.session_state.employments if e['person_id'] != person_id]
+            if name and title and company and location:
+                person_data.update({
+                    "name": name,
+                    "current_title": title,
+                    "current_company_name": company,
+                    "location": location,
+                    "email": email,
+                    "linkedin_profile_url": linkedin,
+                    "phone": phone,
+                    "education": education,
+                    "expertise": expertise,
+                    "aum_managed": aum,
+                    "strategy": strategy,
+                    "last_updated": datetime.now().isoformat()  # Update timestamp
+                })
+                
+                for i, p in enumerate(st.session_state.people):
+                    if p['id'] == person_data['id']:
+                        st.session_state.people[i] = person_data
+                        break
                 
                 save_data()
-                st.success("✅ Person deleted!")
+                st.success(f"✅ Updated {name}!")
                 st.session_state.show_edit_person_modal = False
                 st.session_state.edit_person_data = None
                 st.rerun()
+            else:
+                st.error("Please fill required fields (*)")
+        
+        if cancel_submitted:
+            st.session_state.show_edit_person_modal = False
+            st.session_state.edit_person_data = None
+            st.rerun()
+        
+        if delete_submitted:
+            person_id = person_data['id']
+            st.session_state.people = [p for p in st.session_state.people if p['id'] != person_id]
+            st.session_state.employments = [e for e in st.session_state.employments if e['person_id'] != person_id]
+            
+            save_data()
+            st.success("✅ Person deleted!")
+            st.session_state.show_edit_person_modal = False
+            st.session_state.edit_person_data = None
+            st.rerun()
 
-# --- EDIT FIRM MODAL ---
+# --- EDIT FIRM MODAL (FIXED: Using simple_text_input in forms + firm type editing) ---
 if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
     st.markdown("---")
     st.subheader(f"✏️ Edit {safe_get(st.session_state.edit_firm_data, 'name', 'Firm')}")
@@ -3084,12 +3074,26 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         
         with col1:
             firm_name = st.text_input("Firm Name*", value=safe_get(firm_data, 'name'))
-            location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm",in_form=True)
+            location = simple_text_input("location", safe_get(firm_data, 'location'), "edit_firm")
             headquarters = st.text_input("Headquarters", value=safe_get(firm_data, 'headquarters'))
             aum = st.text_input("AUM", value=safe_get(firm_data, 'aum'))
             
+            # FIXED: Add firm type editing
+            firm_type_options = [
+                "Hedge Fund", "Investment Bank", "Asset Manager", "Private Equity", 
+                "Family Office", "Pension Fund", "Central Bank", "Sovereign Wealth Fund", 
+                "Fintech Company", "News Organization", "Rating Agency", "Financial Services"
+            ]
+            current_firm_type = safe_get(firm_data, 'firm_type', 'Hedge Fund')
+            try:
+                current_index = firm_type_options.index(current_firm_type)
+            except ValueError:
+                current_index = 0  # Default to Hedge Fund
+            
+            firm_type = st.selectbox("Firm Type*", firm_type_options, index=current_index)
+            
         with col2:
-            strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm",in_form=True)
+            strategy = simple_text_input("strategy", safe_get(firm_data, 'strategy'), "edit_firm")
             founded = st.number_input("Founded", min_value=1900, max_value=2025, 
                                     value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
             website = st.text_input("Website", value=safe_get(firm_data, 'website'))
@@ -3131,61 +3135,63 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         
         # Handle form submissions
         if save_submitted:
-                if firm_name and location:
-                    old_name = safe_get(firm_data, 'name')
-                    firm_data.update({
-                        "name": firm_name,
-                        "location": location,
-                        "headquarters": headquarters,
-                        "aum": aum,
-                        "founded": founded if founded > 1900 else None,
-                        "strategy": strategy,
-                        "website": website,
-                        "description": description
-                    })
-                    
-                    for i, f in enumerate(st.session_state.firms):
-                        if f['id'] == firm_data['id']:
-                            st.session_state.firms[i] = firm_data
-                            break
-                    
-                    # Update people's company names if firm name changed
-                    if old_name != firm_name:
-                        for person in st.session_state.people:
-                            if safe_get(person, 'current_company_name') == old_name:
-                                person['current_company_name'] = firm_name
-                    
-                    save_data()
-                    st.success(f"✅ Updated {firm_name}!")
-                    st.session_state.show_edit_firm_modal = False
-                    st.session_state.edit_firm_data = None
-                    st.rerun()
-                else:
-                    st.error("Please fill Firm Name and Location")
-        
-        with col_cancel:
-            if st.form_submit_button("❌ Cancel", use_container_width=True):
-                st.session_state.show_edit_firm_modal = False
-                st.session_state.edit_firm_data = None
-                st.rerun()
-        
-        with col_delete:
-            if st.form_submit_button("🗑️ Delete Firm", use_container_width=True):
-                firm_id = firm_data['id']
-                firm_name = safe_get(firm_data, 'name')
+            if firm_name and location:
+                old_name = safe_get(firm_data, 'name')
+                firm_data.update({
+                    "name": firm_name,
+                    "firm_type": firm_type,  # FIXED: Update firm type
+                    "location": location,
+                    "headquarters": headquarters,
+                    "aum": aum,
+                    "founded": founded if founded > 1900 else None,
+                    "strategy": strategy,
+                    "website": website,
+                    "description": description,
+                    "last_updated": datetime.now().isoformat()  # Update timestamp
+                })
                 
-                st.session_state.firms = [f for f in st.session_state.firms if f['id'] != firm_id]
+                for i, f in enumerate(st.session_state.firms):
+                    if f['id'] == firm_data['id']:
+                        st.session_state.firms[i] = firm_data
+                        break
                 
-                # Update people to remove company reference
-                for person in st.session_state.people:
-                    if safe_get(person, 'current_company_name') == firm_name:
-                        person['current_company_name'] = 'Unknown'
+                # Update people's company names if firm name changed
+                if old_name != firm_name:
+                    for person in st.session_state.people:
+                        if safe_get(person, 'current_company_name') == old_name:
+                            person['current_company_name'] = firm_name
+                            person['last_updated'] = datetime.now().isoformat()
                 
                 save_data()
-                st.success("✅ Firm deleted!")
+                st.success(f"✅ Updated {firm_name}!")
                 st.session_state.show_edit_firm_modal = False
                 st.session_state.edit_firm_data = None
                 st.rerun()
+            else:
+                st.error("Please fill Firm Name and Location")
+        
+        if cancel_submitted:
+            st.session_state.show_edit_firm_modal = False
+            st.session_state.edit_firm_data = None
+            st.rerun()
+        
+        if delete_submitted:
+            firm_id = firm_data['id']
+            firm_name = safe_get(firm_data, 'name')
+            
+            st.session_state.firms = [f for f in st.session_state.firms if f['id'] != firm_id]
+            
+            # Update people to remove company reference
+            for person in st.session_state.people:
+                if safe_get(person, 'current_company_name') == firm_name:
+                    person['current_company_name'] = 'Unknown'
+                    person['last_updated'] = datetime.now().isoformat()
+            
+            save_data()
+            st.success("✅ Firm deleted!")
+            st.session_state.show_edit_firm_modal = False
+            st.session_state.edit_firm_data = None
+            st.rerun()
 
 # --- DATA EXPORT & BACKUP SECTION ---
 st.markdown("---")
@@ -3345,7 +3351,7 @@ with col3:
 
 # --- FOOTER ---
 st.markdown("---")
-st.markdown("### 👥 Asian Hedge Fund Talent Intelligence Platform")
+st.markdown("### 👥 Asian Financial Industry Intelligence Platform")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.markdown("**🔍 Global Search**")
