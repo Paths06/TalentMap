@@ -54,6 +54,188 @@ def safe_get(data, key, default='Unknown'):
         logger.warning(f"Error in safe_get for key {key}: {e}")
         return default
 
+# --- Enhanced File Loading with Encoding Detection ---
+def load_file_content_enhanced(uploaded_file):
+    """
+    Enhanced file loading with robust encoding detection and error handling
+    
+    Returns:
+        tuple: (success: bool, content: str, error_message: str, encoding_used: str)
+    """
+    try:
+        file_size = len(uploaded_file.getvalue())
+        file_size_mb = file_size / (1024 * 1024)
+        
+        logger.info(f"Loading file: {uploaded_file.name} ({file_size_mb:.1f} MB)")
+        
+        # Handle different file types
+        if uploaded_file.type == "text/plain" or uploaded_file.name.endswith('.txt'):
+            # Text file - try multiple encodings in order of preference
+            raw_data = uploaded_file.getvalue()
+            
+            # Try common encodings in order
+            encodings_to_try = [
+                'utf-8',           # Standard UTF-8
+                'utf-8-sig',       # UTF-8 with BOM
+                'cp1252',          # Windows-1252 (common for Windows files)
+                'latin1',          # ISO-8859-1
+                'iso-8859-1',      # Alternative name for latin1
+                'cp1251',          # Windows-1251 (Cyrillic)
+                'ascii',           # Plain ASCII
+                'utf-16',          # UTF-16 (less common)
+                'utf-16le',        # UTF-16 Little Endian
+                'utf-16be'         # UTF-16 Big Endian
+            ]
+            
+            content = None
+            encoding_used = None
+            decode_errors = []
+            
+            for encoding in encodings_to_try:
+                try:
+                    content = raw_data.decode(encoding)
+                    encoding_used = encoding
+                    logger.info(f"Successfully decoded file with {encoding}")
+                    break
+                except UnicodeDecodeError as e:
+                    decode_errors.append(f"{encoding}: {str(e)}")
+                    continue
+                except Exception as e:
+                    decode_errors.append(f"{encoding}: {str(e)}")
+                    continue
+            
+            if content is None:
+                # Last resort: decode with 'replace' error handling
+                try:
+                    content = raw_data.decode('utf-8', errors='replace')
+                    encoding_used = 'utf-8 (with replacements)'
+                    logger.warning("Using UTF-8 with character replacements - some characters may be corrupted")
+                except Exception as e:
+                    error_msg = f"Could not decode file with any encoding. Tried: {', '.join([enc.split(':')[0] for enc in decode_errors])}"
+                    logger.error(error_msg)
+                    return False, "", error_msg, None
+            
+            # Validate content
+            if not content or len(content.strip()) == 0:
+                return False, "", "File appears to be empty after decoding", encoding_used
+            
+            # Check for binary content indicators
+            binary_indicators = ['\x00', '\x01', '\x02', '\x03', '\x04', '\x05']
+            if any(indicator in content for indicator in binary_indicators):
+                logger.warning("File may contain binary data - proceeding with caution")
+            
+            logger.info(f"File loaded successfully: {len(content)} characters, encoding: {encoding_used}")
+            return True, content, "", encoding_used
+            
+        elif uploaded_file.type in ["application/pdf"] or uploaded_file.name.endswith('.pdf'):
+            return False, "", "PDF files not supported. Please convert to .txt format.", None
+            
+        elif uploaded_file.type in ["application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"] or uploaded_file.name.endswith(('.doc', '.docx')):
+            return False, "", "Word documents not supported. Please save as .txt format.", None
+            
+        else:
+            # Unknown file type - try to treat as text with permissive decoding
+            try:
+                raw_data = uploaded_file.getvalue()
+                content = raw_data.decode('utf-8', errors='replace')
+                logger.warning(f"Unknown file type '{uploaded_file.type}'. Treating as text with UTF-8 replacement.")
+                return True, content, f"Warning: Unknown file type '{uploaded_file.type}'. Some characters may be corrupted.", "utf-8 (permissive)"
+            except Exception as e:
+                return False, "", f"Unsupported file type: {uploaded_file.type}. Error: {str(e)}", None
+    
+    except Exception as e:
+        error_msg = f"Error reading file: {str(e)}"
+        logger.error(error_msg)
+        return False, "", error_msg, None
+
+# Fallback function for compatibility
+def load_file_content(uploaded_file):
+    """Legacy function for compatibility - calls enhanced version"""
+    try:
+        success, content, error_msg, encoding_used = load_file_content_enhanced(uploaded_file)
+        return success, content, error_msg
+    except Exception as e:
+        return False, "", f"Error loading file: {str(e)}"
+
+def get_unique_values_from_session_state(table_name, field_name):
+    """Get unique values for a field from session state data"""
+    try:
+        values = set()
+        
+        if table_name == 'people' and 'people' in st.session_state:
+            for item in st.session_state.people:
+                value = safe_get(item, field_name)
+                if value and value != 'Unknown':
+                    values.add(value)
+        
+        elif table_name == 'firms' and 'firms' in st.session_state:
+            for item in st.session_state.firms:
+                value = safe_get(item, field_name)
+                if value and value != 'Unknown':
+                    values.add(value)
+        
+        return list(values)
+    except Exception as e:
+        logger.warning(f"Error getting unique values for {table_name}.{field_name}: {e}")
+        return []
+
+def check_and_recover_stuck_processing():
+    """Check for and recover from stuck background processing"""
+    try:
+        bg_proc = st.session_state.background_processing
+        
+        if not bg_proc['is_running']:
+            return False
+        
+        # Check for timeout
+        if 'last_activity' in bg_proc and bg_proc['last_activity']:
+            time_since_activity = (datetime.now() - bg_proc['last_activity']).total_seconds()
+            
+            if time_since_activity > 300:  # 5 minutes timeout
+                logger.warning(f"Processing timeout detected after {time_since_activity}s inactivity")
+                
+                # Force stop and save any results
+                total_people = bg_proc.get('saved_people', 0) + len(bg_proc['results']['people'])
+                total_metrics = bg_proc.get('saved_performance', 0) + len(bg_proc['results']['performance'])
+                
+                bg_proc.update({
+                    'is_running': False,
+                    'status_message': f'Auto-stopped due to timeout. Recovered {total_people} people, {total_metrics} metrics',
+                    'errors': bg_proc['errors'] + ['Processing timeout - automatically recovered']
+                })
+                
+                return True  # Indicate recovery occurred
+        
+        return False
+    except Exception as e:
+        logger.error(f"Error in recovery check: {e}")
+        return False
+
+def emergency_stop_processing():
+    """Emergency stop function for stuck processing"""
+    try:
+        bg_proc = st.session_state.background_processing
+        
+        if bg_proc['is_running']:
+            logger.warning("Emergency stop triggered")
+            
+            # Force stop
+            total_people = bg_proc.get('saved_people', 0) + len(bg_proc['results']['people'])
+            total_metrics = bg_proc.get('saved_performance', 0) + len(bg_proc['results']['performance'])
+            
+            bg_proc.update({
+                'is_running': False,
+                'status_message': f'Emergency stop. Found {total_people} people, {total_metrics} metrics',
+                'errors': bg_proc['errors'] + ['Emergency stop triggered']
+            })
+            
+            return True
+        
+        return False
+    except Exception as e:
+        logger.error(f"Error in emergency stop: {e}")
+        return False
+
 # --- MISSING FUNCTIONS - MOVED TO TOP ---
 
 def handle_dynamic_input(field_name, current_value, table_name, context=""):
@@ -96,6 +278,18 @@ def handle_dynamic_input(field_name, current_value, table_name, context=""):
                     # Return the selected suggestion
                     st.session_state[unique_key] = option
                     st.rerun()
+    
+    # Cancel button outside form for better UX
+    if st.button("❌ Cancel Edit", key="cancel_edit_firm_outside"):
+        st.session_state.show_edit_firm_modal = False
+        st.session_state.edit_firm_data = None
+        st.rerun()
+    
+    # Cancel button outside form for better UX
+    if st.button("❌ Cancel Edit", key="cancel_edit_person_outside"):
+        st.session_state.show_edit_person_modal = False
+        st.session_state.edit_person_data = None
+        st.rerun()
         
         if len(existing_options) > 9:
             st.caption(f"... and {len(existing_options) - 9} more options available")
@@ -1752,12 +1946,20 @@ def go_to_firm_details(firm_id):
     st.session_state.current_view = 'firm_details'
 
 # Initialize session state
-initialize_session_state()
+try:
+    initialize_session_state()
+except Exception as init_error:
+    st.error(f"Initialization error: {init_error}")
+    st.stop()
 
 # Check for stuck processing and auto-recover
-recovery_occurred = check_and_recover_stuck_processing()
-if recovery_occurred:
-    st.rerun()  # Refresh UI after recovery
+try:
+    recovery_occurred = check_and_recover_stuck_processing()
+    if recovery_occurred:
+        st.rerun()  # Refresh UI after recovery
+except Exception as recovery_error:
+    logger.warning(f"Recovery check failed: {recovery_error}")
+    # Continue without recovery
 
 # --- HEADER WITH QUICK DOWNLOAD ---
 col1, col2, col3 = st.columns([2, 1, 1])
@@ -1962,6 +2164,7 @@ with st.sidebar:
             uploaded_file = st.file_uploader("Upload newsletter:", type=['txt'])
             if uploaded_file:
                 try:
+                    # Try enhanced file loading first
                     success, content, error_msg, encoding_used = load_file_content_enhanced(uploaded_file)
                     
                     if success:
@@ -2000,6 +2203,24 @@ with st.sidebar:
                         st.error(f"❌ {error_msg}")
                         st.info("💡 **Tips**: Try saving the file as UTF-8 text, or check if it contains special characters")
                         
+                except NameError as name_error:
+                    # Fallback to simple file loading if enhanced function fails
+                    st.warning("Using fallback file loading...")
+                    try:
+                        newsletter_text = uploaded_file.getvalue().decode('utf-8')
+                        st.success(f"✅ File loaded: {len(newsletter_text):,} characters (UTF-8)")
+                    except UnicodeDecodeError:
+                        try:
+                            newsletter_text = uploaded_file.getvalue().decode('cp1252')
+                            st.success(f"✅ File loaded: {len(newsletter_text):,} characters (Windows-1252)")
+                        except:
+                            try:
+                                newsletter_text = uploaded_file.getvalue().decode('utf-8', errors='replace')
+                                st.warning(f"⚠️ File loaded with character replacements: {len(newsletter_text):,} characters")
+                            except Exception as fallback_error:
+                                st.error(f"❌ Could not load file: {fallback_error}")
+                                newsletter_text = ""
+                                
                 except Exception as file_error:
                     st.error(f"❌ Error loading file: {str(file_error)}")
                     st.info("💡 **Try**: Different file encoding or copy/paste the content instead")
@@ -2232,7 +2453,7 @@ if st.session_state.show_add_person_modal:
             else:
                 st.error("Please fill required fields (*)")
     
-    if st.button("❌ Cancel", key="cancel_add_person"):
+    if st.button("❌ Cancel", key="cancel_add_person_outside"):
         st.session_state.show_add_person_modal = False
         st.rerun()
 
@@ -2288,7 +2509,7 @@ if st.session_state.show_add_firm_modal:
             else:
                 st.error("Please fill Firm Name and Location")
     
-    if st.button("❌ Cancel", key="cancel_add_firm"):
+    if st.button("❌ Cancel", key="cancel_add_firm_outside"):
         st.session_state.show_add_firm_modal = False
         st.rerun()
 
