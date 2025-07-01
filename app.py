@@ -2723,23 +2723,6 @@ if st.session_state.show_review_interface and st.session_state.pending_review_da
     display_review_interface()
 
 # --- GLOBAL SEARCH BAR ---
-# st.markdown("---")
-# col1, col2 = st.columns([4, 1])
-
-# with col1:
-#     search_query = st.text_input(
-#         "🔍 Search people, firms, or performance...", 
-#         value=st.session_state.global_search,
-#         placeholder="Try: 'Goldman Sachs', 'Portfolio Manager', 'Citadel', 'Sharpe ratio'...",
-#         key="global_search_input"
-#     )
-
-# with col2:
-#     if st.button("🔍 Search", use_container_width=True):
-#         st.session_state.global_search = search_query
-#         st.rerun()
-
-# --- GLOBAL SEARCH BAR ---
 st.markdown("---")
 col1, col2 = st.columns([4, 1])
 
@@ -2749,6 +2732,27 @@ with col1:
         value=st.session_state.global_search,
         placeholder="Try: 'Goldman Sachs', 'Portfolio Manager', 'Citadel', 'Sharpe ratio'...",
         key="global_search_input"
+    )
+
+with col2:
+    if st.button("🔍 Search", use_container_width=True):
+        st.session_state.global_search = search_query
+        st.rerun()
+
+# --- GLOBAL SEARCH BAR ---
+st.markdown("---")
+col1, col2 = st.columns([4, 1])
+
+with col1:
+    # Initialize global_search if not exists
+    if 'global_search' not in st.session_state:
+        st.session_state.global_search = ""
+    
+    search_query = st.text_input(
+        "🔍 Search people, firms, or performance...", 
+        value=st.session_state.global_search,
+        placeholder="Try: 'Goldman Sachs', 'Portfolio Manager', 'Citadel', 'Sharpe ratio'...",
+        key="main_search_input"  # Changed from "global_search_input"
     )
 
 with col2:
