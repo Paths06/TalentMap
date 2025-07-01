@@ -286,6 +286,10 @@ def initialize_session_state():
         st.session_state.edit_person_data = None
     if 'edit_firm_data' not in st.session_state:
         st.session_state.edit_firm_data = None
+    if 'pending_updates' not in st.session_state:
+        st.session_state.pending_updates = []
+    if 'show_update_review' not in st.session_state:
+        st.session_state.show_update_review = False
 
 # --- AI Setup ---
 @st.cache_resource
@@ -435,6 +439,107 @@ def extract_talent_simple(text, model):
         # Multi-chunk with crash protection
         st.info(f"📊 Large file detected ({len(text):,} chars). Using safe chunking...")
         return extract_multi_chunk_safe(text, model, max_single_chunk)
+
+def find_similar_person(extracted_person):
+    """Find existing person that might match the extracted data"""
+    extracted_name = safe_get(extracted_person, 'name', '').lower().strip()
+    if not extracted_name:
+        return None
+    
+    # Try exact name match first
+    for person in st.session_state.people:
+        existing_name = safe_get(person, 'name', '').lower().strip()
+        if existing_name == extracted_name:
+            return person
+    
+    # Try fuzzy matching (first name + last name)
+    extracted_parts = extracted_name.split()
+    if len(extracted_parts) >= 2:
+        extracted_first = extracted_parts[0]
+        extracted_last = extracted_parts[-1]
+        
+        for person in st.session_state.people:
+            existing_name = safe_get(person, 'name', '').lower().strip()
+            existing_parts = existing_name.split()
+            if len(existing_parts) >= 2:
+                existing_first = existing_parts[0]
+                existing_last = existing_parts[-1]
+                
+                # Match if first and last names are the same
+                if extracted_first == existing_first and extracted_last == existing_last:
+                    return person
+    
+    return None
+
+def detect_updates_needed(existing_person, extracted_person):
+    """Compare existing person data with extracted data to find potential updates"""
+    updates = {}
+    
+    # Check company change
+    existing_company = safe_get(existing_person, 'current_company_name')
+    extracted_company = safe_get(extracted_person, 'company')
+    if extracted_company != 'Unknown' and existing_company != extracted_company:
+        updates['company'] = {
+            'field': 'current_company_name',
+            'current': existing_company,
+            'proposed': extracted_company,
+            'reason': 'Company change detected'
+        }
+    
+    # Check title change
+    existing_title = safe_get(existing_person, 'current_title')
+    extracted_title = safe_get(extracted_person, 'title')
+    if extracted_title != 'Unknown' and existing_title != extracted_title:
+        updates['title'] = {
+            'field': 'current_title',
+            'current': existing_title,
+            'proposed': extracted_title,
+            'reason': 'Title change detected'
+        }
+    
+    # Check location change
+    existing_location = safe_get(existing_person, 'location')
+    extracted_location = safe_get(extracted_person, 'location')
+    if extracted_location != 'Unknown' and existing_location != extracted_location:
+        updates['location'] = {
+            'field': 'location',
+            'current': existing_location,
+            'proposed': extracted_location,
+            'reason': 'Location change detected'
+        }
+    
+    return updates
+
+def process_extractions_with_update_detection(extractions):
+    """Process extractions and detect potential updates for existing people"""
+    new_people = []
+    pending_updates = []
+    
+    for extracted in extractions:
+        existing_person = find_similar_person(extracted)
+        
+        if existing_person:
+            # Person exists - check for updates
+            updates = detect_updates_needed(existing_person, extracted)
+            
+            if updates:
+                # Found potential updates
+                pending_updates.append({
+                    'id': str(uuid.uuid4()),
+                    'person_id': existing_person['id'],
+                    'person_name': safe_get(existing_person, 'name'),
+                    'updates': updates,
+                    'extracted_data': extracted,
+                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
+            else:
+                # No updates needed
+                st.info(f"✅ {safe_get(extracted, 'name')} - No updates needed")
+        else:
+            # New person
+            new_people.append(extracted)
+    
+    return new_people, pending_updates
 
 # --- Helper Functions ---
 def get_person_by_id(person_id):
@@ -682,28 +787,43 @@ with st.sidebar:
                                 ext['timestamp'] = timestamp
                                 ext['id'] = str(uuid.uuid4())
                             
-                            # Save results immediately
+                            # Process extractions and detect updates
+                            st.info("🔍 Checking for existing people and potential updates...")
+                            new_people, pending_updates = process_extractions_with_update_detection(extractions)
+                            
+                            # Save new extractions
                             st.session_state.all_extractions.extend(extractions)
+                            
+                            # Add pending updates to session state
+                            if pending_updates:
+                                st.session_state.pending_updates.extend(pending_updates)
+                                st.session_state.show_update_review = True
+                            
+                            # Save results
                             if save_data():
-                                st.success(f"🎉 **Success!** Found and saved {len(extractions)} people!")
+                                st.success(f"🎉 **Extraction Complete!**")
                             else:
                                 st.error("⚠️ Extraction successful but save failed!")
                             
-                            # Show compact summary
-                            companies = set(ext.get('company', 'Unknown') for ext in extractions)
-                            col1, col2 = st.columns(2)
+                            # Show summary
+                            col1, col2, col3 = st.columns(3)
                             with col1:
-                                st.metric("👥 People", len(extractions))
+                                st.metric("👥 New People", len(new_people))
                             with col2:
-                                st.metric("🏢 Companies", len(companies))
+                                st.metric("🔄 Pending Updates", len(pending_updates))
+                            with col3:
+                                st.metric("🏢 Total Extracted", len(extractions))
                             
-                            # Show preview
-                            with st.expander("📋 Preview Results"):
-                                for i, ext in enumerate(extractions[:5]):
-                                    st.write(f"{i+1}. **{ext['name']}** → {ext['company']}")
-                                
-                                if len(extractions) > 5:
-                                    st.write(f"... and {len(extractions) - 5} more")
+                            # Show what happened
+                            if new_people:
+                                with st.expander(f"📋 {len(new_people)} New People Found"):
+                                    for person in new_people:
+                                        st.write(f"• **{person['name']}** → {person['company']}")
+                            
+                            if pending_updates:
+                                st.warning(f"⚠️ Found {len(pending_updates)} potential updates for existing people!")
+                                st.info("👆 **Review updates in the sidebar before they're applied**")
+                            
                         else:
                             st.warning("⚠️ No people found. Try a different model or check content.")
                             
@@ -736,10 +856,19 @@ with st.sidebar:
         st.metric("Total Extracted", len(st.session_state.all_extractions))
         
         # Add people from extractions with safe defaults
-        if st.button("📥 Import All to Database", use_container_width=True):
+        if st.button("📥 Import New People Only", use_container_width=True):
+            # Only import extractions that don't have existing people
             added_count = 0
+            skipped_existing = 0
+            
             for ext in st.session_state.all_extractions:
-                # Check if person already exists
+                existing_person = find_similar_person(ext)
+                
+                if existing_person:
+                    skipped_existing += 1
+                    continue
+                
+                # Check if person already exists in current database
                 existing = any(safe_get(p, 'name', '').lower() == safe_get(ext, 'name', '').lower() 
                              for p in st.session_state.people)
                 
@@ -790,11 +919,155 @@ with st.sidebar:
                     added_count += 1
             
             save_data()  # Save changes
-            st.success(f"✅ Added {added_count} new people to database!")
+            if skipped_existing > 0:
+                st.success(f"✅ Added {added_count} new people! Skipped {skipped_existing} existing people.")
+                st.info("💡 Use 'Review Updates' to handle existing people changes")
+            else:
+                st.success(f"✅ Added {added_count} new people to database!")
             st.rerun()
+
+    # Show pending updates for review
+    if st.session_state.pending_updates:
+        st.markdown("---")
+        st.subheader("🔄 Review Updates")
+        st.warning(f"Found {len(st.session_state.pending_updates)} potential updates")
+        
+        if st.button("📝 Review & Approve Updates", use_container_width=True):
+            st.session_state.show_update_review = True
+            st.rerun()
+        
+        # Show quick preview
+        with st.expander("👀 Quick Preview"):
+            for update in st.session_state.pending_updates[:3]:
+                st.write(f"**{update['person_name']}**: {len(update['updates'])} potential changes")
+            if len(st.session_state.pending_updates) > 3:
+                st.write(f"... and {len(st.session_state.pending_updates) - 3} more")
 
     elif not GENAI_AVAILABLE:
         st.error("Please install: pip install google-generativeai")
+
+# --- UPDATE REVIEW MODAL ---
+if st.session_state.show_update_review and st.session_state.pending_updates:
+    st.markdown("---")
+    st.header("🔄 Review Potential Updates")
+    st.info("AI detected changes for existing people. Please review and approve updates.")
+    
+    # Process each pending update
+    updates_to_remove = []
+    
+    for i, pending_update in enumerate(st.session_state.pending_updates):
+        person_name = pending_update['person_name']
+        updates = pending_update['updates']
+        
+        st.markdown(f"### 👤 {person_name}")
+        st.caption(f"Detected on: {pending_update['timestamp']}")
+        
+        # Show each potential update
+        approved_updates = {}
+        
+        with st.container():
+            for update_key, update_info in updates.items():
+                col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+                
+                with col1:
+                    st.write(f"**{update_info['reason']}**")
+                    st.caption(f"Field: {update_key.title()}")
+                
+                with col2:
+                    st.write("**Current:**")
+                    st.code(update_info['current'])
+                
+                with col3:
+                    st.write("**Proposed:**")
+                    st.code(update_info['proposed'])
+                
+                with col4:
+                    # Approval checkbox
+                    approve_key = f"approve_{pending_update['id']}_{update_key}"
+                    if st.checkbox("✅ Approve", key=approve_key):
+                        approved_updates[update_key] = update_info
+        
+        # Action buttons for this person
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button(f"✅ Apply Approved Changes", key=f"apply_{pending_update['id']}", use_container_width=True):
+                if approved_updates:
+                    # Apply approved updates
+                    person_id = pending_update['person_id']
+                    person = get_person_by_id(person_id)
+                    
+                    if person:
+                        changes_made = []
+                        
+                        # Apply each approved update
+                        for update_key, update_info in approved_updates.items():
+                            old_value = person[update_info['field']]
+                            person[update_info['field']] = update_info['proposed']
+                            changes_made.append(f"{update_key}: {old_value} → {update_info['proposed']}")
+                            
+                            # If company changed, add new employment record
+                            if update_info['field'] == 'current_company_name':
+                                st.session_state.employments.append({
+                                    "id": str(uuid.uuid4()),
+                                    "person_id": person_id,
+                                    "company_name": update_info['proposed'],
+                                    "title": safe_get(person, 'current_title'),
+                                    "start_date": date.today(),
+                                    "end_date": None,
+                                    "location": safe_get(person, 'location'),
+                                    "strategy": "Unknown"
+                                })
+                                
+                                # End previous employment
+                                for emp in st.session_state.employments:
+                                    if (emp['person_id'] == person_id and 
+                                        emp['company_name'] == old_value and 
+                                        emp.get('end_date') is None and
+                                        emp['id'] != st.session_state.employments[-1]['id']):
+                                        emp['end_date'] = date.today()
+                                        break
+                        
+                        # Update the person in the main list
+                        for j, p in enumerate(st.session_state.people):
+                            if p['id'] == person_id:
+                                st.session_state.people[j] = person
+                                break
+                        
+                        save_data()
+                        st.success(f"✅ Updated {person_name}: {', '.join(changes_made)}")
+                        updates_to_remove.append(i)
+                    
+                else:
+                    st.warning("No changes approved for this person")
+        
+        with col2:
+            if st.button(f"❌ Reject All", key=f"reject_{pending_update['id']}", use_container_width=True):
+                st.info(f"Rejected all updates for {person_name}")
+                updates_to_remove.append(i)
+        
+        with col3:
+            if st.button(f"👁️ View Profile", key=f"view_{pending_update['id']}", use_container_width=True):
+                person_id = pending_update['person_id']
+                go_to_person_details(person_id)
+                st.rerun()
+        
+        st.markdown("---")
+    
+    # Remove processed updates
+    if updates_to_remove:
+        for i in sorted(updates_to_remove, reverse=True):
+            del st.session_state.pending_updates[i]
+        save_data()
+        st.rerun()
+    
+    # Close button
+    if st.button("✅ Done Reviewing", use_container_width=True):
+        st.session_state.show_update_review = False
+        st.rerun()
+
+elif not GENAI_AVAILABLE:
+    st.error("Please install: pip install google-generativeai")
 
 # --- MAIN CONTENT AREA ---
 st.title("🏢 Asian Hedge Fund Talent Map")
