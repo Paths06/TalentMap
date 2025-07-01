@@ -24,6 +24,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# --- Helper function to safely get string values ---
+def safe_get(data, key, default='Unknown'):
+    """Safely get a value from dict, ensuring it's not None"""
+    value = data.get(key, default)
+    return value if value is not None else default
+
 # --- Database Persistence Setup ---
 DATA_DIR = Path("hedge_fund_data")
 DATA_DIR.mkdir(exist_ok=True)
@@ -441,7 +447,7 @@ def get_firm_by_name(firm_name):
     return next((f for f in st.session_state.firms if f['name'] == firm_name), None)
 
 def get_people_by_firm(firm_name):
-    return [p for p in st.session_state.people if p['current_company_name'] == firm_name]
+    return [p for p in st.session_state.people if safe_get(p, 'current_company_name') == firm_name]
 
 def get_employments_by_person_id(person_id):
     return [e for e in st.session_state.employments if e['person_id'] == person_id]
@@ -480,11 +486,11 @@ def get_shared_work_history(person_id):
                     )
                     if overlap > 0:
                         shared_history.append({
-                            "colleague_name": other_person['name'],
+                            "colleague_name": safe_get(other_person, 'name'),
                             "colleague_id": other_person['id'],
                             "shared_company": person_emp['company_name'],
-                            "colleague_current_company": other_person['current_company_name'],
-                            "colleague_current_title": other_person['current_title'],
+                            "colleague_current_company": safe_get(other_person, 'current_company_name'),
+                            "colleague_current_title": safe_get(other_person, 'current_title'),
                             "overlap_years": overlap,
                             "person_title": person_emp['title'],
                             "colleague_title": other_emp['title']
@@ -734,7 +740,7 @@ with st.sidebar:
             added_count = 0
             for ext in st.session_state.all_extractions:
                 # Check if person already exists
-                existing = any(p.get('name', '').lower() == ext.get('name', '').lower() 
+                existing = any(safe_get(p, 'name', '').lower() == safe_get(ext, 'name', '').lower() 
                              for p in st.session_state.people)
                 
                 if not existing and ext.get('name') and ext.get('company'):
@@ -990,7 +996,7 @@ if st.session_state.show_add_firm_modal:
 # --- EDIT PERSON MODAL ---
 if st.session_state.show_edit_person_modal and st.session_state.edit_person_data:
     st.markdown("---")
-    st.subheader(f"✏️ Edit {st.session_state.edit_person_data.get('name', 'Person')}")
+    st.subheader(f"✏️ Edit {safe_get(st.session_state.edit_person_data, 'name', 'Person')}")
     
     person_data = st.session_state.edit_person_data
     
@@ -998,16 +1004,16 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
         col1, col2 = st.columns(2)
         
         with col1:
-            name = st.text_input("Full Name*", value=person_data.get('name', ''))
-            title = st.text_input("Current Title*", value=person_data.get('current_title', ''))
-            current_company = person_data.get('current_company_name', '')
+            name = st.text_input("Full Name*", value=safe_get(person_data, 'name'))
+            title = st.text_input("Current Title*", value=safe_get(person_data, 'current_title'))
+            current_company = safe_get(person_data, 'current_company_name')
             company_options = [""] + [f['name'] for f in st.session_state.firms]
             company_index = 0
             if current_company and current_company in company_options:
                 company_index = company_options.index(current_company)
             company = st.selectbox("Current Company*", options=company_options, index=company_index)
             
-            current_location = person_data.get('location', '')
+            current_location = safe_get(person_data, 'location')
             location_options = ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", "Mumbai", "Shanghai", "Beijing", "Taipei"]
             location_index = 0
             if current_location and current_location in location_options:
@@ -1015,18 +1021,18 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
             location = st.selectbox("Location*", options=location_options, index=location_index)
         
         with col2:
-            email = st.text_input("Email", value=person_data.get('email', ''))
-            phone = st.text_input("Phone", value=person_data.get('phone', ''))
-            linkedin = st.text_input("LinkedIn URL", value=person_data.get('linkedin_profile_url', ''))
-            education = st.text_input("Education", value=person_data.get('education', ''))
+            email = st.text_input("Email", value=safe_get(person_data, 'email'))
+            phone = st.text_input("Phone", value=safe_get(person_data, 'phone'))
+            linkedin = st.text_input("LinkedIn URL", value=safe_get(person_data, 'linkedin_profile_url'))
+            education = st.text_input("Education", value=safe_get(person_data, 'education'))
         
         col3, col4 = st.columns(2)
         with col3:
-            expertise = st.text_input("Expertise", value=person_data.get('expertise', ''))
-            aum = st.text_input("AUM Managed", value=person_data.get('aum_managed', ''))
+            expertise = st.text_input("Expertise", value=safe_get(person_data, 'expertise'))
+            aum = st.text_input("AUM Managed", value=safe_get(person_data, 'aum_managed'))
         
         with col4:
-            current_strategy = person_data.get('strategy', '')
+            current_strategy = safe_get(person_data, 'strategy')
             strategy_options = ["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit"]
             strategy_index = 0
             if current_strategy and current_strategy in strategy_options:
@@ -1089,7 +1095,7 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
 # --- EDIT FIRM MODAL ---
 if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
     st.markdown("---")
-    st.subheader(f"✏️ Edit {st.session_state.edit_firm_data.get('name', 'Firm')}")
+    st.subheader(f"✏️ Edit {safe_get(st.session_state.edit_firm_data, 'name', 'Firm')}")
     
     firm_data = st.session_state.edit_firm_data
     
@@ -1097,19 +1103,19 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         col1, col2 = st.columns(2)
         
         with col1:
-            firm_name = st.text_input("Firm Name*", value=firm_data.get('name', ''))
-            current_location = firm_data.get('location', '')
+            firm_name = st.text_input("Firm Name*", value=safe_get(firm_data, 'name'))
+            current_location = safe_get(firm_data, 'location')
             location_options = ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", "Mumbai", "Shanghai", "Beijing", "Taipei"]
             location_index = 0
             if current_location and current_location in location_options:
                 location_index = location_options.index(current_location)
             location = st.selectbox("Location*", options=location_options, index=location_index)
             
-            headquarters = st.text_input("Headquarters", value=firm_data.get('headquarters', ''))
-            aum = st.text_input("AUM", value=firm_data.get('aum', ''))
+            headquarters = st.text_input("Headquarters", value=safe_get(firm_data, 'headquarters'))
+            aum = st.text_input("AUM", value=safe_get(firm_data, 'aum'))
             
         with col2:
-            current_strategy = firm_data.get('strategy', '')
+            current_strategy = safe_get(firm_data, 'strategy')
             strategy_options = ["", "Long/Short Equity", "Multi-Strategy", "Quantitative", "Macro", "Event Driven"]
             strategy_index = 0
             if current_strategy and current_strategy in strategy_options:
@@ -1118,9 +1124,9 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
             
             founded = st.number_input("Founded", min_value=1900, max_value=2025, 
                                     value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
-            website = st.text_input("Website", value=firm_data.get('website', ''))
+            website = st.text_input("Website", value=safe_get(firm_data, 'website'))
         
-        description = st.text_area("Description", value=firm_data.get('description', ''))
+        description = st.text_area("Description", value=safe_get(firm_data, 'description'))
         
         col_save, col_cancel, col_delete = st.columns(3)
         
@@ -1128,7 +1134,7 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
             if st.form_submit_button("💾 Save Changes", use_container_width=True):
                 if firm_name and location:
                     # Update firm data
-                    old_name = firm_data.get('name', '')
+                    old_name = safe_get(firm_data, 'name')
                     firm_data.update({
                         "name": firm_name,
                         "location": location,
@@ -1149,7 +1155,7 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
                     # Update people's company names if firm name changed
                     if old_name != firm_name:
                         for person in st.session_state.people:
-                            if person.get('current_company_name') == old_name:
+                            if safe_get(person, 'current_company_name') == old_name:
                                 person['current_company_name'] = firm_name
                     
                     save_data()
@@ -1170,13 +1176,13 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
             if st.form_submit_button("🗑️ Delete Firm", use_container_width=True):
                 # Remove firm and update related data
                 firm_id = firm_data['id']
-                firm_name = firm_data.get('name', '')
+                firm_name = safe_get(firm_data, 'name')
                 
                 st.session_state.firms = [f for f in st.session_state.firms if f['id'] != firm_id]
                 
                 # Update people to remove company reference
                 for person in st.session_state.people:
-                    if person.get('current_company_name') == firm_name:
+                    if safe_get(person, 'current_company_name') == firm_name:
                         person['current_company_name'] = 'Unknown'
                 
                 save_data()
@@ -1195,20 +1201,20 @@ if st.session_state.current_view == 'firms':
     else:
         # Display firms in compact cards
         for firm in st.session_state.firms:
-            people_count = len(get_people_by_firm(firm['name']))
+            people_count = len(get_people_by_firm(safe_get(firm, 'name')))
             
             # Compact card design
             with st.container():
                 col1, col2, col3 = st.columns([2, 2, 1])
                 
                 with col1:
-                    st.markdown(f"**🏢 {firm['name']}**")
-                    st.caption(f"{firm.get('strategy', 'Unknown')} • {firm.get('location', 'Unknown')}")
+                    st.markdown(f"**🏢 {safe_get(firm, 'name')}**")
+                    st.caption(f"{safe_get(firm, 'strategy')} • {safe_get(firm, 'location')}")
                 
                 with col2:
                     col2a, col2b = st.columns(2)
                     with col2a:
-                        st.metric("💰 AUM", firm.get('aum', 'Unknown'), label_visibility="collapsed")
+                        st.metric("💰 AUM", safe_get(firm, 'aum'), label_visibility="collapsed")
                     with col2b:
                         st.metric("👥 People", people_count, label_visibility="collapsed")
                 
@@ -1238,11 +1244,11 @@ elif st.session_state.current_view == 'people':
         col1, col2, col3 = st.columns(3)
         with col1:
             # Filter out None values before sorting
-            locations = ["All"] + sorted(list(set(p.get('location', 'Unknown') for p in st.session_state.people if p.get('location'))))
+            locations = ["All"] + sorted(list(set(safe_get(p, 'location') for p in st.session_state.people if safe_get(p, 'location') != 'Unknown')))
             location_filter = st.selectbox("Filter by Location", locations)
         with col2:
             # Filter out None values before sorting
-            companies = ["All"] + sorted(list(set(p.get('current_company_name', 'Unknown') for p in st.session_state.people if p.get('current_company_name'))))
+            companies = ["All"] + sorted(list(set(safe_get(p, 'current_company_name') for p in st.session_state.people if safe_get(p, 'current_company_name') != 'Unknown')))
             company_filter = st.selectbox("Filter by Company", companies)
         with col3:
             search_term = st.text_input("Search by Name", placeholder="Enter name...")
@@ -1250,11 +1256,11 @@ elif st.session_state.current_view == 'people':
         # Apply filters
         filtered_people = st.session_state.people
         if location_filter != "All":
-            filtered_people = [p for p in filtered_people if p.get('location', 'Unknown') == location_filter]
+            filtered_people = [p for p in filtered_people if safe_get(p, 'location') == location_filter]
         if company_filter != "All":
-            filtered_people = [p for p in filtered_people if p.get('current_company_name', 'Unknown') == company_filter]
+            filtered_people = [p for p in filtered_people if safe_get(p, 'current_company_name') == company_filter]
         if search_term:
-            filtered_people = [p for p in filtered_people if search_term.lower() in p.get('name', '').lower()]
+            filtered_people = [p for p in filtered_people if search_term.lower() in safe_get(p, 'name').lower()]
         
         # Display people in compact cards
         st.write(f"**Showing {len(filtered_people)} people**")
@@ -1264,18 +1270,18 @@ elif st.session_state.current_view == 'people':
                 col1, col2, col3 = st.columns([2, 2, 1])
                 
                 with col1:
-                    st.markdown(f"**👤 {person.get('name', 'Unknown')}**")
-                    st.caption(f"{person.get('current_title', 'Unknown')} • {person.get('current_company_name', 'Unknown')}")
+                    st.markdown(f"**👤 {safe_get(person, 'name')}**")
+                    st.caption(f"{safe_get(person, 'current_title')} • {safe_get(person, 'current_company_name')}")
                 
                 with col2:
                     col2a, col2b = st.columns(2)
                     with col2a:
-                        location = person.get('location', 'Unknown')
+                        location = safe_get(person, 'location')
                         if len(location) > 10:
                             location = location[:10] + "..."
                         st.metric("📍", location, label_visibility="collapsed")
                     with col2b:
-                        aum = person.get('aum_managed', 'Unknown')
+                        aum = safe_get(person, 'aum_managed')
                         if len(aum) > 8:
                             aum = aum[:8] + "..."
                         st.metric("💰", aum, label_visibility="collapsed")
@@ -1305,8 +1311,8 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
     # Firm header
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.header(f"🏢 {firm['name']}")
-        st.markdown(f"**{firm['strategy']} Hedge Fund** • {firm['location']}")
+        st.header(f"🏢 {safe_get(firm, 'name')}")
+        st.markdown(f"**{safe_get(firm, 'strategy')} Hedge Fund** • {safe_get(firm, 'location')}")
     with col2:
         col2a, col2b = st.columns(2)
         with col2a:
@@ -1322,45 +1328,49 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
     # Firm details
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Assets Under Management", firm['aum'])
+        st.metric("Assets Under Management", safe_get(firm, 'aum'))
     with col2:
-        st.metric("Founded", firm.get('founded', 'Unknown'))
+        st.metric("Founded", safe_get(firm, 'founded'))
     with col3:
-        people_count = len(get_people_by_firm(firm['name']))
+        people_count = len(get_people_by_firm(safe_get(firm, 'name')))
         st.metric("Total People", people_count)
     
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f"**📍 Location:** {firm['location']}")
-        st.markdown(f"**🏛️ Headquarters:** {firm.get('headquarters', 'Unknown')}")
+        st.markdown(f"**📍 Location:** {safe_get(firm, 'location')}")
+        st.markdown(f"**🏛️ Headquarters:** {safe_get(firm, 'headquarters')}")
     with col2:
-        st.markdown(f"**📈 Strategy:** {firm['strategy']}")
-        if firm.get('website'):
-            st.markdown(f"**🌐 Website:** [{firm['website']}]({firm['website']})")
+        st.markdown(f"**📈 Strategy:** {safe_get(firm, 'strategy')}")
+        website = safe_get(firm, 'website')
+        if website:
+            st.markdown(f"**🌐 Website:** [{website}]({website})")
     
-    if firm.get('description'):
-        st.markdown(f"**📄 About:** {firm['description']}")
+    description = safe_get(firm, 'description')
+    if description:
+        st.markdown(f"**📄 About:** {description}")
     
     # People at this firm
     st.markdown("---")
-    st.subheader(f"👥 People at {firm['name']}")
+    st.subheader(f"👥 People at {safe_get(firm, 'name')}")
     
-    firm_people = get_people_by_firm(firm['name'])
+    firm_people = get_people_by_firm(safe_get(firm, 'name'))
     if firm_people:
         for person in firm_people:
             with st.container():
                 col1, col2, col3 = st.columns([2, 2, 1])
                 
                 with col1:
-                    st.markdown(f"**👤 {person.get('name', 'Unknown')}**")
-                    st.caption(person.get('current_title', 'Unknown'))
+                    st.markdown(f"**👤 {safe_get(person, 'name')}**")
+                    st.caption(safe_get(person, 'current_title'))
                 
                 with col2:
                     contact_items = []
-                    if person.get('email'):
-                        contact_items.append(f"📧 {person['email']}")
-                    if person.get('aum_managed'):
-                        contact_items.append(f"💰 {person['aum_managed']}")
+                    email = safe_get(person, 'email')
+                    if email:
+                        contact_items.append(f"📧 {email}")
+                    aum = safe_get(person, 'aum_managed')
+                    if aum:
+                        contact_items.append(f"💰 {aum}")
                     
                     if contact_items:
                         st.caption(" • ".join(contact_items[:2]))
@@ -1387,8 +1397,8 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     # Person header
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.header(f"👤 {person.get('name', 'Unknown')}")
-        st.subheader(f"{person.get('current_title', 'Unknown')} at {person.get('current_company_name', 'Unknown')}")
+        st.header(f"👤 {safe_get(person, 'name')}")
+        st.subheader(f"{safe_get(person, 'current_title')} at {safe_get(person, 'current_company_name')}")
     with col2:
         col2a, col2b = st.columns(2)
         with col2a:
@@ -1404,23 +1414,30 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     # Basic info
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f"**📍 Location:** {person.get('location', 'Unknown')}")
-        if person.get('email'):
-            st.markdown(f"**📧 Email:** [{person['email']}](mailto:{person['email']})")
-        if person.get('phone'):
-            st.markdown(f"**📱 Phone:** {person['phone']}")
-        if person.get('linkedin_profile_url'):
-            st.markdown(f"**🔗 LinkedIn:** [Profile]({person['linkedin_profile_url']})")
+        st.markdown(f"**📍 Location:** {safe_get(person, 'location')}")
+        email = safe_get(person, 'email')
+        if email:
+            st.markdown(f"**📧 Email:** [{email}](mailto:{email})")
+        phone = safe_get(person, 'phone')
+        if phone:
+            st.markdown(f"**📱 Phone:** {phone}")
+        linkedin = safe_get(person, 'linkedin_profile_url')
+        if linkedin:
+            st.markdown(f"**🔗 LinkedIn:** [Profile]({linkedin})")
     
     with col2:
-        if person.get('education'):
-            st.markdown(f"**🎓 Education:** {person['education']}")
-        if person.get('expertise'):
-            st.markdown(f"**🏆 Expertise:** {person['expertise']}")
-        if person.get('aum_managed'):
-            st.markdown(f"**💰 AUM Managed:** {person['aum_managed']}")
-        if person.get('strategy'):
-            st.markdown(f"**📈 Strategy:** {person['strategy']}")
+        education = safe_get(person, 'education')
+        if education:
+            st.markdown(f"**🎓 Education:** {education}")
+        expertise = safe_get(person, 'expertise')
+        if expertise:
+            st.markdown(f"**🏆 Expertise:** {expertise}")
+        aum = safe_get(person, 'aum_managed')
+        if aum:
+            st.markdown(f"**💰 AUM Managed:** {aum}")
+        strategy = safe_get(person, 'strategy')
+        if strategy:
+            st.markdown(f"**📈 Strategy:** {strategy}")
     
     # Employment History
     st.markdown("---")
@@ -1453,9 +1470,9 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
                 duration_str = "Unknown duration"
             
             st.markdown(f"""
-            **{emp.get('title', 'Unknown')}** at **{emp.get('company_name', 'Unknown')}**  
+            **{safe_get(emp, 'title')}** at **{safe_get(emp, 'company_name')}**  
             📅 {start_date_str} → {end_date_str} ({duration_str})  
-            📍 {emp.get('location', 'Unknown')} • 📈 {emp.get('strategy', 'Unknown')}
+            📍 {safe_get(emp, 'location')} • 📈 {safe_get(emp, 'strategy')}
             """)
     else:
         st.info("No employment history available.")
@@ -1521,7 +1538,7 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
             ))
             
             fig.update_layout(
-                title=f"Professional Network Connections for {person['name']}",
+                title=f"Professional Network Connections for {safe_get(person, 'name')}",
                 xaxis_title="Companies",
                 yaxis_title="Overlap Years",
                 height=400
