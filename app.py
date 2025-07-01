@@ -2467,7 +2467,7 @@ if st.session_state.show_add_firm_modal:
         
         with col1:
             firm_name = st.text_input("Firm Name*", placeholder="Tiger Asia Management")
-            location = handle_dynamic_input("location", "", "firms", "add_firm", in_form=True)
+            location = handle_dynamic_input("location", "", "firms", "add_firm")
             aum = st.text_input("AUM", placeholder="5B USD")
             
         with col2:
@@ -3014,11 +3014,11 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
         
         col3, col4 = st.columns(2)
         with col3:
-            expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person", in_form=True)
+            expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person")
             aum = st.text_input("AUM Managed", value=safe_get(person_data, 'aum_managed'))
         
         with col4:
-            strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person", in_form=True)
+            strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person")
         
         col_save, col_cancel, col_delete = st.columns(3)
         
@@ -3089,12 +3089,12 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         
         with col1:
             firm_name = st.text_input("Firm Name*", value=safe_get(firm_data, 'name'))
-            location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm", in_form=True)
+            location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm")
             headquarters = st.text_input("Headquarters", value=safe_get(firm_data, 'headquarters'))
             aum = st.text_input("AUM", value=safe_get(firm_data, 'aum'))
             
         with col2:
-            strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm", in_form=True)
+            strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm")
             founded = st.number_input("Founded", min_value=1900, max_value=2025, 
                                     value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
             website = st.text_input("Website", value=safe_get(firm_data, 'website'))
