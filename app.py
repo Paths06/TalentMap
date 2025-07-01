@@ -328,37 +328,150 @@ def setup_gemini(api_key, model_id="gemini-1.5-flash"):
         st.error(f"AI setup failed: {e}")
         return None
 
-def extract_single_chunk_safe(text, model):
-    """Safe single chunk extraction with timeout - extracts both people and performance metrics"""
-    try:
-        prompt = f"""Extract hedge fund talent movements AND performance metrics from this text. Return JSON only with BOTH sections:
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def create_cached_context():
+    """Create cached context for hedge fund extraction to reduce token usage"""
+    return {
+        "system_instructions": """You are an expert hedge fund intelligence analyst specializing in extracting people movements and performance metrics from financial newsletters and industry reports.
 
-{text}
+EXTRACTION RULES:
+1. Extract ALL people mentioned in professional contexts (hires, promotions, departures, launches)
+2. Extract ALL performance metrics (returns, IRR, Sharpe, drawdown, AUM, alpha, beta, volatility)
+3. Be precise with numbers - extract exact values without interpretation
+4. Include time periods and benchmarks when mentioned
+5. Focus on hedge funds, asset managers, and investment professionals
 
-{{
+PEOPLE CATEGORIES:
+- New hires and departures
+- Promotions and role changes  
+- Fund launches and closures
+- Leadership appointments
+
+PERFORMANCE METRICS:
+- Returns (YTD, annual, quarterly, inception-to-date)
+- Risk metrics (Sharpe ratio, maximum drawdown, volatility)
+- Alpha and beta coefficients
+- Assets under management (AUM)
+- Benchmark comparisons and outperformance""",
+        
+        "example_input": """Goldman Sachs veteran John Smith joins Citadel Asia as Managing Director in Hong Kong. 
+Former JPMorgan portfolio manager Lisa Chen launches her own hedge fund, Dragon Capital.
+Engineers Gate topped $4 billion in assets and is up 12% this year. The fund's Sharpe ratio improved to 1.8.
+Millennium's flagship fund returned 15.2% net in Q2 with maximum drawdown of 2.1%.""",
+        
+        "example_output": """{
   "people": [
-    {{
-      "name": "Full Name",
-      "company": "Company",
-      "title": "Position",
-      "movement_type": "hire|promotion|launch|departure",
-      "location": "Location"
-    }}
+    {
+      "name": "John Smith",
+      "company": "Citadel Asia", 
+      "title": "Managing Director",
+      "movement_type": "hire",
+      "location": "Hong Kong"
+    },
+    {
+      "name": "Lisa Chen",
+      "company": "Dragon Capital",
+      "title": "Founder", 
+      "movement_type": "launch",
+      "location": "Unknown"
+    }
   ],
   "performance": [
-    {{
+    {
+      "fund_name": "Engineers Gate",
+      "metric_type": "aum",
+      "value": "4000000000",
+      "period": "Current",
+      "date": "2025",
+      "additional_info": "USD"
+    },
+    {
+      "fund_name": "Engineers Gate", 
+      "metric_type": "return",
+      "value": "12",
+      "period": "YTD",
+      "date": "2025",
+      "additional_info": "percent"
+    },
+    {
+      "fund_name": "Engineers Gate",
+      "metric_type": "sharpe",
+      "value": "1.8", 
+      "period": "Current",
+      "date": "2025",
+      "additional_info": "improved from 1.2"
+    },
+    {
+      "fund_name": "Millennium",
+      "metric_type": "return",
+      "value": "15.2",
+      "period": "Q2",
+      "date": "2025",
+      "additional_info": "net return, flagship fund"
+    },
+    {
+      "fund_name": "Millennium",
+      "metric_type": "drawdown", 
+      "value": "2.1",
+      "period": "Q2",
+      "date": "2025",
+      "additional_info": "maximum drawdown, percent"
+    }
+  ]
+}""",
+        
+        "output_format": """{
+  "people": [
+    {
+      "name": "Full Name",
+      "company": "Company Name", 
+      "title": "Job Title",
+      "movement_type": "hire|promotion|launch|departure",
+      "location": "City/Country"
+    }
+  ],
+  "performance": [
+    {
       "fund_name": "Fund Name",
       "metric_type": "return|irr|sharpe|drawdown|alpha|beta|volatility|aum",
-      "value": "numeric value only",
-      "period": "YTD|1Y|3Y|5Y|ITD|Q1|Q2|etc",
-      "date": "YYYY-MM-DD or period",
-      "benchmark": "comparison benchmark if mentioned",
-      "additional_info": "any other relevant details"
-    }}
+      "value": "numeric_value_only",
+      "period": "YTD|Q1|Q2|Q3|Q4|1Y|3Y|5Y|ITD|Current",
+      "date": "YYYY or YYYY-MM-DD",
+      "benchmark": "comparison_benchmark_if_mentioned", 
+      "additional_info": "units_context_details"
+    }
   ]
-}}
+}"""
+    }
 
-Find ALL people movements AND ALL performance metrics (returns, IRR, Sharpe ratios, drawdowns, AUM, alpha, beta, volatility, etc.)."""
+def build_extraction_prompt_with_cache(newsletter_text, cached_context):
+    """Build extraction prompt using cached context to minimize token usage"""
+    
+    prompt = f"""
+{cached_context['system_instructions']}
+
+EXAMPLE INPUT:
+{cached_context['example_input']}
+
+EXAMPLE OUTPUT:
+{cached_context['example_output']}
+
+REQUIRED OUTPUT FORMAT:
+{cached_context['output_format']}
+
+NOW EXTRACT FROM THIS NEWSLETTER:
+{newsletter_text}
+
+Return ONLY the JSON output with both people and performance arrays populated. Find ALL people movements and ALL performance metrics mentioned."""
+    
+    return prompt
+
+def extract_single_chunk_safe(text, model):
+    """Safe single chunk extraction with cached context to reduce token usage"""
+    try:
+        # Use cached context to build efficient prompt
+        cached_context = create_cached_context()
+        prompt = build_extraction_prompt_with_cache(text, cached_context)
         
         response = model.generate_content(prompt)
         if not response or not response.text:
