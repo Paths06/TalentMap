@@ -475,6 +475,12 @@ def initialize_session_state():
         st.session_state.firms_page = 0
     if 'search_page' not in st.session_state:
         st.session_state.search_page = 0
+    
+    # NEW: File processing preferences
+    if 'preprocessing_mode' not in st.session_state:
+        st.session_state.preprocessing_mode = "balanced"
+    if 'chunk_size_preference' not in st.session_state:
+        st.session_state.chunk_size_preference = "auto"
 
 # --- AI Setup ---
 @st.cache_resource
@@ -639,6 +645,248 @@ Return ONLY the JSON output with both people and performance arrays populated.""
     
     return prompt
 
+# ENHANCED: Flexible file preprocessing with configurable options
+def preprocess_newsletter_text(text, mode="balanced"):
+    """
+    Enhanced preprocessing with configurable modes for different file sizes and types
+    
+    Args:
+        text: Input text to preprocess
+        mode: Preprocessing intensity level
+            - "minimal": Only basic cleaning, preserve most content
+            - "balanced": Moderate filtering (default)
+            - "aggressive": Heavy filtering for very noisy content
+            - "none": Skip preprocessing entirely
+    """
+    import re
+    
+    if mode == "none":
+        st.info("📄 **No preprocessing applied** - Processing raw content")
+        return text
+    
+    # Show original size
+    original_size = len(text)
+    
+    # Step 1: Extract and preserve subject lines that contain relevant info
+    subject_line = ""
+    subject_match = re.search(r'Subject:\s*(.+?)(?:\n|$)', text, re.IGNORECASE)
+    if subject_match:
+        subject_line = subject_match.group(1).strip()
+        # Keep subject if it contains hedge fund keywords
+        hf_keywords_in_subject = ['appoints', 'joins', 'launches', 'hires', 'promotes', 'moves', 'cio', 'ceo', 'pm', 'portfolio manager', 'hedge fund', 'capital', 'management']
+        if any(keyword in subject_line.lower() for keyword in hf_keywords_in_subject):
+            text = f"NEWSLETTER SUBJECT: {subject_line}\n\n{text}"
+    
+    # Step 2: Remove email headers (but preserve subject if already extracted above)
+    if mode in ["balanced", "aggressive"]:
+        email_header_patterns = [
+            r'From:\s*.*?\n',
+            r'To:\s*.*?\n', 
+            r'Sent:\s*.*?\n',
+            r'Subject:\s*.*?\n',  # Remove original subject since we preserved it above
+            r'Date:\s*.*?\n',
+            r'Reply-To:\s*.*?\n',
+            r'Return-Path:\s*.*?\n'
+        ]
+        
+        for pattern in email_header_patterns:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.MULTILINE)
+    
+    # Step 3: Remove URLs and tracking links
+    if mode in ["balanced", "aggressive"]:
+        url_patterns = [
+            r'https?://[^\s<>"{}|\\^`\[\]]+',  # Standard URLs
+            r'<https?://[^>]+>',  # URLs in angle brackets
+            r'urldefense\.proofpoint\.com[^\s]*',  # Proofpoint URLs
+            r'pardot\.withintelligence\.com[^\s]*',  # Tracking URLs
+            r'jpmorgan\.email\.streetcontxt\.net[^\s]*'  # Email tracking
+        ]
+        
+        for pattern in url_patterns:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+    
+    # Step 4: Remove email disclaimers and legal text (only in aggressive mode)
+    if mode == "aggressive":
+        disclaimer_patterns = [
+            r'This section contains materials produced by third parties.*?(?=\n\n|\Z)',
+            r'This message is confidential and subject to terms.*?(?=\n\n|\Z)',
+            r'Important Reminder: JPMorgan Chase will never send emails.*?(?=\n\n|\Z)',
+            r'Although this transmission and any links.*?(?=\n\n|\Z)',
+            r'©.*?All rights reserved.*?(?=\n\n|\Z)',
+            r'Unsubscribe.*?(?=\n\n|\Z)',
+            r'Privacy Policy.*?(?=\n\n|\Z)',
+            r'Update email preferences.*?(?=\n\n|\Z)',
+            r'Not seeing what you expected\?.*?(?=\n\n|\Z)',
+            r'Log in to my account.*?(?=\n\n|\Z)'
+        ]
+        
+        for pattern in disclaimer_patterns:
+            text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Step 5: Remove HTML artifacts and email formatting
+    if mode in ["balanced", "aggressive"]:
+        html_patterns = [
+            r'<[^>]+>',  # HTML tags
+            r'&[a-zA-Z0-9#]+;',  # HTML entities
+            r'\[cid:[^\]]+\]',  # Email embedded images
+        ]
+        
+        for pattern in html_patterns:
+            text = re.sub(pattern, '', text)
+        
+        # Only remove excessive formatting in aggressive mode
+        if mode == "aggressive":
+            text = re.sub(r'________________________________+', '', text)  # Email separators
+            text = re.sub(r'\*\s*\|.*?\|\s*\*', '', text)  # Email table formatting
+    
+    # Step 6: Clean up excessive whitespace
+    if mode in ["minimal", "balanced", "aggressive"]:
+        # Remove multiple consecutive newlines
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+        
+        # Only filter lines in balanced/aggressive mode
+        if mode in ["balanced", "aggressive"]:
+            lines = text.split('\n')
+            cleaned_lines = []
+            for line in lines:
+                # Keep line if it has meaningful content
+                if re.search(r'[a-zA-Z].*[a-zA-Z]', line) and len(line.strip()) > 5:
+                    # Clean up the line
+                    line = re.sub(r'\s+', ' ', line.strip())  # Normalize whitespace
+                    if line:
+                        cleaned_lines.append(line)
+            text = '\n'.join(cleaned_lines)
+    
+    # Step 7: Focus on hedge fund relevant content (only in aggressive mode)
+    if mode == "aggressive":
+        # Look for common hedge fund keywords and keep paragraphs containing them
+        hf_keywords = [
+            'hedge fund', 'portfolio manager', 'pm', 'cio', 'chief investment officer',
+            'managing director', 'md', 'vice president', 'vp', 'analyst', 'trader',
+            'fund launch', 'fund debut', 'joins', 'moves', 'promotes', 'appoints',
+            'former', 'ex-', 'launches', 'capital management', 'partners', 'advisors',
+            'assets under management', 'aum', 'long/short', 'equity', 'credit',
+            'quantitative', 'macro', 'multi-strategy', 'arbitrage'
+        ]
+        
+        # Performance-related keywords
+        performance_keywords = [
+            'irr', 'internal rate of return', 'sharpe', 'sharpe ratio', 'drawdown', 
+            'maximum drawdown', 'max drawdown', 'alpha', 'beta', 'volatility', 'vol',
+            'return', 'returns', 'performance', 'ytd', 'year to date', 'annualized',
+            'net return', 'gross return', 'benchmark', 'outperformed', 'underperformed',
+            'basis points', 'bps', '%', 'percent', 'up ', 'down ', 'gained', 'lost',
+            'aum', 'assets', 'billion', 'million', 'fund size', 'nav', 'net asset value'
+        ]
+        
+        # Additional keywords for better extraction
+        movement_keywords = [
+            'appoints', 'appointed', 'hiring', 'hired', 'departure', 'departing', 
+            'leaving', 'joining', 'joined', 'moved', 'moving', 'promoted', 'promotion',
+            'named', 'named as', 'becomes', 'became', 'takes over', 'steps down'
+        ]
+        
+        # Combine all keywords
+        all_keywords = hf_keywords + performance_keywords + movement_keywords
+        
+        # Split into paragraphs and keep relevant ones
+        paragraphs = text.split('\n\n')
+        relevant_paragraphs = []
+        
+        for para in paragraphs:
+            para_lower = para.lower()
+            if any(keyword in para_lower for keyword in all_keywords):
+                relevant_paragraphs.append(para)
+            elif len(para) > 100 and ('capital' in para_lower or 'management' in para_lower):
+                # Keep longer paragraphs that might be relevant
+                relevant_paragraphs.append(para)
+        
+        # If we didn't find enough relevant content, keep more of the original
+        if len(relevant_paragraphs) < 3:
+            relevant_paragraphs = paragraphs[:20]  # Keep first 20 paragraphs as fallback
+        
+        text = '\n\n'.join(relevant_paragraphs)
+    
+    # Final cleanup
+    text = text.strip()
+    
+    # Show cleaning results
+    final_size = len(text)
+    reduction_pct = ((original_size - final_size) / original_size) * 100 if original_size > 0 else 0
+    
+    st.info(f"📝 **Text Preprocessing Complete** (Mode: {mode.title()})")
+    st.write(f"• **Original size**: {original_size:,} characters")
+    st.write(f"• **Processed size**: {final_size:,} characters") 
+    st.write(f"• **Reduction**: {reduction_pct:.1f}% content filtered")
+    
+    if mode == "aggressive":
+        paragraphs_found = len(text.split('\n\n'))
+        st.write(f"• **Relevant sections**: {paragraphs_found} found")
+    
+    return text
+
+# ENHANCED: Better file type support with encoding detection
+def load_file_content(uploaded_file):
+    """
+    Enhanced file loading with better encoding detection and file type support
+    
+    Args:
+        uploaded_file: Streamlit uploaded file object
+    
+    Returns:
+        tuple: (success: bool, content: str, error_message: str)
+    """
+    try:
+        file_size = len(uploaded_file.getvalue())
+        file_size_mb = file_size / (1024 * 1024)
+        
+        st.info(f"📁 **File Details**: {uploaded_file.name} ({file_size_mb:.1f} MB)")
+        
+        # Handle different file types
+        if uploaded_file.type == "text/plain" or uploaded_file.name.endswith('.txt'):
+            # Text file - try multiple encodings
+            raw_data = uploaded_file.getvalue()
+            
+            # Try common encodings in order of preference
+            encodings = ['utf-8', 'utf-8-sig', 'latin1', 'cp1252', 'iso-8859-1']
+            content = None
+            encoding_used = None
+            
+            for encoding in encodings:
+                try:
+                    content = raw_data.decode(encoding)
+                    encoding_used = encoding
+                    break
+                except UnicodeDecodeError:
+                    continue
+            
+            if content is None:
+                return False, "", "Could not decode file. Please ensure it's a valid text file."
+            
+            st.success(f"✅ **Text file loaded** (encoding: {encoding_used})")
+            return True, content, ""
+            
+        elif uploaded_file.type in ["application/pdf"] or uploaded_file.name.endswith('.pdf'):
+            # PDF support would require additional libraries
+            return False, "", "PDF files not yet supported. Please convert to .txt format."
+            
+        elif uploaded_file.type in ["application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"] or uploaded_file.name.endswith(('.doc', '.docx')):
+            # Word document support would require additional libraries
+            return False, "", "Word documents not yet supported. Please save as .txt format."
+            
+        else:
+            # Try to treat as text anyway
+            try:
+                raw_data = uploaded_file.getvalue()
+                content = raw_data.decode('utf-8', errors='ignore')
+                st.warning(f"⚠️ Unknown file type '{uploaded_file.type}'. Attempting to read as text...")
+                return True, content, ""
+            except Exception as e:
+                return False, "", f"Unsupported file type: {uploaded_file.type}. Please use .txt files."
+    
+    except Exception as e:
+        return False, "", f"Error reading file: {str(e)}"
+
 def extract_single_chunk_safe(text, model):
     """Safe single chunk extraction with cached context and better validation"""
     try:
@@ -701,8 +949,34 @@ def extract_single_chunk_safe(text, model):
         st.warning(f"Single chunk failed: {str(e)[:100]}")
         return [], []
 
-def extract_multi_chunk_safe(text, model, chunk_size=15000):
-    """Enhanced multi-chunk processing with intelligent rate limiting and exponential backoff"""
+# ENHANCED: Configurable chunking with better size options
+def extract_multi_chunk_safe(text, model, chunk_size_mode="auto"):
+    """
+    Enhanced multi-chunk processing with configurable chunk sizes
+    
+    Args:
+        text: Text to process
+        model: AI model
+        chunk_size_mode: Chunking strategy
+            - "auto": Automatic based on text size (default)
+            - "small": 10K chars (more chunks, better context)
+            - "medium": 20K chars (balanced)
+            - "large": 35K chars (fewer chunks, larger context)
+            - "xlarge": 50K chars (minimal chunks, maximum context)
+    """
+    
+    # Define chunk sizes based on mode
+    chunk_sizes = {
+        "small": 10000,
+        "medium": 20000, 
+        "large": 35000,
+        "xlarge": 50000,
+        "auto": min(max(len(text) // 50, 15000), 35000)  # Auto-scale based on content
+    }
+    
+    chunk_size = chunk_sizes.get(chunk_size_mode, 20000)
+    
+    st.info(f"📊 **Chunking Strategy**: {chunk_size_mode} ({chunk_size:,} chars per chunk)")
     
     try:
         # Smart chunking - try to break at paragraph boundaries
@@ -847,178 +1121,52 @@ def extract_multi_chunk_safe(text, model, chunk_size=15000):
         st.error(f"Multi-chunk processing failed: {e}")
         return [], []
 
-def extract_talent_simple(text, model):
-    """Enhanced extraction with intelligent chunking - no file size limits"""
+# ENHANCED: Main extraction function with configurable options
+def extract_talent_enhanced(text, model, preprocessing_mode="balanced", chunk_size_mode="auto"):
+    """
+    Enhanced extraction with configurable preprocessing and chunking
+    
+    Args:
+        text: Input text
+        model: AI model
+        preprocessing_mode: Level of text preprocessing
+        chunk_size_mode: Chunking strategy
+    """
     if not model:
         return [], []
     
-    # Preprocess and clean the text first
-    cleaned_text = preprocess_newsletter_text(text)
+    # Preprocess text with selected mode
+    cleaned_text = preprocess_newsletter_text(text, preprocessing_mode)
     
-    # More generous chunk size for better context
-    max_single_chunk = 20000
+    # Determine chunk size based on mode and content
+    if chunk_size_mode == "auto":
+        # Auto-determine based on content size
+        if len(cleaned_text) <= 25000:
+            chunk_mode = "single"
+        else:
+            chunk_mode = "medium"
+    else:
+        chunk_mode = chunk_size_mode
     
-    if len(cleaned_text) <= max_single_chunk:
-        # Single chunk - simple and reliable
+    # Define single chunk threshold based on mode
+    single_chunk_thresholds = {
+        "small": 10000,
+        "medium": 20000,
+        "large": 35000,
+        "xlarge": 50000,
+        "single": 25000
+    }
+    
+    threshold = single_chunk_thresholds.get(chunk_mode, 20000)
+    
+    if len(cleaned_text) <= threshold or chunk_mode == "single":
+        # Single chunk processing
         st.info("📄 Processing as single chunk...")
         return extract_single_chunk_safe(cleaned_text, model)
     else:
-        # Multi-chunk with intelligent processing
-        st.info(f"📊 Large file detected ({len(cleaned_text):,} chars). Using intelligent chunking...")
-        return extract_multi_chunk_safe(cleaned_text, model, max_single_chunk)
-
-def preprocess_newsletter_text(text):
-    """Clean and preprocess newsletter text to remove noise and focus on relevant content"""
-    import re
-    
-    # Show original size
-    original_size = len(text)
-    
-    # Step 1: Extract and preserve subject lines that contain relevant info
-    subject_line = ""
-    subject_match = re.search(r'Subject:\s*(.+?)(?:\n|$)', text, re.IGNORECASE)
-    if subject_match:
-        subject_line = subject_match.group(1).strip()
-        # Keep subject if it contains hedge fund keywords
-        hf_keywords_in_subject = ['appoints', 'joins', 'launches', 'hires', 'promotes', 'moves', 'cio', 'ceo', 'pm', 'portfolio manager', 'hedge fund', 'capital', 'management']
-        if any(keyword in subject_line.lower() for keyword in hf_keywords_in_subject):
-            text = f"NEWSLETTER SUBJECT: {subject_line}\n\n{text}"
-    
-    # Step 2: Remove email headers (but preserve subject if already extracted above)
-    email_header_patterns = [
-        r'From:\s*.*?\n',
-        r'To:\s*.*?\n', 
-        r'Sent:\s*.*?\n',
-        r'Subject:\s*.*?\n',  # Remove original subject since we preserved it above
-        r'Date:\s*.*?\n',
-        r'Reply-To:\s*.*?\n',
-        r'Return-Path:\s*.*?\n'
-    ]
-    
-    for pattern in email_header_patterns:
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.MULTILINE)
-    
-    # Step 3: Remove URLs and tracking links
-    url_patterns = [
-        r'https?://[^\s<>"{}|\\^`\[\]]+',  # Standard URLs
-        r'<https?://[^>]+>',  # URLs in angle brackets
-        r'urldefense\.proofpoint\.com[^\s]*',  # Proofpoint URLs
-        r'pardot\.withintelligence\.com[^\s]*',  # Tracking URLs
-        r'jpmorgan\.email\.streetcontxt\.net[^\s]*'  # Email tracking
-    ]
-    
-    for pattern in url_patterns:
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-    
-    # Step 4: Remove email disclaimers and legal text
-    disclaimer_patterns = [
-        r'This section contains materials produced by third parties.*?(?=\n\n|\Z)',
-        r'This message is confidential and subject to terms.*?(?=\n\n|\Z)',
-        r'Important Reminder: JPMorgan Chase will never send emails.*?(?=\n\n|\Z)',
-        r'Although this transmission and any links.*?(?=\n\n|\Z)',
-        r'©.*?All rights reserved.*?(?=\n\n|\Z)',
-        r'Unsubscribe.*?(?=\n\n|\Z)',
-        r'Privacy Policy.*?(?=\n\n|\Z)',
-        r'Update email preferences.*?(?=\n\n|\Z)',
-        r'Not seeing what you expected\?.*?(?=\n\n|\Z)',
-        r'Log in to my account.*?(?=\n\n|\Z)'
-    ]
-    
-    for pattern in disclaimer_patterns:
-        text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
-    
-    # Step 5: Remove HTML artifacts and email formatting
-    html_patterns = [
-        r'<[^>]+>',  # HTML tags
-        r'&[a-zA-Z0-9#]+;',  # HTML entities
-        r'\[cid:[^\]]+\]',  # Email embedded images
-        r'________________________________+',  # Email separators
-        r'\*\s*\|.*?\|\s*\*',  # Email table formatting
-    ]
-    
-    for pattern in html_patterns:
-        text = re.sub(pattern, '', text)
-    
-    # Step 6: Clean up excessive whitespace and formatting
-    # Remove multiple consecutive newlines
-    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
-    
-    # Remove lines with only special characters or whitespace
-    lines = text.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        # Keep line if it has meaningful content (letters and useful words)
-        if re.search(r'[a-zA-Z].*[a-zA-Z]', line) and len(line.strip()) > 5:
-            # Clean up the line
-            line = re.sub(r'\s+', ' ', line.strip())  # Normalize whitespace
-            if line:
-                cleaned_lines.append(line)
-    
-    text = '\n'.join(cleaned_lines)
-    
-    # Step 7: Focus on hedge fund relevant content
-    # Look for common hedge fund keywords and keep paragraphs containing them
-    hf_keywords = [
-        'hedge fund', 'portfolio manager', 'pm', 'cio', 'chief investment officer',
-        'managing director', 'md', 'vice president', 'vp', 'analyst', 'trader',
-        'fund launch', 'fund debut', 'joins', 'moves', 'promotes', 'appoints',
-        'former', 'ex-', 'launches', 'capital management', 'partners', 'advisors',
-        'assets under management', 'aum', 'long/short', 'equity', 'credit',
-        'quantitative', 'macro', 'multi-strategy', 'arbitrage'
-    ]
-    
-    # Performance-related keywords
-    performance_keywords = [
-        'irr', 'internal rate of return', 'sharpe', 'sharpe ratio', 'drawdown', 
-        'maximum drawdown', 'max drawdown', 'alpha', 'beta', 'volatility', 'vol',
-        'return', 'returns', 'performance', 'ytd', 'year to date', 'annualized',
-        'net return', 'gross return', 'benchmark', 'outperformed', 'underperformed',
-        'basis points', 'bps', '%', 'percent', 'up ', 'down ', 'gained', 'lost',
-        'aum', 'assets', 'billion', 'million', 'fund size', 'nav', 'net asset value'
-    ]
-    
-    # Additional keywords for better extraction
-    movement_keywords = [
-        'appoints', 'appointed', 'hiring', 'hired', 'departure', 'departing', 
-        'leaving', 'joining', 'joined', 'moved', 'moving', 'promoted', 'promotion',
-        'named', 'named as', 'becomes', 'became', 'takes over', 'steps down'
-    ]
-    
-    # Combine all keywords
-    all_keywords = hf_keywords + performance_keywords + movement_keywords
-    
-    # Split into paragraphs and keep relevant ones
-    paragraphs = text.split('\n\n')
-    relevant_paragraphs = []
-    
-    for para in paragraphs:
-        para_lower = para.lower()
-        if any(keyword in para_lower for keyword in all_keywords):
-            relevant_paragraphs.append(para)
-        elif len(para) > 100 and ('capital' in para_lower or 'management' in para_lower):
-            # Keep longer paragraphs that might be relevant
-            relevant_paragraphs.append(para)
-    
-    # If we didn't find enough relevant content, keep more of the original
-    if len(relevant_paragraphs) < 3:
-        relevant_paragraphs = paragraphs[:10]  # Keep first 10 paragraphs as fallback
-    
-    cleaned_text = '\n\n'.join(relevant_paragraphs)
-    
-    # Final cleanup
-    cleaned_text = cleaned_text.strip()
-    
-    # Show cleaning results
-    final_size = len(cleaned_text)
-    reduction_pct = ((original_size - final_size) / original_size) * 100 if original_size > 0 else 0
-    
-    st.info(f"📝 **Text Preprocessing Complete**")
-    st.write(f"• **Original size**: {original_size:,} characters")
-    st.write(f"• **Cleaned size**: {final_size:,} characters") 
-    st.write(f"• **Reduction**: {reduction_pct:.1f}% noise removed")
-    st.write(f"• **Relevant paragraphs**: {len(relevant_paragraphs)} found")
-    
-    return cleaned_text
+        # Multi-chunk processing
+        st.info(f"📊 Large content detected ({len(cleaned_text):,} chars). Using multi-chunk processing...")
+        return extract_multi_chunk_safe(cleaned_text, model, chunk_mode)
 
 def find_similar_person(extracted_person):
     """Find existing person that might match the extracted data"""
@@ -1345,7 +1493,7 @@ with st.sidebar:
         api_key = st.text_input("Gemini API Key", type="password", 
                               help="Get from: https://makersuite.google.com/app/apikey")
     
-    # Model Selection - FIXED MODEL OPTIONS
+    # Model Selection
     st.markdown("---")
     st.subheader("🤖 Model Selection")
     
@@ -1353,7 +1501,7 @@ with st.sidebar:
         "Gemini 1.5 Flash (Recommended)": "gemini-1.5-flash",
         "Gemini 1.5 Pro (Advanced)": "gemini-1.5-pro", 
         "Gemini 2.0 Flash": "gemini-2.0-flash-exp",
-        "Gemini 1.5 Flash Latest": "gemini-1.5-flash-latest"  # Fixed: removed invalid model
+        "Gemini 1.5 Flash Latest": "gemini-1.5-flash-latest"
     }
     
     selected_model_name = st.selectbox(
@@ -1365,6 +1513,54 @@ with st.sidebar:
     
     selected_model_id = model_options[selected_model_name]
     
+    # ENHANCED: Processing Configuration
+    st.markdown("---")
+    st.subheader("⚙️ Processing Configuration")
+    
+    # Preprocessing mode selection
+    preprocessing_options = {
+        "🚀 Minimal": "minimal",
+        "⚖️ Balanced (Recommended)": "balanced", 
+        "🔍 Aggressive": "aggressive",
+        "📄 None (Raw Content)": "none"
+    }
+    
+    selected_preprocessing = st.selectbox(
+        "Text Preprocessing:",
+        options=list(preprocessing_options.keys()),
+        index=1,  # Default to balanced
+        help="How much filtering to apply to input text"
+    )
+    
+    preprocessing_mode = preprocessing_options[selected_preprocessing]
+    st.session_state.preprocessing_mode = preprocessing_mode
+    
+    # Chunking strategy selection
+    chunking_options = {
+        "🤖 Auto (Recommended)": "auto",
+        "📄 Single Chunk": "single",
+        "🔹 Small Chunks (10K)": "small",
+        "⚖️ Medium Chunks (20K)": "medium", 
+        "🔷 Large Chunks (35K)": "large",
+        "🔶 XLarge Chunks (50K)": "xlarge"
+    }
+    
+    selected_chunking = st.selectbox(
+        "Chunking Strategy:",
+        options=list(chunking_options.keys()),
+        index=0,  # Default to auto
+        help="How to split large files for processing"
+    )
+    
+    chunk_size_mode = chunking_options[selected_chunking]
+    st.session_state.chunk_size_preference = chunk_size_mode
+    
+    # Show configuration summary
+    with st.expander("📋 Current Configuration", expanded=False):
+        st.write(f"**Model**: {selected_model_name}")
+        st.write(f"**Preprocessing**: {selected_preprocessing}")
+        st.write(f"**Chunking**: {selected_chunking}")
+    
     # Setup model with selected version
     model = None
     if api_key and GENAI_AVAILABLE:
@@ -1373,7 +1569,7 @@ with st.sidebar:
         st.markdown("---")
         st.subheader("📄 Extract from Newsletter")
         
-        # Input method - ENHANCED file handling with NO SIZE LIMITS
+        # ENHANCED: Input method with better file support
         input_method = st.radio("Input method:", ["📝 Text", "📁 File"])
         
         newsletter_text = ""
@@ -1382,51 +1578,42 @@ with st.sidebar:
                                          placeholder="Paste hedge fund newsletter content here...")
         else:
             uploaded_file = st.file_uploader("Upload newsletter:", 
-                                            type=['txt', 'doc', 'docx', 'pdf'], 
-                                            help="✅ No size limits! Large files will be intelligently chunked.")
+                                            type=['txt'], 
+                                            help="✅ Large files supported! Intelligent processing with configurable options.")
             if uploaded_file:
-                try:
-                    # Get file details
-                    file_size = len(uploaded_file.getvalue())
-                    file_size_mb = file_size / (1024 * 1024)
+                success, content, error_msg = load_file_content(uploaded_file)
+                
+                if success:
+                    newsletter_text = content
+                    char_count = len(newsletter_text)
                     
-                    st.info(f"📁 **File uploaded**: {uploaded_file.name} ({file_size_mb:.1f} MB)")
-                    
-                    # Handle different file types
-                    if uploaded_file.type == "text/plain":
-                        # Simple text file
-                        raw_data = uploaded_file.getvalue()
-                        try:
-                            newsletter_text = raw_data.decode('utf-8')
-                        except:
-                            try:
-                                newsletter_text = raw_data.decode('latin-1')
-                            except:
-                                st.error("Could not read file. Try saving as UTF-8 text file.")
+                    # Calculate estimates based on current settings
+                    if chunk_size_mode == "auto":
+                        estimated_chunk_size = min(max(char_count // 50, 15000), 35000)
                     else:
-                        st.warning("Currently only .txt files are supported. Please convert your file to .txt format.")
+                        chunk_sizes = {"single": 25000, "small": 10000, "medium": 20000, "large": 35000, "xlarge": 50000}
+                        estimated_chunk_size = chunk_sizes.get(chunk_size_mode, 20000)
                     
-                    if newsletter_text:
-                        char_count = len(newsletter_text)
-                        estimated_chunks = max(1, char_count // 20000)
-                        estimated_time = estimated_chunks * 2  # 2 minutes per chunk estimate
-                        
-                        st.success(f"✅ **File processed successfully!**")
-                        st.info(f"• **Size**: {char_count:,} characters")
-                        st.info(f"• **Estimated chunks**: {estimated_chunks}")
-                        st.info(f"• **Estimated time**: ~{estimated_time} minutes")
-                        
-                        if estimated_chunks > 10:
-                            st.warning("⚠️ **Large file detected** - Processing will take time but there are no size limits!")
-                            
-                except Exception as e:
-                    st.error(f"Error reading file: {e}")
+                    estimated_chunks = max(1, char_count // estimated_chunk_size)
+                    estimated_time = estimated_chunks * 2  # 2 minutes per chunk estimate
+                    
+                    st.success(f"✅ **File loaded successfully!**")
+                    st.info(f"• **Size**: {char_count:,} characters")
+                    st.info(f"• **Est. chunks**: {estimated_chunks} ({chunk_size_mode} mode)")
+                    st.info(f"• **Est. time**: ~{estimated_time} minutes")
+                    
+                    # Show preview of content
+                    with st.expander("👀 Content Preview", expanded=False):
+                        preview_text = newsletter_text[:1000] + "..." if len(newsletter_text) > 1000 else newsletter_text
+                        st.text_area("Preview:", value=preview_text, height=150, disabled=True)
+                else:
+                    st.error(f"❌ {error_msg}")
         
         # Debug mode toggle
         debug_mode = st.checkbox("🐛 Enable Debug Mode", help="Shows AI raw output before filtering")
         st.session_state.debug_mode = debug_mode
 
-        # Extract button - ENHANCED with no size limits
+        # ENHANCED: Extract button with configuration
         if st.button("🚀 Extract Talent", use_container_width=True):
             if not newsletter_text.strip():
                 st.error("Please provide newsletter content")
@@ -1434,16 +1621,22 @@ with st.sidebar:
                 st.error("Please provide API key")
             else:
                 char_count = len(newsletter_text)
-                st.info(f"📊 **Processing {char_count:,} characters** (No size limits!)")
+                st.info(f"📊 **Processing {char_count:,} characters**")
+                st.info(f"⚙️ **Config**: {selected_preprocessing} preprocessing, {selected_chunking} chunking")
                 
-                # Enhanced processing logic
+                # Enhanced processing logic with configuration
                 try:
-                    st.info("🤖 **Starting extraction with intelligent chunking...**")
+                    st.info("🤖 **Starting enhanced extraction...**")
                     
                     # Show processing status
                     with st.status("Processing newsletter...", expanded=True) as status:
-                        st.write("🔄 Initializing extraction...")
-                        people_extractions, performance_extractions = extract_talent_simple(newsletter_text, model)
+                        st.write("🔄 Initializing extraction with custom settings...")
+                        people_extractions, performance_extractions = extract_talent_enhanced(
+                            newsletter_text, 
+                            model,
+                            preprocessing_mode=preprocessing_mode,
+                            chunk_size_mode=chunk_size_mode
+                        )
                         
                         if people_extractions or performance_extractions:
                             st.write(f"✅ Found {len(people_extractions)} people, {len(performance_extractions)} performance metrics!")
@@ -1520,11 +1713,12 @@ with st.sidebar:
                             st.info("👆 **Review updates in the sidebar before they're applied**")
                         
                     else:
-                        st.warning("⚠️ No people or performance data found. Try a different model or check content.")
+                        st.warning("⚠️ No people or performance data found.")
+                        st.info("**Try**: Different preprocessing mode or check if content contains hedge fund information")
                         
                 except Exception as e:
                     st.error(f"💥 **Extraction failed**: {str(e)}")
-                    st.info("**Try**: Different model or copy/paste instead of file upload")
+                    st.info("**Try**: Different model, preprocessing mode, or copy/paste instead of file upload")
         
         # Show recent extractions
         if st.session_state.all_extractions:
@@ -2071,249 +2265,6 @@ elif st.session_state.current_view == 'performance':
                 total_metrics = len(filtered_metrics)
                 st.metric("Total Metrics", total_metrics)
 
-# --- Footer ---
-st.markdown("---")
-st.markdown("### 👥 Asian Hedge Fund Talent Intelligence Platform")
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.markdown("**🔍 Global Search**")
-with col2:
-    st.markdown("**📊 Performance Tracking**") 
-with col3:
-    st.markdown("**🤝 Professional Networks**")
-with col4:
-    st.markdown("**🚀 Intelligent Chunking**")
-
-# Automatic data saving and backup
-if st.button("📥 Export Database Backup", use_container_width=True):
-    export_data = {
-        "people": st.session_state.people,
-        "firms": st.session_state.firms,
-        "employments": st.session_state.employments,
-        "extractions": st.session_state.all_extractions,
-        "export_timestamp": datetime.now().isoformat(),
-        "total_records": len(st.session_state.people) + len(st.session_state.firms)
-    }
-    
-    export_json = json.dumps(export_data, indent=2, default=str)
-    st.download_button(
-        "💾 Download Complete Database",
-        export_json,
-        f"hedge_fund_db_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-        "application/json",
-        use_container_width=True
-    )
-
-# --- EDIT PERSON MODAL ---
-if st.session_state.show_edit_person_modal and st.session_state.edit_person_data:
-    st.markdown("---")
-    st.subheader(f"✏️ Edit {safe_get(st.session_state.edit_person_data, 'name', 'Person')}")
-    
-    person_data = st.session_state.edit_person_data
-    
-    with st.form("edit_person_form", clear_on_submit=False):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            name = st.text_input("Full Name*", value=safe_get(person_data, 'name'))
-            title = st.text_input("Current Title*", value=safe_get(person_data, 'current_title'))
-            
-            # Dynamic company selection
-            current_company = safe_get(person_data, 'current_company_name')
-            company_options = [""] + [f['name'] for f in st.session_state.firms]
-            company_index = 0
-            if current_company and current_company in company_options:
-                company_index = company_options.index(current_company)
-            company = st.selectbox("Current Company*", options=company_options, index=company_index)
-            
-            # Dynamic location selection
-            location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person")
-        
-        with col2:
-            email = st.text_input("Email", value=safe_get(person_data, 'email'))
-            phone = st.text_input("Phone", value=safe_get(person_data, 'phone'))
-            linkedin = st.text_input("LinkedIn URL", value=safe_get(person_data, 'linkedin_profile_url'))
-            education = st.text_input("Education", value=safe_get(person_data, 'education'))
-        
-        col3, col4 = st.columns(2)
-        with col3:
-            # Dynamic expertise selection
-            expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person")
-            aum = st.text_input("AUM Managed", value=safe_get(person_data, 'aum_managed'))
-        
-        with col4:
-            # Dynamic strategy selection
-            strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person")
-        
-        col_save, col_cancel, col_delete = st.columns(3)
-        
-        with col_save:
-            if st.form_submit_button("💾 Save Changes", use_container_width=True):
-                if name and title and company and location:
-                    # Update person data
-                    person_data.update({
-                        "name": name,
-                        "current_title": title,
-                        "current_company_name": company,
-                        "location": location,
-                        "email": email,
-                        "linkedin_profile_url": linkedin,
-                        "phone": phone,
-                        "education": education,
-                        "expertise": expertise,
-                        "aum_managed": aum,
-                        "strategy": strategy
-                    })
-                    
-                    # Find and update the person in the main list
-                    for i, p in enumerate(st.session_state.people):
-                        if p['id'] == person_data['id']:
-                            st.session_state.people[i] = person_data
-                            break
-                    
-                    save_data()
-                    st.success(f"✅ Updated {name}!")
-                    st.session_state.show_edit_person_modal = False
-                    st.session_state.edit_person_data = None
-                    st.rerun()
-                else:
-                    st.error("Please fill required fields (*)")
-        
-        with col_cancel:
-            if st.form_submit_button("❌ Cancel", use_container_width=True):
-                st.session_state.show_edit_person_modal = False
-                st.session_state.edit_person_data = None
-                st.rerun()
-        
-        with col_delete:
-            if st.form_submit_button("🗑️ Delete Person", use_container_width=True):
-                # Remove person and related data
-                person_id = person_data['id']
-                st.session_state.people = [p for p in st.session_state.people if p['id'] != person_id]
-                st.session_state.employments = [e for e in st.session_state.employments if e['person_id'] != person_id]
-                
-                save_data()
-                st.success("✅ Person deleted!")
-                st.session_state.show_edit_person_modal = False
-                st.session_state.edit_person_data = None
-                st.rerun()
-
-# --- EDIT FIRM MODAL ---
-if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
-    st.markdown("---")
-    st.subheader(f"✏️ Edit {safe_get(st.session_state.edit_firm_data, 'name', 'Firm')}")
-    
-    firm_data = st.session_state.edit_firm_data
-    
-    with st.form("edit_firm_form", clear_on_submit=False):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            firm_name = st.text_input("Firm Name*", value=safe_get(firm_data, 'name'))
-            
-            # Dynamic location selection
-            location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm")
-            
-            headquarters = st.text_input("Headquarters", value=safe_get(firm_data, 'headquarters'))
-            aum = st.text_input("AUM", value=safe_get(firm_data, 'aum'))
-            
-        with col2:
-            # Dynamic strategy selection
-            strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm")
-            
-            founded = st.number_input("Founded", min_value=1900, max_value=2025, 
-                                    value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
-            website = st.text_input("Website", value=safe_get(firm_data, 'website'))
-        
-        description = st.text_area("Description", value=safe_get(firm_data, 'description'))
-        
-        # Performance Metrics Management
-        st.markdown("---")
-        st.subheader("📊 Performance Metrics")
-        
-        existing_metrics = firm_data.get('performance_metrics', [])
-        if existing_metrics:
-            st.write(f"**Current Metrics ({len(existing_metrics)}):**")
-            for i, metric in enumerate(existing_metrics):
-                with st.expander(f"{metric.get('metric_type', 'Unknown')} - {metric.get('period', 'Unknown')}"):
-                    col_metric1, col_metric2 = st.columns(2)
-                    with col_metric1:
-                        st.write(f"**Value**: {metric.get('value', 'N/A')}")
-                        st.write(f"**Period**: {metric.get('period', 'N/A')}")
-                    with col_metric2:
-                        st.write(f"**Date**: {metric.get('date', 'N/A')}")
-                        st.write(f"**Info**: {metric.get('additional_info', 'N/A')}")
-                    
-                    if st.button(f"🗑️ Remove Metric", key=f"remove_metric_{i}"):
-                        existing_metrics.pop(i)
-                        firm_data['performance_metrics'] = existing_metrics
-                        st.rerun()
-        else:
-            st.info("No performance metrics yet. Metrics will be added automatically when extracted from newsletters.")
-        
-        col_save, col_cancel, col_delete = st.columns(3)
-        
-        with col_save:
-            if st.form_submit_button("💾 Save Changes", use_container_width=True):
-                if firm_name and location:
-                    # Update firm data
-                    old_name = safe_get(firm_data, 'name')
-                    firm_data.update({
-                        "name": firm_name,
-                        "location": location,
-                        "headquarters": headquarters,
-                        "aum": aum,
-                        "founded": founded if founded > 1900 else None,
-                        "strategy": strategy,
-                        "website": website,
-                        "description": description
-                    })
-                    
-                    # Find and update the firm in the main list
-                    for i, f in enumerate(st.session_state.firms):
-                        if f['id'] == firm_data['id']:
-                            st.session_state.firms[i] = firm_data
-                            break
-                    
-                    # Update people's company names if firm name changed
-                    if old_name != firm_name:
-                        for person in st.session_state.people:
-                            if safe_get(person, 'current_company_name') == old_name:
-                                person['current_company_name'] = firm_name
-                    
-                    save_data()
-                    st.success(f"✅ Updated {firm_name}!")
-                    st.session_state.show_edit_firm_modal = False
-                    st.session_state.edit_firm_data = None
-                    st.rerun()
-                else:
-                    st.error("Please fill Firm Name and Location")
-        
-        with col_cancel:
-            if st.form_submit_button("❌ Cancel", use_container_width=True):
-                st.session_state.show_edit_firm_modal = False
-                st.session_state.edit_firm_data = None
-                st.rerun()
-        
-        with col_delete:
-            if st.form_submit_button("🗑️ Delete Firm", use_container_width=True):
-                # Remove firm and update related data
-                firm_id = firm_data['id']
-                firm_name = safe_get(firm_data, 'name')
-                
-                st.session_state.firms = [f for f in st.session_state.firms if f['id'] != firm_id]
-                
-                # Update people to remove company reference
-                for person in st.session_state.people:
-                    if safe_get(person, 'current_company_name') == firm_name:
-                        person['current_company_name'] = 'Unknown'
-                
-                save_data()
-                st.success("✅ Firm deleted!")
-                st.session_state.show_edit_firm_modal = False
-                st.session_state.edit_firm_data = None
-                st.rerun()
-
 # --- FIRM DETAILS VIEW ---
 elif st.session_state.current_view == 'firm_details' and st.session_state.selected_firm_id:
     firm = get_firm_by_id(st.session_state.selected_firm_id)
@@ -2592,6 +2543,253 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     else:
         st.info("No shared work history found with other people in the database.")
         st.write("💡 Add more people who worked at the same companies to see connections!")
+
+# --- EDIT PERSON MODAL ---
+if st.session_state.show_edit_person_modal and st.session_state.edit_person_data:
+    st.markdown("---")
+    st.subheader(f"✏️ Edit {safe_get(st.session_state.edit_person_data, 'name', 'Person')}")
+    
+    person_data = st.session_state.edit_person_data
+    
+    with st.form("edit_person_form", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            name = st.text_input("Full Name*", value=safe_get(person_data, 'name'))
+            title = st.text_input("Current Title*", value=safe_get(person_data, 'current_title'))
+            
+            # Dynamic company selection
+            current_company = safe_get(person_data, 'current_company_name')
+            company_options = [""] + [f['name'] for f in st.session_state.firms]
+            company_index = 0
+            if current_company and current_company in company_options:
+                company_index = company_options.index(current_company)
+            company = st.selectbox("Current Company*", options=company_options, index=company_index)
+            
+            # Dynamic location selection
+            location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person")
+        
+        with col2:
+            email = st.text_input("Email", value=safe_get(person_data, 'email'))
+            phone = st.text_input("Phone", value=safe_get(person_data, 'phone'))
+            linkedin = st.text_input("LinkedIn URL", value=safe_get(person_data, 'linkedin_profile_url'))
+            education = st.text_input("Education", value=safe_get(person_data, 'education'))
+        
+        col3, col4 = st.columns(2)
+        with col3:
+            # Dynamic expertise selection
+            expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person")
+            aum = st.text_input("AUM Managed", value=safe_get(person_data, 'aum_managed'))
+        
+        with col4:
+            # Dynamic strategy selection
+            strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person")
+        
+        col_save, col_cancel, col_delete = st.columns(3)
+        
+        with col_save:
+            if st.form_submit_button("💾 Save Changes", use_container_width=True):
+                if name and title and company and location:
+                    # Update person data
+                    person_data.update({
+                        "name": name,
+                        "current_title": title,
+                        "current_company_name": company,
+                        "location": location,
+                        "email": email,
+                        "linkedin_profile_url": linkedin,
+                        "phone": phone,
+                        "education": education,
+                        "expertise": expertise,
+                        "aum_managed": aum,
+                        "strategy": strategy
+                    })
+                    
+                    # Find and update the person in the main list
+                    for i, p in enumerate(st.session_state.people):
+                        if p['id'] == person_data['id']:
+                            st.session_state.people[i] = person_data
+                            break
+                    
+                    save_data()
+                    st.success(f"✅ Updated {name}!")
+                    st.session_state.show_edit_person_modal = False
+                    st.session_state.edit_person_data = None
+                    st.rerun()
+                else:
+                    st.error("Please fill required fields (*)")
+        
+        with col_cancel:
+            if st.form_submit_button("❌ Cancel", use_container_width=True):
+                st.session_state.show_edit_person_modal = False
+                st.session_state.edit_person_data = None
+                st.rerun()
+        
+        with col_delete:
+            if st.form_submit_button("🗑️ Delete Person", use_container_width=True):
+                # Remove person and related data
+                person_id = person_data['id']
+                st.session_state.people = [p for p in st.session_state.people if p['id'] != person_id]
+                st.session_state.employments = [e for e in st.session_state.employments if e['person_id'] != person_id]
+                
+                save_data()
+                st.success("✅ Person deleted!")
+                st.session_state.show_edit_person_modal = False
+                st.session_state.edit_person_data = None
+                st.rerun()
+
+# --- EDIT FIRM MODAL ---
+if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
+    st.markdown("---")
+    st.subheader(f"✏️ Edit {safe_get(st.session_state.edit_firm_data, 'name', 'Firm')}")
+    
+    firm_data = st.session_state.edit_firm_data
+    
+    with st.form("edit_firm_form", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            firm_name = st.text_input("Firm Name*", value=safe_get(firm_data, 'name'))
+            
+            # Dynamic location selection
+            location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm")
+            
+            headquarters = st.text_input("Headquarters", value=safe_get(firm_data, 'headquarters'))
+            aum = st.text_input("AUM", value=safe_get(firm_data, 'aum'))
+            
+        with col2:
+            # Dynamic strategy selection
+            strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm")
+            
+            founded = st.number_input("Founded", min_value=1900, max_value=2025, 
+                                    value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
+            website = st.text_input("Website", value=safe_get(firm_data, 'website'))
+        
+        description = st.text_area("Description", value=safe_get(firm_data, 'description'))
+        
+        # Performance Metrics Management
+        st.markdown("---")
+        st.subheader("📊 Performance Metrics")
+        
+        existing_metrics = firm_data.get('performance_metrics', [])
+        if existing_metrics:
+            st.write(f"**Current Metrics ({len(existing_metrics)}):**")
+            for i, metric in enumerate(existing_metrics):
+                with st.expander(f"{metric.get('metric_type', 'Unknown')} - {metric.get('period', 'Unknown')}"):
+                    col_metric1, col_metric2 = st.columns(2)
+                    with col_metric1:
+                        st.write(f"**Value**: {metric.get('value', 'N/A')}")
+                        st.write(f"**Period**: {metric.get('period', 'N/A')}")
+                    with col_metric2:
+                        st.write(f"**Date**: {metric.get('date', 'N/A')}")
+                        st.write(f"**Info**: {metric.get('additional_info', 'N/A')}")
+                    
+                    if st.button(f"🗑️ Remove Metric", key=f"remove_metric_{i}"):
+                        existing_metrics.pop(i)
+                        firm_data['performance_metrics'] = existing_metrics
+                        st.rerun()
+        else:
+            st.info("No performance metrics yet. Metrics will be added automatically when extracted from newsletters.")
+        
+        col_save, col_cancel, col_delete = st.columns(3)
+        
+        with col_save:
+            if st.form_submit_button("💾 Save Changes", use_container_width=True):
+                if firm_name and location:
+                    # Update firm data
+                    old_name = safe_get(firm_data, 'name')
+                    firm_data.update({
+                        "name": firm_name,
+                        "location": location,
+                        "headquarters": headquarters,
+                        "aum": aum,
+                        "founded": founded if founded > 1900 else None,
+                        "strategy": strategy,
+                        "website": website,
+                        "description": description
+                    })
+                    
+                    # Find and update the firm in the main list
+                    for i, f in enumerate(st.session_state.firms):
+                        if f['id'] == firm_data['id']:
+                            st.session_state.firms[i] = firm_data
+                            break
+                    
+                    # Update people's company names if firm name changed
+                    if old_name != firm_name:
+                        for person in st.session_state.people:
+                            if safe_get(person, 'current_company_name') == old_name:
+                                person['current_company_name'] = firm_name
+                    
+                    save_data()
+                    st.success(f"✅ Updated {firm_name}!")
+                    st.session_state.show_edit_firm_modal = False
+                    st.session_state.edit_firm_data = None
+                    st.rerun()
+                else:
+                    st.error("Please fill Firm Name and Location")
+        
+        with col_cancel:
+            if st.form_submit_button("❌ Cancel", use_container_width=True):
+                st.session_state.show_edit_firm_modal = False
+                st.session_state.edit_firm_data = None
+                st.rerun()
+        
+        with col_delete:
+            if st.form_submit_button("🗑️ Delete Firm", use_container_width=True):
+                # Remove firm and update related data
+                firm_id = firm_data['id']
+                firm_name = safe_get(firm_data, 'name')
+                
+                st.session_state.firms = [f for f in st.session_state.firms if f['id'] != firm_id]
+                
+                # Update people to remove company reference
+                for person in st.session_state.people:
+                    if safe_get(person, 'current_company_name') == firm_name:
+                        person['current_company_name'] = 'Unknown'
+                
+                save_data()
+                st.success("✅ Firm deleted!")
+                st.session_state.show_edit_firm_modal = False
+                st.session_state.edit_firm_data = None
+                st.rerun()
+
+# --- Footer ---
+st.markdown("---")
+st.markdown("### 👥 Asian Hedge Fund Talent Intelligence Platform")
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.markdown("**🔍 Global Search**")
+with col2:
+    st.markdown("**📊 Performance Tracking**") 
+with col3:
+    st.markdown("**🤝 Professional Networks**")
+with col4:
+    st.markdown("**🚀 Enhanced Large File Support**")
+
+# Automatic data saving and backup
+if st.button("📥 Export Database Backup", use_container_width=True):
+    export_data = {
+        "people": st.session_state.people,
+        "firms": st.session_state.firms,
+        "employments": st.session_state.employments,
+        "extractions": st.session_state.all_extractions,
+        "export_timestamp": datetime.now().isoformat(),
+        "total_records": len(st.session_state.people) + len(st.session_state.firms),
+        "processing_config": {
+            "preprocessing_mode": st.session_state.preprocessing_mode,
+            "chunk_size_preference": st.session_state.chunk_size_preference
+        }
+    }
+    
+    export_json = json.dumps(export_data, indent=2, default=str)
+    st.download_button(
+        "💾 Download Complete Database",
+        export_json,
+        f"hedge_fund_db_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+        "application/json",
+        use_container_width=True
+    )
 
 # Force save data periodically
 current_time = datetime.now()
