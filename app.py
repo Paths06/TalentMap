@@ -501,132 +501,237 @@ def setup_gemini(api_key, model_id="gemini-1.5-flash"):
 
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def create_cached_context():
-    """Create cached context for hedge fund extraction to reduce token usage"""
+    """Create cached context for hedge fund extraction with optimized prompts"""
     return {
-        "system_instructions": """You are an expert hedge fund intelligence analyst specializing in extracting people movements and performance metrics from financial newsletters and industry reports.
+        "system_instructions": """You are an expert financial analyst specializing in the hedge fund industry. Your task is to meticulously analyze the following text and extract key intelligence about hedge funds, investment banks, asset managers, private equity firms, and related financial institutions.
 
-EXTRACTION RULES:
-1. Extract ALL people mentioned in professional contexts (hires, promotions, departures, launches)
-2. Extract ALL performance metrics (returns, IRR, Sharpe, drawdown, AUM, alpha, beta, volatility)
-3. Be precise with numbers - extract exact values without interpretation
-4. Include time periods and benchmarks when mentioned
-5. Focus on hedge funds, asset managers, and investment professionals
+CORE EXTRACTION TARGETS:
+1. PEOPLE: All individuals in professional contexts (current employees, new hires, departures, promotions, launches, appointments)
+2. FIRMS: Hedge funds, investment banks, asset managers, family offices, private equity, sovereign wealth funds
+3. PERFORMANCE DATA: Returns, risk metrics, AUM figures, fund performance, benchmarks
+4. MOVEMENTS: Job changes, fund launches, firm transitions, strategic shifts
 
-PEOPLE CATEGORIES:
-- New hires and departures
-- Promotions and role changes  
-- Fund launches and closures
-- Leadership appointments
+SPECIFIC FOCUS AREAS:
+- Hedge fund managers and portfolio managers
+- Investment bank professionals (VP, MD, Managing Director levels)
+- Asset management executives (CIO, CEO, Head of Trading, etc.)
+- Quantitative analysts and researchers
+- Fund launches, closures, and strategic changes
+- Performance attribution and risk metrics
+- Assets under management (AUM) changes
+- Geographic expansion and office openings
 
-PERFORMANCE METRICS:
-- Returns (YTD, annual, quarterly, inception-to-date)
-- Risk metrics (Sharpe ratio, maximum drawdown, volatility)
-- Alpha and beta coefficients
-- Assets under management (AUM)
-- Benchmark comparisons and outperformance""",
+GEOGRAPHIC INTELLIGENCE:
+- Identify primary geographic focus (Asia-Pacific, North America, Europe, etc.)
+- Extract specific office locations and expansion plans
+- Note regulatory environments and market access
+
+PERFORMANCE METRICS PRIORITY:
+- Net returns (YTD, annual, multi-year)
+- Risk-adjusted returns (Sharpe ratio, information ratio)
+- Maximum drawdown and volatility measures
+- Alpha generation and beta coefficients
+- Assets under management (AUM) and flows
+- Benchmark comparisons and relative performance
+
+FIRM CATEGORIZATION:
+- Hedge funds (long/short equity, macro, credit, quantitative, etc.)
+- Investment banks (bulge bracket, boutique, regional)
+- Asset managers (traditional, alternative, specialized)
+- Family offices (single-family, multi-family)
+- Private equity and venture capital
+- Sovereign wealth funds and pension funds""",
         
-        "example_input": """Goldman Sachs veteran John Smith joins Citadel Asia as Managing Director in Hong Kong. 
-Former JPMorgan portfolio manager Lisa Chen launches her own hedge fund, Dragon Capital.
-Engineers Gate topped $4 billion in assets and is up 12% this year. The fund's Sharpe ratio improved to 1.8.
-Millennium's flagship fund returned 15.2% net in Q2 with maximum drawdown of 2.1%.""",
+        "example_input": """Goldman Sachs veteran John Smith joins Citadel Asia as Managing Director in Hong Kong, bringing 15 years of equity trading experience. Former JPMorgan portfolio manager Lisa Chen launches Dragon Capital Management, a $200M long/short equity fund focused on Asian markets. 
+
+Engineers Gate's systematic trading fund topped $4.2 billion in assets and delivered 12.3% net returns year-to-date, with a Sharpe ratio of 1.8 compared to 1.2 last year. The fund's maximum drawdown remained below 2.5% during Q3 volatility.
+
+Millennium Management's flagship fund returned 15.2% net in Q2 with maximum drawdown of 2.1%, outperforming the MSCI World Index by 340 basis points. The firm is expanding its London office and hired three senior portfolio managers from Renaissance Technologies.""",
         
         "example_output": """{
+  "geographic_focus": "Global with Asia-Pacific and European expansion",
   "people": [
     {
       "name": "John Smith",
-      "company": "Citadel Asia", 
-      "title": "Managing Director",
+      "current_company": "Citadel Asia",
+      "current_title": "Managing Director",
+      "previous_company": "Goldman Sachs",
       "movement_type": "hire",
-      "location": "Hong Kong"
+      "location": "Hong Kong",
+      "experience_years": "15",
+      "expertise": "Equity Trading",
+      "seniority_level": "senior"
     },
     {
       "name": "Lisa Chen",
-      "company": "Dragon Capital",
-      "title": "Founder", 
+      "current_company": "Dragon Capital Management",
+      "current_title": "Founder/Portfolio Manager", 
+      "previous_company": "JPMorgan",
       "movement_type": "launch",
-      "location": "Unknown"
+      "location": "Unknown",
+      "expertise": "Long/Short Equity",
+      "seniority_level": "senior"
+    }
+  ],
+  "firms": [
+    {
+      "name": "Dragon Capital Management",
+      "firm_type": "Hedge Fund",
+      "strategy": "Long/Short Equity",
+      "geographic_focus": "Asian Markets",
+      "aum": "200000000",
+      "status": "newly_launched"
+    },
+    {
+      "name": "Citadel Asia",
+      "firm_type": "Hedge Fund",
+      "location": "Hong Kong",
+      "status": "expanding"
+    },
+    {
+      "name": "Engineers Gate",
+      "firm_type": "Hedge Fund", 
+      "strategy": "Systematic Trading",
+      "status": "operating"
+    },
+    {
+      "name": "Millennium Management",
+      "firm_type": "Hedge Fund",
+      "status": "expanding",
+      "expansion_location": "London"
     }
   ],
   "performance": [
     {
       "fund_name": "Engineers Gate",
       "metric_type": "aum",
-      "value": "4000000000",
+      "value": "4200000000",
       "period": "Current",
       "date": "2025",
-      "additional_info": "USD"
+      "additional_info": "USD, systematic trading fund"
     },
     {
-      "fund_name": "Engineers Gate", 
+      "fund_name": "Engineers Gate",
       "metric_type": "return",
-      "value": "12",
-      "period": "YTD",
+      "value": "12.3",
+      "period": "YTD", 
       "date": "2025",
-      "additional_info": "percent"
+      "additional_info": "net return, percent"
     },
     {
       "fund_name": "Engineers Gate",
       "metric_type": "sharpe",
-      "value": "1.8", 
+      "value": "1.8",
       "period": "Current",
-      "date": "2025",
-      "additional_info": "improved from 1.2"
+      "date": "2025", 
+      "additional_info": "improved from 1.2 previous year"
     },
     {
-      "fund_name": "Millennium",
+      "fund_name": "Engineers Gate",
+      "metric_type": "drawdown",
+      "value": "2.5",
+      "period": "Q3",
+      "date": "2025",
+      "additional_info": "maximum drawdown below, percent"
+    },
+    {
+      "fund_name": "Millennium Management",
       "metric_type": "return",
-      "value": "15.2",
+      "value": "15.2", 
       "period": "Q2",
       "date": "2025",
-      "additional_info": "net return, flagship fund"
+      "additional_info": "net return, flagship fund, percent"
     },
     {
-      "fund_name": "Millennium",
-      "metric_type": "drawdown", 
+      "fund_name": "Millennium Management",
+      "metric_type": "drawdown",
       "value": "2.1",
-      "period": "Q2",
+      "period": "Q2", 
       "date": "2025",
       "additional_info": "maximum drawdown, percent"
+    },
+    {
+      "fund_name": "Millennium Management",
+      "metric_type": "alpha",
+      "value": "340",
+      "period": "Q2",
+      "date": "2025",
+      "benchmark": "MSCI World Index",
+      "additional_info": "outperformance in basis points"
     }
   ]
 }""",
         
         "output_format": """{
+  "geographic_focus": "Primary geographic region or 'Global' if multiple regions",
   "people": [
     {
-      "name": "Full Name",
-      "company": "Company Name", 
-      "title": "Job Title",
-      "movement_type": "hire|promotion|launch|departure",
-      "location": "City/Country"
+      "name": "Full Legal Name",
+      "current_company": "Current Firm Name",
+      "current_title": "Exact Job Title",
+      "previous_company": "Former Firm (if mentioned)",
+      "movement_type": "hire|promotion|launch|departure|appointment",
+      "location": "City, Country or Region",
+      "experience_years": "Number of years experience (if mentioned)",
+      "expertise": "Area of specialization",
+      "seniority_level": "junior|mid|senior|c_suite"
+    }
+  ],
+  "firms": [
+    {
+      "name": "Exact Firm Name",
+      "firm_type": "Hedge Fund|Investment Bank|Asset Manager|Private Equity|Family Office",
+      "strategy": "Investment strategy or business line",
+      "geographic_focus": "Geographic focus if mentioned",
+      "aum": "Assets under management (numeric only)",
+      "status": "launching|expanding|closing|operating|acquired"
     }
   ],
   "performance": [
     {
-      "fund_name": "Fund Name",
-      "metric_type": "return|irr|sharpe|drawdown|alpha|beta|volatility|aum",
-      "value": "numeric_value_only",
-      "period": "YTD|Q1|Q2|Q3|Q4|1Y|3Y|5Y|ITD|Current",
-      "date": "YYYY or YYYY-MM-DD",
-      "benchmark": "comparison_benchmark_if_mentioned", 
-      "additional_info": "units_context_details"
+      "fund_name": "Exact Fund/Firm Name",
+      "metric_type": "return|irr|sharpe|information_ratio|drawdown|alpha|beta|volatility|aum|tracking_error|correlation",
+      "value": "numeric_value_only_no_units",
+      "period": "YTD|Q1|Q2|Q3|Q4|1Y|3Y|5Y|ITD|Monthly|Current",
+      "date": "YYYY or YYYY-MM",
+      "benchmark": "Benchmark name if comparison mentioned",
+      "additional_info": "Units, context, fund type, net/gross specification"
     }
   ]
 }"""
     }
 
 def build_extraction_prompt_with_cache(newsletter_text, cached_context):
-    """Build extraction prompt using cached context to minimize token usage"""
+    """Build enhanced extraction prompt using cached context for superior hedge fund intelligence"""
     
     prompt = f"""
 {cached_context['system_instructions']}
 
-CRITICAL EXTRACTION RULES:
-1. NEVER use placeholder text like "Full Name" or "Company Name" 
-2. If you cannot find a person's actual name, skip that entry entirely
-3. Extract ONLY real, specific names and companies mentioned in the text
-4. Be extra careful with abbreviated titles (CIO, PM, MD, etc.) - find the full context
-5. Look for phrases like "appoints", "hires", "joins", "moves to", "promoted to"
+CRITICAL EXTRACTION PROTOCOLS:
+1. ZERO TOLERANCE for placeholder text - NEVER use "Full Name", "Company Name", "Exact Firm Name"
+2. EXTRACT ONLY verified, specific names and firms explicitly mentioned in the text
+3. PRIORITIZE senior-level movements (MD, VP, CIO, CEO, Portfolio Manager, Head of Trading)
+4. CAPTURE numerical precision - exact percentages, dollar amounts, basis points
+5. IDENTIFY industry context - hedge fund vs investment bank vs asset manager
+6. DETERMINE seniority level from titles and context clues
+7. EXTRACT geographic intelligence and market focus areas
+
+ENHANCED TARGETING:
+- Look for fund launches with specific AUM figures
+- Identify performance attribution with benchmarks  
+- Capture risk metrics in institutional context
+- Track senior talent movements between major institutions
+- Note expansion strategies and office openings
+- Extract regulatory and compliance appointments
+
+PROFESSIONAL TITLE MAPPING:
+- Managing Director (MD) = senior level
+- Vice President (VP) = senior level  
+- Portfolio Manager (PM) = senior level
+- Chief Investment Officer (CIO) = c_suite level
+- Head of [Department] = senior level
+- Analyst = junior/mid level
+- Associate = mid level
 
 EXAMPLE INPUT:
 {cached_context['example_input']}
@@ -637,12 +742,12 @@ EXAMPLE OUTPUT:
 REQUIRED OUTPUT FORMAT:
 {cached_context['output_format']}
 
-NOW EXTRACT FROM THIS NEWSLETTER:
+TARGET NEWSLETTER FOR ANALYSIS:
 {newsletter_text}
 
-IMPORTANT: Only include entries where you have found ACTUAL names and companies. If you cannot find a specific person's name, do NOT create an entry with placeholder text. Return empty arrays if no specific information is found.
+EXTRACTION MANDATE: Extract ONLY concrete, verifiable information with complete names and specific institutions. If any field cannot be determined with certainty, omit that entry entirely. Focus on actionable intelligence for hedge fund industry tracking.
 
-Return ONLY the JSON output with both people and performance arrays populated."""
+Return ONLY the JSON output with geographic_focus, people, firms, and performance arrays populated with verified data."""
     
     return prompt
 
@@ -889,7 +994,7 @@ def load_file_content(uploaded_file):
         return False, "", f"Error reading file: {str(e)}"
 
 def extract_single_chunk_safe(text, model):
-    """Safe single chunk extraction with cached context and better validation"""
+    """Enhanced single chunk extraction with improved validation for hedge fund intelligence"""
     try:
         # Use cached context to build efficient prompt
         cached_context = create_cached_context()
@@ -916,38 +1021,68 @@ def extract_single_chunk_safe(text, model):
         result = json.loads(response.text[json_start:json_end])
         people = result.get('people', [])
         performance = result.get('performance', [])
+        firms = result.get('firms', [])
+        geographic_focus = result.get('geographic_focus', '')
         
-        # Enhanced validation to filter out placeholder text and incomplete extractions
+        # Enhanced validation for hedge fund intelligence
         valid_people = []
         valid_performance = []
         
+        # Validate people with enhanced structure
         for p in people:
             name = p.get('name', '').strip()
-            company = p.get('company', '').strip()
+            current_company = p.get('current_company', '').strip()
             
-            # Skip entries with placeholder text or incomplete data
-            if (name and company and 
-                name.lower() not in ['full name', 'name', 'person name', 'unknown'] and
-                company.lower() not in ['company', 'company name', 'firm name', 'unknown'] and
-                len(name) > 2 and len(company) > 2):
-                valid_people.append(p)
+            # Enhanced validation criteria
+            if (name and current_company and 
+                name.lower() not in ['full name', 'full legal name', 'name', 'person name', 'unknown'] and
+                current_company.lower() not in ['company', 'current firm name', 'company name', 'firm name', 'unknown'] and
+                len(name) > 2 and len(current_company) > 2 and
+                not any(placeholder in name.lower() for placeholder in ['exact', 'sample', 'example']) and
+                not any(placeholder in current_company.lower() for placeholder in ['exact', 'sample', 'example'])):
+                
+                # Map new structure to legacy structure for compatibility
+                legacy_person = {
+                    'name': name,
+                    'company': current_company,  # Map current_company to company for compatibility
+                    'title': p.get('current_title', 'Unknown'),
+                    'movement_type': p.get('movement_type', 'Unknown'),
+                    'location': p.get('location', 'Unknown'),
+                    # Preserve enhanced fields
+                    'current_company': current_company,
+                    'current_title': p.get('current_title', 'Unknown'),
+                    'previous_company': p.get('previous_company', 'Unknown'),
+                    'experience_years': p.get('experience_years', 'Unknown'),
+                    'expertise': p.get('expertise', 'Unknown'),
+                    'seniority_level': p.get('seniority_level', 'Unknown')
+                }
+                valid_people.append(legacy_person)
         
+        # Validate performance metrics with enhanced validation
         for p in performance:
             fund_name = p.get('fund_name', '').strip()
             metric_type = p.get('metric_type', '').strip()
             value = p.get('value', '').strip()
             
-            # Skip entries with placeholder text or incomplete data
+            # Enhanced validation for performance data
             if (fund_name and metric_type and value and
-                fund_name.lower() not in ['fund name', 'fund', 'unknown'] and
+                fund_name.lower() not in ['fund name', 'exact fund name', 'fund', 'unknown'] and
                 metric_type.lower() not in ['metric', 'metric type', 'unknown'] and
-                value.lower() not in ['value', 'unknown', 'n/a']):
+                value.lower() not in ['value', 'numeric value only', 'unknown', 'n/a'] and
+                not any(placeholder in fund_name.lower() for placeholder in ['exact', 'sample', 'example'])):
                 valid_performance.append(p)
+        
+        # Store additional extracted data if debug mode is enabled
+        if hasattr(st.session_state, 'debug_mode') and st.session_state.debug_mode:
+            if geographic_focus:
+                st.info(f"🌍 Geographic Focus: {geographic_focus}")
+            if firms:
+                st.info(f"🏢 Identified {len(firms)} firms with enhanced categorization")
         
         return valid_people, valid_performance
         
     except Exception as e:
-        st.warning(f"Single chunk failed: {str(e)[:100]}")
+        st.warning(f"Enhanced extraction failed: {str(e)[:100]}")
         return [], []
 
 # ENHANCED: Configurable chunking with better size options
@@ -1170,7 +1305,8 @@ def extract_talent_enhanced(text, model, preprocessing_mode="balanced", chunk_si
         return extract_multi_chunk_safe(cleaned_text, model, chunk_mode)
 
 def find_similar_person(extracted_person):
-    """Find existing person that might match the extracted data"""
+    """Enhanced person matching with support for new extraction structure"""
+    # Handle both legacy and new extraction formats
     extracted_name = safe_get(extracted_person, 'name', '').lower().strip()
     if not extracted_name:
         return None
@@ -1200,8 +1336,139 @@ def find_similar_person(extracted_person):
     
     return None
 
+def detect_updates_needed(existing_person, extracted_person):
+    """Enhanced update detection with support for new extraction structure"""
+    updates = {}
+    
+    # Handle both legacy (company) and new (current_company) field names
+    existing_company = safe_get(existing_person, 'current_company_name')
+    extracted_company = (safe_get(extracted_person, 'current_company') or 
+                         safe_get(extracted_person, 'company'))
+    
+    if extracted_company and extracted_company != 'Unknown' and existing_company != extracted_company:
+        updates['company'] = {
+            'field': 'current_company_name',
+            'current': existing_company,
+            'proposed': extracted_company,
+            'reason': 'Company change detected'
+        }
+    
+    # Handle both legacy (title) and new (current_title) field names  
+    existing_title = safe_get(existing_person, 'current_title')
+    extracted_title = (safe_get(extracted_person, 'current_title') or 
+                      safe_get(extracted_person, 'title'))
+    
+    if extracted_title and extracted_title != 'Unknown' and existing_title != extracted_title:
+        updates['title'] = {
+            'field': 'current_title',
+            'current': existing_title,
+            'proposed': extracted_title,
+            'reason': 'Title change detected'
+        }
+    
+    # Check location change
+    existing_location = safe_get(existing_person, 'location')
+    extracted_location = safe_get(extracted_person, 'location')
+    if extracted_location and extracted_location != 'Unknown' and existing_location != extracted_location:
+        updates['location'] = {
+            'field': 'location',
+            'current': existing_location,
+            'proposed': extracted_location,
+            'reason': 'Location change detected'
+        }
+    
+    # Check expertise updates (new field)
+    existing_expertise = safe_get(existing_person, 'expertise')
+    extracted_expertise = safe_get(extracted_person, 'expertise')
+    if (extracted_expertise and extracted_expertise != 'Unknown' and 
+        existing_expertise != extracted_expertise and
+        (not existing_expertise or existing_expertise == 'Unknown')):
+        updates['expertise'] = {
+            'field': 'expertise',
+            'current': existing_expertise,
+            'proposed': extracted_expertise,
+            'reason': 'Expertise information detected'
+        }
+    
+    return updates
+
+def save_approved_extractions(approved_people, approved_performance):
+    """Enhanced save function with support for new extraction structure"""
+    # Process people extractions and detect updates
+    if approved_people:
+        new_people, pending_updates = process_extractions_with_update_detection(approved_people)
+        
+        # Add new people to database with enhanced mapping
+        for person_data in new_people:
+            new_person_id = str(uuid.uuid4())
+            
+            # Map both legacy and new field structures
+            company_name = (person_data.get('current_company') or 
+                           person_data.get('company', 'Unknown'))
+            title = (person_data.get('current_title') or 
+                    person_data.get('title', 'Unknown'))
+            
+            st.session_state.people.append({
+                "id": new_person_id,
+                "name": person_data.get('name', 'Unknown'),
+                "current_title": title,
+                "current_company_name": company_name,
+                "location": person_data.get('location', 'Unknown'),
+                "email": "",
+                "linkedin_profile_url": "",
+                "phone": "",
+                "education": "",
+                "expertise": person_data.get('expertise', ''),
+                "aum_managed": "",
+                "strategy": person_data.get('expertise', 'Unknown')  # Use expertise as fallback strategy
+            })
+            
+            # Add firm if doesn't exist (with enhanced categorization)
+            if not get_firm_by_name(company_name):
+                # Determine firm type from extracted data
+                firm_type = person_data.get('firm_type', 'Hedge Fund')
+                strategy = person_data.get('strategy', 'Unknown')
+                
+                st.session_state.firms.append({
+                    "id": str(uuid.uuid4()),
+                    "name": company_name,
+                    "location": person_data.get('location', 'Unknown'),
+                    "headquarters": "Unknown",
+                    "aum": "Unknown",
+                    "founded": None,
+                    "strategy": strategy,
+                    "website": "",
+                    "description": f"{firm_type} - extracted from newsletter intelligence",
+                    "performance_metrics": []
+                })
+            
+            # Add employment record with enhanced data
+            st.session_state.employments.append({
+                "id": str(uuid.uuid4()),
+                "person_id": new_person_id,
+                "company_name": company_name,
+                "title": title,
+                "start_date": date.today(),
+                "end_date": None,
+                "location": person_data.get('location', 'Unknown'),
+                "strategy": person_data.get('expertise', 'Unknown')
+            })
+        
+        # Add pending updates
+        if pending_updates:
+            st.session_state.pending_updates.extend(pending_updates)
+    
+    # Map performance metrics to firms (unchanged)
+    if approved_performance:
+        map_performance_to_firms(approved_performance)
+    
+    # Save everything
+    save_data()
+    
+    return len(approved_people), len(approved_performance)
+
 def map_performance_to_firms(performance_metrics):
-    """Map performance metrics to firms where possible"""
+    """Enhanced performance metric mapping with better firm matching"""
     for metric in performance_metrics:
         fund_name = safe_get(metric, 'fund_name').lower()
         
@@ -1236,7 +1503,7 @@ def map_performance_to_firms(performance_metrics):
     return performance_metrics
 
 def process_extractions_with_update_detection(extractions):
-    """Process extractions and detect potential updates for existing people"""
+    """Enhanced extraction processing with support for new structure"""
     new_people = []
     pending_updates = []
     
@@ -1265,45 +1532,6 @@ def process_extractions_with_update_detection(extractions):
             new_people.append(extracted)
     
     return new_people, pending_updates
-
-def detect_updates_needed(existing_person, extracted_person):
-    """Compare existing person data with extracted data to find potential updates"""
-    updates = {}
-    
-    # Check company change
-    existing_company = safe_get(existing_person, 'current_company_name')
-    extracted_company = safe_get(extracted_person, 'company')
-    if extracted_company != 'Unknown' and existing_company != extracted_company:
-        updates['company'] = {
-            'field': 'current_company_name',
-            'current': existing_company,
-            'proposed': extracted_company,
-            'reason': 'Company change detected'
-        }
-    
-    # Check title change
-    existing_title = safe_get(existing_person, 'current_title')
-    extracted_title = safe_get(extracted_person, 'title')
-    if extracted_title != 'Unknown' and existing_title != extracted_title:
-        updates['title'] = {
-            'field': 'current_title',
-            'current': existing_title,
-            'proposed': extracted_title,
-            'reason': 'Title change detected'
-        }
-    
-    # Check location change
-    existing_location = safe_get(existing_person, 'location')
-    extracted_location = safe_get(extracted_person, 'location')
-    if extracted_location != 'Unknown' and existing_location != extracted_location:
-        updates['location'] = {
-            'field': 'location',
-            'current': existing_location,
-            'proposed': extracted_location,
-            'reason': 'Location change detected'
-        }
-    
-    return updates
 
 def get_person_performance_metrics(person_id):
     """Get performance metrics related to a specific person"""
@@ -1648,8 +1876,18 @@ def display_review_interface():
                     
                     with col1:
                         status_icon = "✅" if is_approved else "⏳"
-                        st.markdown(f"{status_icon} **{person.get('name', 'Unknown Name')}**")
-                        st.caption(f"{person.get('title', 'Unknown Title')} at {person.get('company', 'Unknown Company')}")
+                        name = person.get('name', 'Unknown Name')
+                        st.markdown(f"{status_icon} **{name}**")
+                        
+                        # Enhanced display with new fields
+                        current_company = person.get('current_company') or person.get('company', 'Unknown Company')
+                        current_title = person.get('current_title') or person.get('title', 'Unknown Title')
+                        st.caption(f"{current_title} at {current_company}")
+                        
+                        # Show previous company if available
+                        previous_company = person.get('previous_company')
+                        if previous_company and previous_company != 'Unknown':
+                            st.caption(f"📋 Previously: {previous_company}")
                         
                         # Check for existing person
                         existing = find_similar_person(person)
@@ -1657,9 +1895,24 @@ def display_review_interface():
                             st.warning(f"⚠️ Similar person exists: {existing.get('name')}")
                     
                     with col2:
-                        st.write(f"📍 {person.get('location', 'Unknown')}")
+                        location = person.get('location', 'Unknown')
+                        st.write(f"📍 {location}")
+                        
                         movement_type = person.get('movement_type', 'Unknown')
                         st.caption(f"🔄 Movement: {movement_type}")
+                        
+                        # Show enhanced fields
+                        expertise = person.get('expertise')
+                        if expertise and expertise != 'Unknown':
+                            st.caption(f"🏆 Expertise: {expertise}")
+                        
+                        seniority_level = person.get('seniority_level')
+                        if seniority_level and seniority_level != 'Unknown':
+                            st.caption(f"📊 Level: {seniority_level}")
+                        
+                        experience_years = person.get('experience_years')
+                        if experience_years and experience_years != 'Unknown':
+                            st.caption(f"⏱️ Experience: {experience_years} years")
                     
                     with col3:
                         if is_approved:
@@ -2312,16 +2565,40 @@ with st.sidebar:
                             if new_people:
                                 with st.expander(f"📋 {len(new_people)} New People Found"):
                                     for person in new_people[:10]:  # Show first 10
-                                        st.write(f"• **{person['name']}** → {person['company']}")
+                                        # Handle both legacy and new field structures
+                                        name = person.get('name', 'Unknown')
+                                        company = person.get('current_company') or person.get('company', 'Unknown')
+                                        title = person.get('current_title') or person.get('title', 'Unknown')
+                                        seniority = person.get('seniority_level', '')
+                                        previous_company = person.get('previous_company', '')
+                                        
+                                        display_text = f"• **{name}** → {company}"
+                                        if title != 'Unknown':
+                                            display_text += f" ({title})"
+                                        if seniority and seniority != 'Unknown':
+                                            display_text += f" [{seniority}]"
+                                        if previous_company and previous_company != 'Unknown':
+                                            display_text += f" (from {previous_company})"
+                                        
+                                        st.write(display_text)
                                     if len(new_people) > 10:
                                         st.write(f"... and {len(new_people) - 10} more")
                             
                             if performance_extractions:
                                 with st.expander(f"📊 {len(performance_extractions)} Performance Metrics Found"):
                                     for perf in performance_extractions[:10]:  # Show first 10
-                                        metric_display = f"{perf.get('fund_name', 'Unknown')} - {perf.get('metric_type', 'Unknown')}: {perf.get('value', 'N/A')}"
-                                        if perf.get('period'):
-                                            metric_display += f" ({perf.get('period')})"
+                                        fund_name = perf.get('fund_name', 'Unknown')
+                                        metric_type = perf.get('metric_type', 'Unknown')
+                                        value = perf.get('value', 'N/A')
+                                        period = perf.get('period', '')
+                                        benchmark = perf.get('benchmark', '')
+                                        
+                                        metric_display = f"{fund_name} - {metric_type}: {value}"
+                                        if period:
+                                            metric_display += f" ({period})"
+                                        if benchmark:
+                                            metric_display += f" vs {benchmark}"
+                                        
                                         st.write(f"• {metric_display}")
                                     
                                     if len(performance_extractions) > 10:
