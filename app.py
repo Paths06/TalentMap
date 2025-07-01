@@ -1175,6 +1175,158 @@ def process_extractions_with_update_detection(extractions):
     
     return new_people, pending_updates
 
+# --- MISSING FUNCTIONS - ADD THESE ---
+
+def handle_dynamic_input(field_name, current_value, table_name, context=""):
+    """
+    Handle dynamic input for fields with existing options and ability to add new ones
+    
+    Args:
+        field_name: Name of the field (e.g., 'location', 'company')
+        current_value: Current value to pre-select
+        table_name: Database table name ('people', 'firms', etc.)
+        context: Additional context for unique keys
+    
+    Returns:
+        Selected or newly entered value
+    """
+    import streamlit as st
+    
+    # Get existing options from database based on field and table
+    existing_options = get_unique_values_from_session_state(table_name, field_name)
+    
+    # Remove None/empty values and sort
+    existing_options = sorted([opt for opt in existing_options if opt and opt.strip() and opt != 'Unknown'])
+    
+    # Add "Add New..." option
+    options = [""] + existing_options + ["+ Add New"]
+    
+    # Find index of current value
+    try:
+        default_index = options.index(current_value) if current_value in options else 0
+    except (ValueError, TypeError):
+        default_index = 0
+    
+    # Create unique key for selectbox
+    unique_key = f"{field_name}_select_{table_name}_{context}"
+    
+    # Create selectbox
+    selected = st.selectbox(
+        f"Select {field_name.replace('_', ' ').title()}",
+        options=options,
+        index=default_index,
+        key=unique_key
+    )
+    
+    # If "Add New" is selected, show text input
+    if selected == "+ Add New":
+        new_value_key = f"{field_name}_new_{table_name}_{context}"
+        new_value = st.text_input(
+            f"Enter new {field_name.replace('_', ' ')}:",
+            placeholder=f"Enter {field_name.replace('_', ' ')}...",
+            key=new_value_key
+        )
+        return new_value.strip() if new_value else ""
+    
+    return selected if selected else ""
+
+
+def get_unique_values_from_session_state(table_name, field_name):
+    """
+    Get unique values from a specific field in session state data
+    
+    Args:
+        table_name: Name of the data source ('people', 'firms', 'employments')
+        field_name: Name of the field
+    
+    Returns:
+        List of unique values
+    """
+    values = set()
+    
+    try:
+        if table_name == "people":
+            data_source = st.session_state.people
+        elif table_name == "firms":
+            data_source = st.session_state.firms
+        elif table_name == "employments":
+            data_source = st.session_state.employments
+        else:
+            return []
+        
+        for item in data_source:
+            value = safe_get(item, field_name)
+            if value and value.strip() and value != 'Unknown':
+                values.add(value.strip())
+        
+        return list(values)
+    
+    except Exception as e:
+        st.error(f"Error getting unique values for {field_name} from {table_name}: {str(e)}")
+        return []
+
+
+def global_search(query):
+    """
+    Global search function for people, firms, and performance metrics
+    
+    Args:
+        query: Search query string
+    
+    Returns:
+        Tuple of (matching_people, matching_firms, matching_metrics)
+    """
+    query_lower = query.lower().strip()
+    
+    if len(query_lower) < 2:
+        return [], [], []
+    
+    matching_people = []
+    matching_firms = []
+    matching_metrics = []
+    
+    # Search people
+    for person in st.session_state.people:
+        searchable_text = " ".join([
+            safe_get(person, 'name', ''),
+            safe_get(person, 'current_title', ''),
+            safe_get(person, 'current_company_name', ''),
+            safe_get(person, 'location', ''),
+            safe_get(person, 'expertise', ''),
+            safe_get(person, 'strategy', ''),
+            safe_get(person, 'education', '')
+        ]).lower()
+        
+        if query_lower in searchable_text:
+            matching_people.append(person)
+    
+    # Search firms
+    for firm in st.session_state.firms:
+        searchable_text = " ".join([
+            safe_get(firm, 'name', ''),
+            safe_get(firm, 'location', ''),
+            safe_get(firm, 'strategy', ''),
+            safe_get(firm, 'description', ''),
+            safe_get(firm, 'headquarters', '')
+        ]).lower()
+        
+        if query_lower in searchable_text:
+            matching_firms.append(firm)
+    
+    # Search performance metrics
+    for metric in st.session_state.performance_metrics:
+        searchable_text = " ".join([
+            safe_get(metric, 'fund_name', ''),
+            safe_get(metric, 'metric_type', ''),
+            safe_get(metric, 'period', ''),
+            safe_get(metric, 'additional_info', '')
+        ]).lower()
+        
+        if query_lower in searchable_text:
+            matching_metrics.append(metric)
+    
+    return matching_people, matching_firms, matching_metrics
+
 # --- Helper Functions ---
 def get_person_by_id(person_id):
     return next((p for p in st.session_state.people if p['id'] == person_id), None)
@@ -1284,7 +1436,7 @@ with st.sidebar:
         api_key = st.text_input("Gemini API Key", type="password", 
                               help="Get from: https://makersuite.google.com/app/apikey")
     
-    # Model Selection
+    # Model Selection - FIXED MODEL OPTIONS
     st.markdown("---")
     st.subheader("🤖 Model Selection")
     
@@ -1292,7 +1444,7 @@ with st.sidebar:
         "Gemini 1.5 Flash (Recommended)": "gemini-1.5-flash",
         "Gemini 1.5 Pro (Advanced)": "gemini-1.5-pro", 
         "Gemini 2.0 Flash": "gemini-2.0-flash-exp",
-        "Gemini 2.5 Flash (Latest)": "gemini-2.5-flash-exp"
+        "Gemini 1.5 Flash Latest": "gemini-1.5-flash-latest"  # Fixed: removed invalid model
     }
     
     selected_model_name = st.selectbox(
@@ -1356,7 +1508,7 @@ with st.sidebar:
     elif "2.0-flash" in selected_model_id:
         st.info("🔥 **Balanced**: 15 requests/min, improved accuracy over 1.5")
         rate_info = "15 RPM (5s delay)"
-    elif "2.5-flash" in selected_model_id:
+    elif "latest" in selected_model_id:
         st.info("🌟 **Latest**: 10 requests/min, cutting-edge capabilities")
         rate_info = "10 RPM (7s delay)"
     
@@ -1373,8 +1525,8 @@ with st.sidebar:
             
             if '1.5-pro' in model_id:
                 st.info("🧠 Gemini 1.5 Pro: Slowest but most thorough (40s between chunks)")
-            elif '2.5-flash' in model_id:
-                st.info("🌟 Gemini 2.5 Flash: Latest model (10s between chunks)")
+            elif 'latest' in model_id:
+                st.info("🌟 Gemini Latest: Latest model (10s between chunks)")
             else:
                 st.info("⚡ Gemini Flash: Fast and reliable (10s between chunks)")
         
@@ -2556,74 +2708,6 @@ elif st.session_state.current_view == 'firms':
                         if st.button("✏️", key=f"edit_firm_{firm['id']}", help="Edit Firm"):
                             st.session_state.edit_firm_data = firm
                             st.session_state.show_edit_firm_modal = True
-                            st.rerun()
-                
-                st.markdown("---")
-
-# --- PEOPLE VIEW ---
-elif st.session_state.current_view == 'people':
-    st.markdown("---")
-    st.header("👥 Hedge Fund Professionals")
-    
-    if not st.session_state.people:
-        st.info("No people added yet. Use 'Add Person' button above.")
-    else:
-        # Filters
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            # Filter out None values before sorting
-            locations = ["All"] + sorted(list(set(safe_get(p, 'location') for p in st.session_state.people if safe_get(p, 'location') != 'Unknown')))
-            location_filter = st.selectbox("Filter by Location", locations)
-        with col2:
-            # Filter out None values before sorting
-            companies = ["All"] + sorted(list(set(safe_get(p, 'current_company_name') for p in st.session_state.people if safe_get(p, 'current_company_name') != 'Unknown')))
-            company_filter = st.selectbox("Filter by Company", companies)
-        with col3:
-            search_term = st.text_input("Search by Name", placeholder="Enter name...")
-        
-        # Apply filters
-        filtered_people = st.session_state.people
-        if location_filter != "All":
-            filtered_people = [p for p in filtered_people if safe_get(p, 'location') == location_filter]
-        if company_filter != "All":
-            filtered_people = [p for p in filtered_people if safe_get(p, 'current_company_name') == company_filter]
-        if search_term:
-            filtered_people = [p for p in filtered_people if search_term.lower() in safe_get(p, 'name').lower()]
-        
-        # Display people in compact cards
-        st.write(f"**Showing {len(filtered_people)} people**")
-        
-        for person in filtered_people:
-            with st.container():
-                col1, col2, col3 = st.columns([2, 2, 1])
-                
-                with col1:
-                    st.markdown(f"**👤 {safe_get(person, 'name')}**")
-                    st.caption(f"{safe_get(person, 'current_title')} • {safe_get(person, 'current_company_name')}")
-                
-                with col2:
-                    col2a, col2b = st.columns(2)
-                    with col2a:
-                        location = safe_get(person, 'location')
-                        if len(location) > 10:
-                            location = location[:10] + "..."
-                        st.metric("📍", location, label_visibility="collapsed")
-                    with col2b:
-                        aum = safe_get(person, 'aum_managed')
-                        if len(aum) > 8:
-                            aum = aum[:8] + "..."
-                        st.metric("💰", aum, label_visibility="collapsed")
-                
-                with col3:
-                    col3a, col3b = st.columns(2)
-                    with col3a:
-                        if st.button("👁️", key=f"view_person_{person['id']}", help="View Profile"):
-                            go_to_person_details(person['id'])
-                            st.rerun()
-                    with col3b:
-                        if st.button("✏️", key=f"edit_person_{person['id']}", help="Edit Person"):
-                            st.session_state.edit_person_data = person
-                            st.session_state.show_edit_person_modal = True
                             st.rerun()
                 
                 st.markdown("---")
