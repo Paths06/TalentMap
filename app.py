@@ -933,6 +933,30 @@ def detect_updates_needed(existing_person, extracted_person):
     
     return updates
 
+def get_dynamic_options(field_name, data_source="people"):
+    """Get dynamic dropdown options from existing data instead of hardcoded lists"""
+    options = set()
+    
+    if data_source == "people":
+        for person in st.session_state.people:
+            value = safe_get(person, field_name)
+            if value and value not in ['Unknown', 'N/A', '']:
+                options.add(value)
+    elif data_source == "firms":
+        for firm in st.session_state.firms:
+            value = safe_get(firm, field_name)
+            if value and value not in ['Unknown', 'N/A', '']:
+                options.add(value)
+    elif data_source == "employments":
+        for emp in st.session_state.employments:
+            value = safe_get(emp, field_name)
+            if value and value not in ['Unknown', 'N/A', '']:
+                options.add(value)
+    
+    # Return sorted list with "Other" option for new entries
+    sorted_options = sorted(list(options))
+    return [""] + sorted_options + ["+ Add New"]
+
 def map_performance_to_entities(performance_metrics):
     """Map performance metrics to people and firms where possible"""
     for metric in performance_metrics:
@@ -962,6 +986,125 @@ def map_performance_to_entities(performance_metrics):
             metric['related_people'] = matching_people[:3]  # Limit to 3 people max
     
     return performance_metrics
+
+def normalize_text_for_comparison(text):
+    """Normalize text for comparison to avoid false positives from minor formatting differences"""
+    if not text:
+        return ""
+    
+    # Convert to lowercase
+    text = text.lower().strip()
+    
+    # Standardize common abbreviations and formatting
+    replacements = {
+        'cio': 'chief investment officer',
+        'ceo': 'chief executive officer',
+        'cfo': 'chief financial officer',
+        'cto': 'chief technology officer',
+        'pm': 'portfolio manager',
+        'md': 'managing director',
+        'vp': 'vice president',
+        'svp': 'senior vice president',
+        'evp': 'executive vice president',
+        '&': 'and',
+        ' - ': ' ',
+        ' — ': ' ',
+    }
+    
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    
+    # Remove extra spaces and punctuation
+    import re
+    text = re.sub(r'[^\w\s]', '', text)  # Remove punctuation
+    text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
+    
+    return text.strip()
+
+def are_texts_similar(text1, text2, threshold=0.8):
+    """Check if two texts are similar enough to be considered the same"""
+    norm1 = normalize_text_for_comparison(text1)
+    norm2 = normalize_text_for_comparison(text2)
+    
+    if norm1 == norm2:
+        return True
+    
+    # Simple similarity check based on common words
+    words1 = set(norm1.split())
+    words2 = set(norm2.split())
+    
+    if not words1 or not words2:
+        return False
+    
+    # Calculate Jaccard similarity (intersection over union)
+    intersection = len(words1.intersection(words2))
+    union = len(words1.union(words2))
+    
+    similarity = intersection / union if union > 0 else 0
+    return similarity >= threshold
+
+def detect_updates_needed(existing_person, extracted_person):
+    """Compare existing person data with extracted data to find potential updates - improved with similarity checking"""
+    updates = {}
+    
+    # Normalize both data sets for comparison
+    existing_name = safe_get(existing_person, 'name', '').strip().lower()
+    extracted_name = safe_get(extracted_person, 'name', '').strip().lower()
+    
+    # Only proceed if names match (basic validation)
+    if not existing_name or not extracted_name or existing_name != extracted_name:
+        return updates
+    
+    # Check company change
+    existing_company = safe_get(existing_person, 'current_company_name', '').strip()
+    extracted_company = safe_get(extracted_person, 'company', '').strip()
+    
+    if (extracted_company and extracted_company != 'Unknown' and 
+        len(extracted_company) > 2 and
+        not are_texts_similar(existing_company, extracted_company, threshold=0.7)):
+        updates['company'] = {
+            'field': 'current_company_name',
+            'current': existing_company,
+            'proposed': extracted_company,
+            'reason': 'Company change detected',
+            'confidence': 'high'
+        }
+    
+    # Check title change
+    existing_title = safe_get(existing_person, 'current_title', '').strip()
+    extracted_title = safe_get(extracted_person, 'title', '').strip()
+    
+    if (extracted_title and extracted_title != 'Unknown' and 
+        len(extracted_title) > 2 and
+        not are_texts_similar(existing_title, extracted_title, threshold=0.8)):
+        
+        # Lower confidence for title changes since they can be formatting differences
+        confidence = 'medium' if len(existing_title.split()) > 2 else 'high'
+        
+        updates['title'] = {
+            'field': 'current_title',
+            'current': existing_title,
+            'proposed': extracted_title,
+            'reason': 'Title change detected',
+            'confidence': confidence
+        }
+    
+    # Check location change (be more careful with locations)
+    existing_location = safe_get(existing_person, 'location', '').strip()
+    extracted_location = safe_get(extracted_person, 'location', '').strip()
+    
+    if (extracted_location and extracted_location != 'Unknown' and 
+        len(extracted_location) > 2 and
+        not are_texts_similar(existing_location, extracted_location, threshold=0.7)):
+        updates['location'] = {
+            'field': 'location',
+            'current': existing_location,
+            'proposed': extracted_location,
+            'reason': 'Location change detected',
+            'confidence': 'medium'  # Location changes are less certain from newsletters
+        }
+    
+    return updates
 
 def get_person_performance_metrics(person_id):
     """Get performance metrics related to a specific person"""
@@ -1628,7 +1771,7 @@ with st.sidebar:
 if st.session_state.show_update_review and st.session_state.pending_updates:
     st.markdown("---")
     st.header("🔄 Review Potential Updates")
-    st.info("AI detected changes for existing people. Please review and approve updates.")
+    st.info("AI detected changes for existing people. Please review and approve updates below.")
     
     # Process each pending update
     updates_to_remove = []
@@ -1637,100 +1780,126 @@ if st.session_state.show_update_review and st.session_state.pending_updates:
         person_name = pending_update['person_name']
         updates = pending_update['updates']
         
-        st.markdown(f"### 👤 {person_name}")
-        st.caption(f"Detected on: {pending_update['timestamp']}")
-        
-        # Show each potential update
-        approved_updates = {}
-        
+        # Create a clean container for each person
         with st.container():
-            for update_key, update_info in updates.items():
-                col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
-                
-                with col1:
-                    st.write(f"**{update_info['reason']}**")
-                    st.caption(f"Field: {update_key.title()}")
-                
-                with col2:
-                    st.write("**Current:**")
-                    st.code(update_info['current'])
-                
-                with col3:
-                    st.write("**Proposed:**")
-                    st.code(update_info['proposed'])
-                
-                with col4:
-                    # Approval checkbox
-                    approve_key = f"approve_{pending_update['id']}_{update_key}"
-                    if st.checkbox("✅ Approve", key=approve_key):
-                        approved_updates[update_key] = update_info
-        
-        # Action buttons for this person
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button(f"✅ Apply Approved Changes", key=f"apply_{pending_update['id']}", use_container_width=True):
-                if approved_updates:
-                    # Apply approved updates
+            st.markdown(f"### 👤 {person_name}")
+            col_info, col_actions = st.columns([3, 1])
+            
+            with col_info:
+                st.caption(f"Detected on: {pending_update['timestamp']}")
+                st.write(f"**Found {len(updates)} potential change(s)**")
+            
+            with col_actions:
+                if st.button("👁️ View Profile", key=f"view_profile_{pending_update['id']}", use_container_width=True):
                     person_id = pending_update['person_id']
-                    person = get_person_by_id(person_id)
+                    go_to_person_details(person_id)
+                    st.rerun()
+            
+            # Show each potential update in a clean format
+            approved_updates = {}
+            
+            for update_key, update_info in updates.items():
+                with st.expander(f"📝 {update_info['reason']}", expanded=True):
+                    col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
                     
-                    if person:
-                        changes_made = []
+                    with col1:
+                        st.write(f"**{update_key.title()}**")
+                        confidence = update_info.get('confidence', 'medium')
+                        if confidence == 'high':
+                            st.success("🔴 High confidence")
+                        elif confidence == 'medium':
+                            st.warning("🟡 Medium confidence")
+                        else:
+                            st.info("🔵 Low confidence")
+                    
+                    with col2:
+                        st.write("**Current Value:**")
+                        current_val = update_info['current']
+                        if len(current_val) > 50:
+                            current_val = current_val[:50] + "..."
+                        st.code(current_val)
+                    
+                    with col3:
+                        st.write("**Proposed Value:**")
+                        proposed_val = update_info['proposed']
+                        if len(proposed_val) > 50:
+                            proposed_val = proposed_val[:50] + "..."
+                        st.code(proposed_val)
+                    
+                    with col4:
+                        # Approval checkbox
+                        approve_key = f"approve_{pending_update['id']}_{update_key}"
+                        if st.checkbox("✅ Approve", key=approve_key):
+                            approved_updates[update_key] = update_info
+            
+            # Action buttons for this person
+            st.markdown("---")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button(f"✅ Apply Approved Changes", key=f"apply_{pending_update['id']}", use_container_width=True):
+                    if approved_updates:
+                        # Apply approved updates
+                        person_id = pending_update['person_id']
+                        person = get_person_by_id(person_id)
                         
-                        # Apply each approved update
-                        for update_key, update_info in approved_updates.items():
-                            old_value = person[update_info['field']]
-                            person[update_info['field']] = update_info['proposed']
-                            changes_made.append(f"{update_key}: {old_value} → {update_info['proposed']}")
+                        if person:
+                            changes_made = []
                             
-                            # If company changed, add new employment record
-                            if update_info['field'] == 'current_company_name':
-                                st.session_state.employments.append({
-                                    "id": str(uuid.uuid4()),
-                                    "person_id": person_id,
-                                    "company_name": update_info['proposed'],
-                                    "title": safe_get(person, 'current_title'),
-                                    "start_date": date.today(),
-                                    "end_date": None,
-                                    "location": safe_get(person, 'location'),
-                                    "strategy": "Unknown"
-                                })
+                            # Apply each approved update
+                            for update_key, update_info in approved_updates.items():
+                                old_value = person[update_info['field']]
+                                person[update_info['field']] = update_info['proposed']
+                                changes_made.append(f"{update_key}: '{old_value}' → '{update_info['proposed']}'")
                                 
-                                # End previous employment
-                                for emp in st.session_state.employments:
-                                    if (emp['person_id'] == person_id and 
-                                        emp['company_name'] == old_value and 
-                                        emp.get('end_date') is None and
-                                        emp['id'] != st.session_state.employments[-1]['id']):
-                                        emp['end_date'] = date.today()
-                                        break
+                                # If company changed, add new employment record
+                                if update_info['field'] == 'current_company_name':
+                                    st.session_state.employments.append({
+                                        "id": str(uuid.uuid4()),
+                                        "person_id": person_id,
+                                        "company_name": update_info['proposed'],
+                                        "title": safe_get(person, 'current_title'),
+                                        "start_date": date.today(),
+                                        "end_date": None,
+                                        "location": safe_get(person, 'location'),
+                                        "strategy": "Unknown"
+                                    })
+                                    
+                                    # End previous employment
+                                    for emp in st.session_state.employments:
+                                        if (emp['person_id'] == person_id and 
+                                            emp['company_name'] == old_value and 
+                                            emp.get('end_date') is None and
+                                            emp['id'] != st.session_state.employments[-1]['id']):
+                                            emp['end_date'] = date.today()
+                                            break
+                            
+                            # Update the person in the main list
+                            for j, p in enumerate(st.session_state.people):
+                                if p['id'] == person_id:
+                                    st.session_state.people[j] = person
+                                    break
+                            
+                            save_data()
+                            st.success(f"✅ **Updated {person_name}**")
+                            for change in changes_made:
+                                st.write(f"  • {change}")
+                            updates_to_remove.append(i)
                         
-                        # Update the person in the main list
-                        for j, p in enumerate(st.session_state.people):
-                            if p['id'] == person_id:
-                                st.session_state.people[j] = person
-                                break
-                        
-                        save_data()
-                        st.success(f"✅ Updated {person_name}: {', '.join(changes_made)}")
-                        updates_to_remove.append(i)
-                    
-                else:
-                    st.warning("No changes approved for this person")
-        
-        with col2:
-            if st.button(f"❌ Reject All", key=f"reject_{pending_update['id']}", use_container_width=True):
-                st.info(f"Rejected all updates for {person_name}")
-                updates_to_remove.append(i)
-        
-        with col3:
-            if st.button(f"👁️ View Profile", key=f"view_{pending_update['id']}", use_container_width=True):
-                person_id = pending_update['person_id']
-                go_to_person_details(person_id)
-                st.rerun()
-        
-        st.markdown("---")
+                    else:
+                        st.warning("Please approve at least one change before applying.")
+            
+            with col2:
+                if st.button(f"❌ Reject All Changes", key=f"reject_{pending_update['id']}", use_container_width=True):
+                    st.info(f"Rejected all updates for {person_name}")
+                    updates_to_remove.append(i)
+            
+            with col3:
+                # Skip this person (keep for later review)
+                if st.button(f"⏭️ Skip for Now", key=f"skip_{pending_update['id']}", use_container_width=True):
+                    st.info(f"Skipped {person_name} - will review later")
+            
+            st.markdown("---")
     
     # Remove processed updates
     if updates_to_remove:
@@ -1739,8 +1908,47 @@ if st.session_state.show_update_review and st.session_state.pending_updates:
         save_data()
         st.rerun()
     
+    # Bulk actions
+    if len(st.session_state.pending_updates) > 1:
+        st.markdown("### 🔄 Bulk Actions")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("✅ Auto-Approve High Confidence Changes", use_container_width=True):
+                auto_approved = 0
+                for i, update in enumerate(st.session_state.pending_updates):
+                    for update_key, update_info in update['updates'].items():
+                        if update_info.get('confidence') == 'high':
+                            # Auto-approve high confidence changes
+                            person_id = update['person_id']
+                            person = get_person_by_id(person_id)
+                            if person:
+                                person[update_info['field']] = update_info['proposed']
+                                auto_approved += 1
+                
+                if auto_approved > 0:
+                    save_data()
+                    st.success(f"✅ Auto-approved {auto_approved} high-confidence changes")
+                    st.session_state.pending_updates = []  # Clear all for simplicity
+                    st.rerun()
+                else:
+                    st.info("No high-confidence changes found to auto-approve")
+        
+        with col2:
+            if st.button("❌ Reject All Pending Updates", use_container_width=True):
+                st.session_state.pending_updates = []
+                save_data()
+                st.success("✅ All pending updates rejected")
+                st.rerun()
+    
     # Close button
     if st.button("✅ Done Reviewing", use_container_width=True):
+        st.session_state.show_update_review = False
+        st.rerun()
+
+elif st.session_state.show_update_review and not st.session_state.pending_updates:
+    st.info("No pending updates to review.")
+    if st.button("✅ Close"):
         st.session_state.show_update_review = False
         st.rerun()
 
@@ -1933,17 +2141,29 @@ if st.session_state.show_add_person_modal:
         with col1:
             name = st.text_input("Full Name*", placeholder="John Smith")
             title = st.text_input("Current Title*", placeholder="Portfolio Manager")
-            company = st.selectbox("Current Company*", 
-                                 options=[""] + [f['name'] for f in st.session_state.firms])
-            location = st.selectbox("Location*", 
-                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                          "Mumbai", "Shanghai", "Beijing", "Taipei"])
+            
+            # Dynamic company selection
+            company_options = [""] + [f['name'] for f in st.session_state.firms]
+            company = st.selectbox("Current Company*", options=company_options)
+            
+            # Dynamic location selection
+            location = handle_dynamic_input("location", "", "people", "add_person")
         
         with col2:
             email = st.text_input("Email", placeholder="john.smith@company.com")
             phone = st.text_input("Phone", placeholder="+852-1234-5678")
             education = st.text_input("Education", placeholder="Harvard, MIT")
-            expertise = st.text_input("Expertise", placeholder="Equities, Technology")
+            
+            # Dynamic expertise selection
+            expertise = handle_dynamic_input("expertise", "", "people", "add_person")
+        
+        # Additional fields
+        col3, col4 = st.columns(2)
+        with col3:
+            aum_managed = st.text_input("AUM Managed", placeholder="500M USD")
+        with col4:
+            # Dynamic strategy selection
+            strategy = handle_dynamic_input("strategy", "", "people", "add_person")
         
         submitted = st.form_submit_button("Add Person")
         
@@ -1961,8 +2181,8 @@ if st.session_state.show_add_person_modal:
                     "phone": phone,
                     "education": education,
                     "expertise": expertise,
-                    "aum_managed": "",
-                    "strategy": "Unknown"
+                    "aum_managed": aum_managed,
+                    "strategy": strategy
                 })
                 
                 # Add employment record
@@ -1974,7 +2194,7 @@ if st.session_state.show_add_person_modal:
                     "start_date": date.today(),
                     "end_date": None,
                     "location": location,
-                    "strategy": "Unknown"
+                    "strategy": strategy or "Unknown"
                 })
                 
                 save_data()  # Auto-save
@@ -1998,17 +2218,20 @@ if st.session_state.show_add_firm_modal:
         
         with col1:
             firm_name = st.text_input("Firm Name*", placeholder="Tiger Asia Management")
-            location = st.selectbox("Location*", 
-                                  options=["", "Hong Kong", "Singapore", "Tokyo", "Seoul", 
-                                          "Mumbai", "Shanghai", "Beijing", "Taipei"])
+            
+            # Dynamic location selection
+            location = handle_dynamic_input("location", "", "firms", "add_firm")
+            
             aum = st.text_input("AUM", placeholder="5B USD")
             
         with col2:
-            strategy = st.selectbox("Strategy", 
-                                  options=["", "Long/Short Equity", "Multi-Strategy", 
-                                          "Quantitative", "Macro", "Event Driven"])
+            # Dynamic strategy selection
+            strategy = handle_dynamic_input("strategy", "", "firms", "add_firm")
+            
             founded = st.number_input("Founded", min_value=1900, max_value=2025, value=2000)
             website = st.text_input("Website", placeholder="https://company.com")
+        
+        description = st.text_area("Description", placeholder="Brief description of the firm...")
         
         submitted = st.form_submit_button("Add Firm")
         
@@ -2018,12 +2241,12 @@ if st.session_state.show_add_firm_modal:
                     "id": str(uuid.uuid4()),
                     "name": firm_name,
                     "location": location,
-                    "headquarters": location,
+                    "headquarters": location,  # Default headquarters to location
                     "aum": aum,
                     "founded": founded if founded > 1900 else None,
                     "strategy": strategy,
                     "website": website,
-                    "description": f"{strategy} hedge fund based in {location}"
+                    "description": description if description else f"{strategy} hedge fund based in {location}"
                 })
                 
                 save_data()  # Auto-save
@@ -2050,6 +2273,8 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
         with col1:
             name = st.text_input("Full Name*", value=safe_get(person_data, 'name'))
             title = st.text_input("Current Title*", value=safe_get(person_data, 'current_title'))
+            
+            # Dynamic company selection
             current_company = safe_get(person_data, 'current_company_name')
             company_options = [""] + [f['name'] for f in st.session_state.firms]
             company_index = 0
@@ -2057,12 +2282,8 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
                 company_index = company_options.index(current_company)
             company = st.selectbox("Current Company*", options=company_options, index=company_index)
             
-            current_location = safe_get(person_data, 'location')
-            location_options = ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", "Mumbai", "Shanghai", "Beijing", "Taipei"]
-            location_index = 0
-            if current_location and current_location in location_options:
-                location_index = location_options.index(current_location)
-            location = st.selectbox("Location*", options=location_options, index=location_index)
+            # Dynamic location selection
+            location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person")
         
         with col2:
             email = st.text_input("Email", value=safe_get(person_data, 'email'))
@@ -2072,16 +2293,13 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
         
         col3, col4 = st.columns(2)
         with col3:
-            expertise = st.text_input("Expertise", value=safe_get(person_data, 'expertise'))
+            # Dynamic expertise selection
+            expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person")
             aum = st.text_input("AUM Managed", value=safe_get(person_data, 'aum_managed'))
         
         with col4:
-            current_strategy = safe_get(person_data, 'strategy')
-            strategy_options = ["", "Equity Long/Short", "Multi-Strategy", "Quantitative", "Macro", "Credit"]
-            strategy_index = 0
-            if current_strategy and current_strategy in strategy_options:
-                strategy_index = strategy_options.index(current_strategy)
-            strategy = st.selectbox("Investment Strategy", options=strategy_options, index=strategy_index)
+            # Dynamic strategy selection
+            strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person")
         
         col_save, col_cancel, col_delete = st.columns(3)
         
@@ -2148,23 +2366,16 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         
         with col1:
             firm_name = st.text_input("Firm Name*", value=safe_get(firm_data, 'name'))
-            current_location = safe_get(firm_data, 'location')
-            location_options = ["", "Hong Kong", "Singapore", "Tokyo", "Seoul", "Mumbai", "Shanghai", "Beijing", "Taipei"]
-            location_index = 0
-            if current_location and current_location in location_options:
-                location_index = location_options.index(current_location)
-            location = st.selectbox("Location*", options=location_options, index=location_index)
+            
+            # Dynamic location selection
+            location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm")
             
             headquarters = st.text_input("Headquarters", value=safe_get(firm_data, 'headquarters'))
             aum = st.text_input("AUM", value=safe_get(firm_data, 'aum'))
             
         with col2:
-            current_strategy = safe_get(firm_data, 'strategy')
-            strategy_options = ["", "Long/Short Equity", "Multi-Strategy", "Quantitative", "Macro", "Event Driven"]
-            strategy_index = 0
-            if current_strategy and current_strategy in strategy_options:
-                strategy_index = strategy_options.index(current_strategy)
-            strategy = st.selectbox("Strategy", options=strategy_options, index=strategy_index)
+            # Dynamic strategy selection
+            strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm")
             
             founded = st.number_input("Founded", min_value=1900, max_value=2025, 
                                     value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
@@ -2246,12 +2457,12 @@ if st.session_state.current_view == 'people':
         # Filters
         col1, col2, col3 = st.columns(3)
         with col1:
-            # Filter out None values before sorting
-            locations = ["All"] + sorted(list(set(safe_get(p, 'location') for p in st.session_state.people if safe_get(p, 'location') != 'Unknown')))
+            # Dynamic location filter from existing data
+            locations = ["All"] + sorted(list(set(safe_get(p, 'location') for p in st.session_state.people if safe_get(p, 'location') not in ['Unknown', 'N/A', ''])))
             location_filter = st.selectbox("Filter by Location", locations)
         with col2:
-            # Filter out None values before sorting
-            companies = ["All"] + sorted(list(set(safe_get(p, 'current_company_name') for p in st.session_state.people if safe_get(p, 'current_company_name') != 'Unknown')))
+            # Dynamic company filter from existing data
+            companies = ["All"] + sorted(list(set(safe_get(p, 'current_company_name') for p in st.session_state.people if safe_get(p, 'current_company_name') not in ['Unknown', 'N/A', ''])))
             company_filter = st.selectbox("Filter by Company", companies)
         with col3:
             search_term = st.text_input("Search by Name", placeholder="Enter name...")
@@ -2594,6 +2805,78 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     else:
         st.info("No employment history available.")
     
+    # Performance Metrics
+    st.markdown("---")
+    st.subheader("📊 Performance Track Record")
+    
+    person_metrics = get_person_performance_metrics(person['id'])
+    if person_metrics:
+        st.write(f"**Found {len(person_metrics)} performance metrics:**")
+        
+        # Group metrics by fund for better organization
+        metrics_by_fund = {}
+        for metric in person_metrics:
+            fund_name = safe_get(metric, 'fund_name')
+            if fund_name not in metrics_by_fund:
+                metrics_by_fund[fund_name] = []
+            metrics_by_fund[fund_name].append(metric)
+        
+        for fund_name, metrics in metrics_by_fund.items():
+            with st.expander(f"📈 {fund_name} ({len(metrics)} metrics)", expanded=True):
+                for metric in metrics:
+                    metric_type = safe_get(metric, 'metric_type')
+                    value = safe_get(metric, 'value')
+                    period = safe_get(metric, 'period')
+                    date = safe_get(metric, 'date')
+                    additional_info = safe_get(metric, 'additional_info')
+                    
+                    col1, col2, col3 = st.columns([2, 1, 2])
+                    with col1:
+                        st.write(f"**{metric_type.title()}**")
+                    with col2:
+                        st.code(f"{value}%") if metric_type in ['return', 'sharpe', 'alpha'] else st.code(value)
+                    with col3:
+                        period_info = f"{period}" if period != 'Unknown' else ""
+                        date_info = f"({date})" if date != 'Unknown' else ""
+                        st.caption(f"{period_info} {date_info}")
+                    
+                    if additional_info and additional_info != 'Unknown':
+                        st.caption(f"ℹ️ {additional_info}")
+        
+        # Performance summary visualization
+        if len(person_metrics) > 1:
+            st.markdown("**📊 Performance Summary**")
+            
+            # Create a simple performance chart
+            chart_data = []
+            for metric in person_metrics:
+                if metric.get('value') and metric.get('value') != 'Unknown':
+                    try:
+                        value_numeric = float(metric['value'])
+                        chart_data.append({
+                            'Metric': f"{metric.get('metric_type', 'Unknown')} ({metric.get('period', 'Unknown')})",
+                            'Value': value_numeric,
+                            'Fund': metric.get('fund_name', 'Unknown')
+                        })
+                    except ValueError:
+                        continue
+            
+            if chart_data:
+                df_chart = pd.DataFrame(chart_data)
+                fig = px.bar(
+                    df_chart,
+                    x='Metric',
+                    y='Value',
+                    color='Fund',
+                    title=f"Performance Metrics for {safe_get(person, 'name')}",
+                    height=400
+                )
+                st.plotly_chart(fig, use_container_width=True)
+    
+    else:
+        st.info("No performance metrics found for this person.")
+        st.write("💡 Performance metrics will appear here when extracted from newsletters or when manually added to funds this person manages.")
+    
     # Shared Work History (The OWL-like feature)
     st.markdown("---")
     st.subheader("🤝 Professional Network Connections")
@@ -2808,14 +3091,14 @@ elif st.session_state.current_view == 'performance':
 
 # --- Footer ---
 st.markdown("---")
-st.markdown("### 🌏 Asian Hedge Fund Talent Intelligence Platform")
+st.markdown("### 👥 Asian Hedge Fund Talent Intelligence Platform")
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.markdown("**🤖 AI-Powered Extraction**")
+    st.markdown("**🔍 Global Search**")
 with col2:
-    st.markdown("**🤝 Professional Networks**") 
+    st.markdown("**📊 Performance Tracking**") 
 with col3:
-    st.markdown("**💾 Persistent Data Storage**")
+    st.markdown("**🤝 Professional Networks**")
 with col4:
     st.markdown("**🚀 Smart Context Caching**")
 
