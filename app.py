@@ -30,6 +30,160 @@ def safe_get(data, key, default='Unknown'):
     value = data.get(key, default)
     return value if value is not None else default
 
+# --- MISSING FUNCTIONS - MOVED TO TOP ---
+
+def handle_dynamic_input(field_name, current_value, table_name, context=""):
+    """
+    Handle dynamic input for fields with existing options and ability to add new ones
+    
+    Args:
+        field_name: Name of the field (e.g., 'location', 'company')
+        current_value: Current value to pre-select
+        table_name: Database table name ('people', 'firms', etc.)
+        context: Additional context for unique keys
+    
+    Returns:
+        Selected or newly entered value
+    """
+    import streamlit as st
+    
+    # Get existing options from database based on field and table
+    existing_options = get_unique_values_from_session_state(table_name, field_name)
+    
+    # Remove None/empty values and sort
+    existing_options = sorted([opt for opt in existing_options if opt and opt.strip() and opt != 'Unknown'])
+    
+    # Add "Add New..." option
+    options = [""] + existing_options + ["+ Add New"]
+    
+    # Find index of current value
+    try:
+        default_index = options.index(current_value) if current_value in options else 0
+    except (ValueError, TypeError):
+        default_index = 0
+    
+    # Create unique key for selectbox
+    unique_key = f"{field_name}_select_{table_name}_{context}"
+    
+    # Create selectbox
+    selected = st.selectbox(
+        f"Select {field_name.replace('_', ' ').title()}",
+        options=options,
+        index=default_index,
+        key=unique_key
+    )
+    
+    # If "Add New" is selected, show text input
+    if selected == "+ Add New":
+        new_value_key = f"{field_name}_new_{table_name}_{context}"
+        new_value = st.text_input(
+            f"Enter new {field_name.replace('_', ' ')}:",
+            placeholder=f"Enter {field_name.replace('_', ' ')}...",
+            key=new_value_key
+        )
+        return new_value.strip() if new_value else ""
+    
+    return selected if selected else ""
+
+
+def get_unique_values_from_session_state(table_name, field_name):
+    """
+    Get unique values from a specific field in session state data
+    
+    Args:
+        table_name: Name of the data source ('people', 'firms', 'employments')
+        field_name: Name of the field
+    
+    Returns:
+        List of unique values
+    """
+    values = set()
+    
+    try:
+        if table_name == "people":
+            data_source = st.session_state.people
+        elif table_name == "firms":
+            data_source = st.session_state.firms
+        elif table_name == "employments":
+            data_source = st.session_state.employments
+        else:
+            return []
+        
+        for item in data_source:
+            value = safe_get(item, field_name)
+            if value and value.strip() and value != 'Unknown':
+                values.add(value.strip())
+        
+        return list(values)
+    
+    except Exception as e:
+        st.error(f"Error getting unique values for {field_name} from {table_name}: {str(e)}")
+        return []
+
+
+def global_search(query):
+    """
+    Global search function for people, firms, and performance metrics
+    
+    Args:
+        query: Search query string
+    
+    Returns:
+        Tuple of (matching_people, matching_firms, matching_metrics)
+    """
+    query_lower = query.lower().strip()
+    
+    if len(query_lower) < 2:
+        return [], [], []
+    
+    matching_people = []
+    matching_firms = []
+    matching_metrics = []
+    
+    # Search people
+    for person in st.session_state.people:
+        searchable_text = " ".join([
+            safe_get(person, 'name', ''),
+            safe_get(person, 'current_title', ''),
+            safe_get(person, 'current_company_name', ''),
+            safe_get(person, 'location', ''),
+            safe_get(person, 'expertise', ''),
+            safe_get(person, 'strategy', ''),
+            safe_get(person, 'education', '')
+        ]).lower()
+        
+        if query_lower in searchable_text:
+            matching_people.append(person)
+    
+    # Search firms
+    for firm in st.session_state.firms:
+        searchable_text = " ".join([
+            safe_get(firm, 'name', ''),
+            safe_get(firm, 'location', ''),
+            safe_get(firm, 'strategy', ''),
+            safe_get(firm, 'description', ''),
+            safe_get(firm, 'headquarters', '')
+        ]).lower()
+        
+        if query_lower in searchable_text:
+            matching_firms.append(firm)
+    
+    # Search performance metrics in firms
+    for firm in st.session_state.firms:
+        if firm.get('performance_metrics'):
+            for metric in firm['performance_metrics']:
+                searchable_text = " ".join([
+                    safe_get(metric, 'metric_type', ''),
+                    safe_get(metric, 'period', ''),
+                    safe_get(metric, 'additional_info', ''),
+                    safe_get(firm, 'name', '')
+                ]).lower()
+                
+                if query_lower in searchable_text:
+                    matching_metrics.append({**metric, 'fund_name': firm['name']})
+    
+    return matching_people, matching_firms, matching_metrics
+
 # --- Database Persistence Setup ---
 DATA_DIR = Path("hedge_fund_data")
 DATA_DIR.mkdir(exist_ok=True)
@@ -38,7 +192,6 @@ PEOPLE_FILE = DATA_DIR / "people.json"
 FIRMS_FILE = DATA_DIR / "firms.json"
 EMPLOYMENTS_FILE = DATA_DIR / "employments.json"
 EXTRACTIONS_FILE = DATA_DIR / "extractions.json"
-PERFORMANCE_FILE = DATA_DIR / "performance_metrics.json"
 
 def save_data():
     """Save all data to JSON files with better error handling"""
@@ -50,7 +203,7 @@ def save_data():
         with open(PEOPLE_FILE, 'w', encoding='utf-8') as f:
             json.dump(st.session_state.people, f, indent=2, default=str)
         
-        # Save firms
+        # Save firms (now includes performance metrics)
         with open(FIRMS_FILE, 'w', encoding='utf-8') as f:
             json.dump(st.session_state.firms, f, indent=2, default=str)
         
@@ -63,11 +216,6 @@ def save_data():
             with open(EXTRACTIONS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(st.session_state.all_extractions, f, indent=2, default=str)
         
-        # Save performance metrics
-        if 'performance_metrics' in st.session_state:
-            with open(PERFORMANCE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(st.session_state.performance_metrics, f, indent=2, default=str)
-        
         # Verify files were actually written
         files_saved = []
         if PEOPLE_FILE.exists():
@@ -78,8 +226,6 @@ def save_data():
             files_saved.append(f"employments.json ({EMPLOYMENTS_FILE.stat().st_size} bytes)")
         if EXTRACTIONS_FILE.exists():
             files_saved.append(f"extractions.json ({EXTRACTIONS_FILE.stat().st_size} bytes)")
-        if PERFORMANCE_FILE.exists():
-            files_saved.append(f"performance.json ({PERFORMANCE_FILE.stat().st_size} bytes)")
         
         st.sidebar.success(f"💾 Data saved: {', '.join(files_saved)}")
         return True
@@ -96,7 +242,6 @@ def load_data():
         firms = []
         employments = []
         extractions = []
-        performance_metrics = []
         
         # Load people
         if PEOPLE_FILE.exists():
@@ -136,21 +281,13 @@ def load_data():
         else:
             print(f"⚠️ No extractions file found at {EXTRACTIONS_FILE}")
         
-        # Load performance metrics
-        if PERFORMANCE_FILE.exists():
-            with open(PERFORMANCE_FILE, 'r', encoding='utf-8') as f:
-                performance_metrics = json.load(f)
-            print(f"✅ Loaded {len(performance_metrics)} performance metrics from {PERFORMANCE_FILE}")
-        else:
-            print(f"⚠️ No performance metrics file found at {PERFORMANCE_FILE}")
-        
         print(f"📁 Data directory: {DATA_DIR.absolute()}")
         
-        return people, firms, employments, extractions, performance_metrics
+        return people, firms, employments, extractions
         
     except Exception as e:
         print(f"❌ Error loading data: {e}")
-        return [], [], [], [], []
+        return [], [], [], []
 
 # --- Initialize Session State with Rich Dummy Data ---
 def init_dummy_data():
@@ -202,7 +339,7 @@ def init_dummy_data():
         }
     ]
     
-    # Sample firms with detailed information
+    # Sample firms with detailed information and performance metrics
     sample_firms = [
         {
             "id": str(uuid.uuid4()),
@@ -213,7 +350,17 @@ def init_dummy_data():
             "founded": 2005,
             "strategy": "Long-only, Growth Equity",
             "website": "https://hillhousecap.com",
-            "description": "Asia's largest hedge fund focusing on technology and healthcare investments"
+            "description": "Asia's largest hedge fund focusing on technology and healthcare investments",
+            "performance_metrics": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "metric_type": "return",
+                    "value": "12.5",
+                    "period": "YTD",
+                    "date": "2025",
+                    "additional_info": "Net return"
+                }
+            ]
         },
         {
             "id": str(uuid.uuid4()),
@@ -224,7 +371,17 @@ def init_dummy_data():
             "founded": 1989,
             "strategy": "Multi-strategy, Quantitative",
             "website": "https://millennium.com",
-            "description": "Global hedge fund with significant Asian operations"
+            "description": "Global hedge fund with significant Asian operations",
+            "performance_metrics": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "metric_type": "sharpe",
+                    "value": "1.8",
+                    "period": "Current",
+                    "date": "2025",
+                    "additional_info": "Improved from 1.2"
+                }
+            ]
         },
         {
             "id": str(uuid.uuid4()),
@@ -235,7 +392,8 @@ def init_dummy_data():
             "founded": 1990,
             "strategy": "Multi-strategy, Market Making",
             "website": "https://citadel.com",
-            "description": "Leading global hedge fund with growing Asian presence"
+            "description": "Leading global hedge fund with growing Asian presence",
+            "performance_metrics": []
         }
     ]
     
@@ -271,7 +429,7 @@ def init_dummy_data():
 
 def initialize_session_state():
     """Initialize session state with saved or dummy data"""
-    people, firms, employments, extractions, performance_metrics = load_data()
+    people, firms, employments, extractions = load_data()
     
     # If no saved data, use dummy data
     if not people and not firms:
@@ -285,10 +443,8 @@ def initialize_session_state():
         st.session_state.employments = employments
     if 'all_extractions' not in st.session_state:
         st.session_state.all_extractions = extractions
-    if 'performance_metrics' not in st.session_state:
-        st.session_state.performance_metrics = performance_metrics
     if 'current_view' not in st.session_state:
-        st.session_state.current_view = 'people'  # Changed from 'firms' to 'people'
+        st.session_state.current_view = 'people'
     if 'selected_person_id' not in st.session_state:
         st.session_state.selected_person_id = None
     if 'selected_firm_id' not in st.session_state:
@@ -309,10 +465,16 @@ def initialize_session_state():
         st.session_state.pending_updates = []
     if 'show_update_review' not in st.session_state:
         st.session_state.show_update_review = False
-    if 'performance_metrics' not in st.session_state:
-        st.session_state.performance_metrics = []
     if 'global_search' not in st.session_state:
         st.session_state.global_search = ""
+    
+    # Pagination state
+    if 'people_page' not in st.session_state:
+        st.session_state.people_page = 0
+    if 'firms_page' not in st.session_state:
+        st.session_state.firms_page = 0
+    if 'search_page' not in st.session_state:
+        st.session_state.search_page = 0
 
 # --- AI Setup ---
 @st.cache_resource
@@ -506,22 +668,9 @@ def extract_single_chunk_safe(text, model):
         people = result.get('people', [])
         performance = result.get('performance', [])
         
-        # Show raw extractions in debug mode
-        if hasattr(st.session_state, 'debug_mode') and st.session_state.debug_mode:
-            with st.expander("🐛 Debug: Raw Extractions Before Filtering", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write("**Raw People:**")
-                    for i, p in enumerate(people):
-                        st.json(p)
-                with col2:
-                    st.write("**Raw Performance:**")
-                    for i, perf in enumerate(performance):
-                        st.json(perf)
-        
         # Enhanced validation to filter out placeholder text and incomplete extractions
         valid_people = []
-        filtered_people = []
+        valid_performance = []
         
         for p in people:
             name = p.get('name', '').strip()
@@ -533,11 +682,6 @@ def extract_single_chunk_safe(text, model):
                 company.lower() not in ['company', 'company name', 'firm name', 'unknown'] and
                 len(name) > 2 and len(company) > 2):
                 valid_people.append(p)
-            else:
-                filtered_people.append(p)
-        
-        valid_performance = []
-        filtered_performance = []
         
         for p in performance:
             fund_name = p.get('fund_name', '').strip()
@@ -550,95 +694,87 @@ def extract_single_chunk_safe(text, model):
                 metric_type.lower() not in ['metric', 'metric type', 'unknown'] and
                 value.lower() not in ['value', 'unknown', 'n/a']):
                 valid_performance.append(p)
-            else:
-                filtered_performance.append(p)
-        
-        # Show filtering results in debug mode
-        if hasattr(st.session_state, 'debug_mode') and st.session_state.debug_mode:
-            if filtered_people or filtered_performance:
-                with st.expander("🐛 Debug: Filtered Out (Invalid Entries)", expanded=False):
-                    if filtered_people:
-                        st.write("**Filtered People (had placeholder/invalid data):**")
-                        for p in filtered_people:
-                            st.json(p)
-                    if filtered_performance:
-                        st.write("**Filtered Performance (had placeholder/invalid data):**")
-                        for p in filtered_performance:
-                            st.json(p)
-            
-            st.success(f"🐛 Debug: {len(valid_people)} valid people, {len(valid_performance)} valid metrics after filtering")
         
         return valid_people, valid_performance
         
     except Exception as e:
         st.warning(f"Single chunk failed: {str(e)[:100]}")
-        if hasattr(st.session_state, 'debug_mode') and st.session_state.debug_mode:
-            st.error(f"🐛 Debug: Exception details: {str(e)}")
         return [], []
 
-def extract_multi_chunk_safe(text, model, chunk_size):
-    """Crash-proof multi-chunk processing with minimal UI - extracts both people and performance"""
+def extract_multi_chunk_safe(text, model, chunk_size=15000):
+    """Enhanced multi-chunk processing with intelligent rate limiting"""
     
     try:
-        # Simple chunking without complex overlap logic
+        # Smart chunking - try to break at paragraph boundaries
         chunks = []
-        for i in range(0, len(text), chunk_size):
-            chunk = text[i:i + chunk_size]
-            if len(chunk.strip()) > 100:  # Skip tiny chunks
+        current_pos = 0
+        
+        while current_pos < len(text):
+            end_pos = min(current_pos + chunk_size, len(text))
+            
+            # If not at end of text, try to break at paragraph boundary
+            if end_pos < len(text):
+                # Look for paragraph break within last 500 chars
+                search_start = max(end_pos - 500, current_pos)
+                para_break = text.rfind('\n\n', search_start, end_pos)
+                
+                if para_break > current_pos:
+                    end_pos = para_break + 2
+            
+            chunk = text[current_pos:end_pos].strip()
+            if len(chunk) > 100:  # Skip tiny chunks
                 chunks.append(chunk)
+            
+            current_pos = end_pos
         
-        st.info(f"Split into {len(chunks)} chunks. Processing with delays...")
+        st.info(f"📄 Split into {len(chunks)} chunks for processing")
         
-        # Conservative delay based on model
+        # Intelligent delay based on model
         model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
         if '1.5-pro' in model_id:
-            delay = 40  # Very conservative
+            delay = 35  # Conservative for Pro
         else:
-            delay = 10  # Conservative for all Flash models
+            delay = 8   # Faster for Flash models
         
-        # Process chunks with minimal UI updates
+        # Process chunks with progress tracking
         all_people = []
         all_performance = []
         successful = 0
         failed = 0
         
+        # Create progress container
+        progress_container = st.container()
+        
         for i, chunk in enumerate(chunks):
             try:
-                # Simple status without fancy progress bars
-                if i > 0:
-                    st.info(f"Rate limiting delay: {delay}s...")
-                    time.sleep(delay)
+                with progress_container:
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    with col1:
+                        st.info(f"🔄 Processing chunk {i+1}/{len(chunks)}")
+                    with col2:
+                        st.metric("✅ Success", successful)
+                    with col3:
+                        st.metric("❌ Failed", failed)
                 
-                st.info(f"Processing chunk {i+1}/{len(chunks)}...")
+                if i > 0:
+                    st.info(f"⏱️ Rate limit delay: {delay}s...")
+                    time.sleep(delay)
                 
                 # Extract from chunk
                 chunk_people, chunk_performance = extract_single_chunk_safe(chunk, model)
                 
                 if chunk_people or chunk_performance:
-                    # Simple deduplication for people
+                    # Simple deduplication
                     for person in chunk_people:
                         name_company = f"{person.get('name', '').lower()}|{person.get('company', '').lower()}"
-                        
-                        # Check if already exists
-                        exists = any(
-                            f"{existing.get('name', '').lower()}|{existing.get('company', '').lower()}" == name_company 
-                            for existing in all_people
-                        )
-                        
-                        if not exists:
+                        if not any(f"{existing.get('name', '').lower()}|{existing.get('company', '').lower()}" == name_company 
+                                 for existing in all_people):
                             all_people.append(person)
                     
-                    # Simple deduplication for performance
                     for perf in chunk_performance:
                         fund_metric = f"{perf.get('fund_name', '').lower()}|{perf.get('metric_type', '').lower()}|{perf.get('period', '').lower()}"
-                        
-                        # Check if already exists
-                        exists = any(
-                            f"{existing.get('fund_name', '').lower()}|{existing.get('metric_type', '').lower()}|{existing.get('period', '').lower()}" == fund_metric
-                            for existing in all_performance
-                        )
-                        
-                        if not exists:
+                        if not any(f"{existing.get('fund_name', '').lower()}|{existing.get('metric_type', '').lower()}|{existing.get('period', '').lower()}" == fund_metric
+                                 for existing in all_performance):
                             all_performance.append(perf)
                     
                     successful += 1
@@ -661,12 +797,14 @@ def extract_multi_chunk_safe(text, model, chunk_size):
                     st.error("Rate limit hit. Stopping processing.")
                     break
                 
-                # Continue for other errors
                 continue
         
+        # Clear progress display
+        progress_container.empty()
+        
         # Final summary
-        st.info(f"Completed: {successful} successful, {failed} failed chunks")
-        st.success(f"Total extracted: {len(all_people)} people, {len(all_performance)} performance metrics")
+        st.info(f"📊 **Processing Complete**: {successful} successful, {failed} failed chunks")
+        st.success(f"🎯 **Total Extracted**: {len(all_people)} people, {len(all_performance)} performance metrics")
         
         return all_people, all_performance
         
@@ -675,23 +813,23 @@ def extract_multi_chunk_safe(text, model, chunk_size):
         return [], []
 
 def extract_talent_simple(text, model):
-    """Crash-proof extraction with minimal UI updates - extracts both people and performance"""
+    """Enhanced extraction with intelligent chunking - no file size limits"""
     if not model:
         return [], []
     
     # Preprocess and clean the text first
     cleaned_text = preprocess_newsletter_text(text)
     
-    # Simple size-based processing decision
-    max_single_chunk = 15000
+    # More generous chunk size for better context
+    max_single_chunk = 20000
     
     if len(cleaned_text) <= max_single_chunk:
         # Single chunk - simple and reliable
         st.info("📄 Processing as single chunk...")
         return extract_single_chunk_safe(cleaned_text, model)
     else:
-        # Multi-chunk with crash protection
-        st.info(f"📊 Large file detected ({len(cleaned_text):,} chars). Using safe chunking...")
+        # Multi-chunk with intelligent processing
+        st.info(f"📊 Large file detected ({len(cleaned_text):,} chars). Using intelligent chunking...")
         return extract_multi_chunk_safe(cleaned_text, model, max_single_chunk)
 
 def preprocess_newsletter_text(text):
@@ -766,19 +904,7 @@ def preprocess_newsletter_text(text):
     for pattern in html_patterns:
         text = re.sub(pattern, '', text)
     
-    # Step 6: Remove tracking and navigation elements (but preserve content context)
-    navigation_patterns = [
-        r'View article\s*View mandate\s*',
-        r'View investor\s*View mandate\s*',
-        r'Contact us\s*',
-        r'SEE ALL ARTICLES.*?(?=\n)',
-        r'CAPITAL ADVISORY GROUP.*?(?=\n)',
-    ]
-    
-    for pattern in navigation_patterns:
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-    
-    # Step 7: Clean up excessive whitespace and formatting
+    # Step 6: Clean up excessive whitespace and formatting
     # Remove multiple consecutive newlines
     text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
     
@@ -795,7 +921,7 @@ def preprocess_newsletter_text(text):
     
     text = '\n'.join(cleaned_lines)
     
-    # Step 8: Focus on hedge fund relevant content
+    # Step 7: Focus on hedge fund relevant content
     # Look for common hedge fund keywords and keep paragraphs containing them
     hf_keywords = [
         'hedge fund', 'portfolio manager', 'pm', 'cio', 'chief investment officer',
@@ -857,10 +983,6 @@ def preprocess_newsletter_text(text):
     st.write(f"• **Reduction**: {reduction_pct:.1f}% noise removed")
     st.write(f"• **Relevant paragraphs**: {len(relevant_paragraphs)} found")
     
-    # Show if subject line was preserved
-    if subject_line and any(keyword in subject_line.lower() for keyword in hf_keywords_in_subject):
-        st.success(f"✅ **Preserved subject line**: {subject_line[:100]}...")
-    
     return cleaned_text
 
 def find_similar_person(extracted_person):
@@ -893,6 +1015,72 @@ def find_similar_person(extracted_person):
                     return person
     
     return None
+
+def map_performance_to_firms(performance_metrics):
+    """Map performance metrics to firms where possible"""
+    for metric in performance_metrics:
+        fund_name = safe_get(metric, 'fund_name').lower()
+        
+        # Try to find matching firm
+        matching_firm = None
+        for firm in st.session_state.firms:
+            firm_name = safe_get(firm, 'name').lower()
+            if fund_name in firm_name or firm_name in fund_name:
+                matching_firm = firm
+                break
+        
+        if matching_firm:
+            # Add metric to firm's performance_metrics
+            if 'performance_metrics' not in matching_firm:
+                matching_firm['performance_metrics'] = []
+            
+            # Add unique ID if not present
+            if 'id' not in metric:
+                metric['id'] = str(uuid.uuid4())
+            
+            # Check if metric already exists (avoid duplicates)
+            existing = any(
+                m.get('metric_type') == metric.get('metric_type') and 
+                m.get('period') == metric.get('period') and
+                m.get('date') == metric.get('date')
+                for m in matching_firm['performance_metrics']
+            )
+            
+            if not existing:
+                matching_firm['performance_metrics'].append(metric)
+    
+    return performance_metrics
+
+def process_extractions_with_update_detection(extractions):
+    """Process extractions and detect potential updates for existing people"""
+    new_people = []
+    pending_updates = []
+    
+    for extracted in extractions:
+        existing_person = find_similar_person(extracted)
+        
+        if existing_person:
+            # Person exists - check for updates
+            updates = detect_updates_needed(existing_person, extracted)
+            
+            if updates:
+                # Found potential updates
+                pending_updates.append({
+                    'id': str(uuid.uuid4()),
+                    'person_id': existing_person['id'],
+                    'person_name': safe_get(existing_person, 'name'),
+                    'updates': updates,
+                    'extracted_data': extracted,
+                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
+            else:
+                # No updates needed
+                st.info(f"✅ {safe_get(extracted, 'name')} - No updates needed")
+        else:
+            # New person
+            new_people.append(extracted)
+    
+    return new_people, pending_updates
 
 def detect_updates_needed(existing_person, extracted_person):
     """Compare existing person data with extracted data to find potential updates"""
@@ -933,179 +1121,6 @@ def detect_updates_needed(existing_person, extracted_person):
     
     return updates
 
-def get_dynamic_options(field_name, data_source="people"):
-    """Get dynamic dropdown options from existing data instead of hardcoded lists"""
-    options = set()
-    
-    if data_source == "people":
-        for person in st.session_state.people:
-            value = safe_get(person, field_name)
-            if value and value not in ['Unknown', 'N/A', '']:
-                options.add(value)
-    elif data_source == "firms":
-        for firm in st.session_state.firms:
-            value = safe_get(firm, field_name)
-            if value and value not in ['Unknown', 'N/A', '']:
-                options.add(value)
-    elif data_source == "employments":
-        for emp in st.session_state.employments:
-            value = safe_get(emp, field_name)
-            if value and value not in ['Unknown', 'N/A', '']:
-                options.add(value)
-    
-    # Return sorted list with "Other" option for new entries
-    sorted_options = sorted(list(options))
-    return [""] + sorted_options + ["+ Add New"]
-
-def map_performance_to_entities(performance_metrics):
-    """Map performance metrics to people and firms where possible"""
-    for metric in performance_metrics:
-        fund_name = safe_get(metric, 'fund_name').lower()
-        
-        # Try to find matching firm
-        matching_firm = None
-        for firm in st.session_state.firms:
-            firm_name = safe_get(firm, 'name').lower()
-            if fund_name in firm_name or firm_name in fund_name:
-                matching_firm = firm
-                break
-        
-        if matching_firm:
-            metric['firm_id'] = matching_firm['id']
-            metric['firm_name'] = safe_get(matching_firm, 'name')
-        
-        # Try to find people associated with this fund/firm
-        # Look for people who work at this company or have this fund in their history
-        matching_people = []
-        for person in st.session_state.people:
-            person_company = safe_get(person, 'current_company_name').lower()
-            if fund_name in person_company or person_company in fund_name:
-                matching_people.append(person['id'])
-        
-        if matching_people:
-            metric['related_people'] = matching_people[:3]  # Limit to 3 people max
-    
-    return performance_metrics
-
-def normalize_text_for_comparison(text):
-    """Normalize text for comparison to avoid false positives from minor formatting differences"""
-    if not text:
-        return ""
-    
-    # Convert to lowercase
-    text = text.lower().strip()
-    
-    # Standardize common abbreviations and formatting
-    replacements = {
-        'cio': 'chief investment officer',
-        'ceo': 'chief executive officer',
-        'cfo': 'chief financial officer',
-        'cto': 'chief technology officer',
-        'pm': 'portfolio manager',
-        'md': 'managing director',
-        'vp': 'vice president',
-        'svp': 'senior vice president',
-        'evp': 'executive vice president',
-        '&': 'and',
-        ' - ': ' ',
-        ' — ': ' ',
-    }
-    
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-    
-    # Remove extra spaces and punctuation
-    import re
-    text = re.sub(r'[^\w\s]', '', text)  # Remove punctuation
-    text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
-    
-    return text.strip()
-
-def are_texts_similar(text1, text2, threshold=0.8):
-    """Check if two texts are similar enough to be considered the same"""
-    norm1 = normalize_text_for_comparison(text1)
-    norm2 = normalize_text_for_comparison(text2)
-    
-    if norm1 == norm2:
-        return True
-    
-    # Simple similarity check based on common words
-    words1 = set(norm1.split())
-    words2 = set(norm2.split())
-    
-    if not words1 or not words2:
-        return False
-    
-    # Calculate Jaccard similarity (intersection over union)
-    intersection = len(words1.intersection(words2))
-    union = len(words1.union(words2))
-    
-    similarity = intersection / union if union > 0 else 0
-    return similarity >= threshold
-
-def detect_updates_needed(existing_person, extracted_person):
-    """Compare existing person data with extracted data to find potential updates - improved with similarity checking"""
-    updates = {}
-    
-    # Normalize both data sets for comparison
-    existing_name = safe_get(existing_person, 'name', '').strip().lower()
-    extracted_name = safe_get(extracted_person, 'name', '').strip().lower()
-    
-    # Only proceed if names match (basic validation)
-    if not existing_name or not extracted_name or existing_name != extracted_name:
-        return updates
-    
-    # Check company change
-    existing_company = safe_get(existing_person, 'current_company_name', '').strip()
-    extracted_company = safe_get(extracted_person, 'company', '').strip()
-    
-    if (extracted_company and extracted_company != 'Unknown' and 
-        len(extracted_company) > 2 and
-        not are_texts_similar(existing_company, extracted_company, threshold=0.7)):
-        updates['company'] = {
-            'field': 'current_company_name',
-            'current': existing_company,
-            'proposed': extracted_company,
-            'reason': 'Company change detected',
-            'confidence': 'high'
-        }
-    
-    # Check title change
-    existing_title = safe_get(existing_person, 'current_title', '').strip()
-    extracted_title = safe_get(extracted_person, 'title', '').strip()
-    
-    if (extracted_title and extracted_title != 'Unknown' and 
-        len(extracted_title) > 2 and
-        not are_texts_similar(existing_title, extracted_title, threshold=0.8)):
-        
-        # Lower confidence for title changes since they can be formatting differences
-        confidence = 'medium' if len(existing_title.split()) > 2 else 'high'
-        
-        updates['title'] = {
-            'field': 'current_title',
-            'current': existing_title,
-            'proposed': extracted_title,
-            'reason': 'Title change detected',
-            'confidence': confidence
-        }
-    
-    # Check location change (be more careful with locations)
-    existing_location = safe_get(existing_person, 'location', '').strip()
-    extracted_location = safe_get(extracted_person, 'location', '').strip()
-    
-    if (extracted_location and extracted_location != 'Unknown' and 
-        len(extracted_location) > 2 and
-        not are_texts_similar(existing_location, extracted_location, threshold=0.7)):
-        updates['location'] = {
-            'field': 'location',
-            'current': existing_location,
-            'proposed': extracted_location,
-            'reason': 'Location change detected',
-            'confidence': 'medium'  # Location changes are less certain from newsletters
-        }
-    
-    return updates
-
 def get_person_performance_metrics(person_id):
     """Get performance metrics related to a specific person"""
     person = get_person_by_id(person_id)
@@ -1115,13 +1130,12 @@ def get_person_performance_metrics(person_id):
     person_company = safe_get(person, 'current_company_name').lower()
     related_metrics = []
     
-    for metric in st.session_state.performance_metrics:
-        # Check if metric is directly linked to this person
-        if metric.get('related_people') and person_id in metric.get('related_people', []):
-            related_metrics.append(metric)
-        # Check if metric is for person's current company
-        elif person_company in safe_get(metric, 'fund_name', '').lower():
-            related_metrics.append(metric)
+    # Look for metrics in firms
+    for firm in st.session_state.firms:
+        firm_name = safe_get(firm, 'name').lower()
+        if person_company in firm_name or firm_name in person_company:
+            if firm.get('performance_metrics'):
+                related_metrics.extend(firm['performance_metrics'])
     
     return related_metrics
 
@@ -1131,201 +1145,61 @@ def get_firm_performance_metrics(firm_id):
     if not firm:
         return []
     
-    firm_name = safe_get(firm, 'name').lower()
-    related_metrics = []
-    
-    for metric in st.session_state.performance_metrics:
-        # Check if metric is directly linked to this firm
-        if metric.get('firm_id') == firm_id:
-            related_metrics.append(metric)
-        # Check if metric fund name matches firm name
-        elif firm_name in safe_get(metric, 'fund_name', '').lower():
-            related_metrics.append(metric)
-    
-    return related_metrics
+    return firm.get('performance_metrics', [])
 
-def process_extractions_with_update_detection(extractions):
-    """Process extractions and detect potential updates for existing people"""
-    new_people = []
-    pending_updates = []
+# --- Pagination Helpers ---
+def paginate_data(data, page, items_per_page=10):
+    """Paginate data and return current page items and pagination info"""
+    total_items = len(data)
+    total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
     
-    for extracted in extractions:
-        existing_person = find_similar_person(extracted)
-        
-        if existing_person:
-            # Person exists - check for updates
-            updates = detect_updates_needed(existing_person, extracted)
-            
-            if updates:
-                # Found potential updates
-                pending_updates.append({
-                    'id': str(uuid.uuid4()),
-                    'person_id': existing_person['id'],
-                    'person_name': safe_get(existing_person, 'name'),
-                    'updates': updates,
-                    'extracted_data': extracted,
-                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                })
-            else:
-                # No updates needed
-                st.info(f"✅ {safe_get(extracted, 'name')} - No updates needed")
-        else:
-            # New person
-            new_people.append(extracted)
+    # Ensure page is within bounds
+    page = max(0, min(page, total_pages - 1))
     
-    return new_people, pending_updates
+    start_idx = page * items_per_page
+    end_idx = min(start_idx + items_per_page, total_items)
+    
+    current_items = data[start_idx:end_idx]
+    
+    return current_items, {
+        'current_page': page,
+        'total_pages': total_pages,
+        'total_items': total_items,
+        'items_per_page': items_per_page,
+        'start_idx': start_idx,
+        'end_idx': end_idx
+    }
 
-# --- MISSING FUNCTIONS - ADD THESE ---
-
-def handle_dynamic_input(field_name, current_value, table_name, context=""):
-    """
-    Handle dynamic input for fields with existing options and ability to add new ones
+def display_pagination_controls(page_info, page_key):
+    """Display pagination controls"""
+    if page_info['total_pages'] <= 1:
+        return
     
-    Args:
-        field_name: Name of the field (e.g., 'location', 'company')
-        current_value: Current value to pre-select
-        table_name: Database table name ('people', 'firms', etc.)
-        context: Additional context for unique keys
+    col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
     
-    Returns:
-        Selected or newly entered value
-    """
-    import streamlit as st
+    with col1:
+        if st.button("⏮️ First", disabled=page_info['current_page'] == 0, key=f"{page_key}_first"):
+            st.session_state[f"{page_key}_page"] = 0
+            st.rerun()
     
-    # Get existing options from database based on field and table
-    existing_options = get_unique_values_from_session_state(table_name, field_name)
+    with col2:
+        if st.button("◀️ Prev", disabled=page_info['current_page'] == 0, key=f"{page_key}_prev"):
+            st.session_state[f"{page_key}_page"] = max(0, page_info['current_page'] - 1)
+            st.rerun()
     
-    # Remove None/empty values and sort
-    existing_options = sorted([opt for opt in existing_options if opt and opt.strip() and opt != 'Unknown'])
+    with col3:
+        st.write(f"Page {page_info['current_page'] + 1} of {page_info['total_pages']} " +
+                f"(showing {page_info['start_idx'] + 1}-{page_info['end_idx']} of {page_info['total_items']})")
     
-    # Add "Add New..." option
-    options = [""] + existing_options + ["+ Add New"]
+    with col4:
+        if st.button("▶️ Next", disabled=page_info['current_page'] >= page_info['total_pages'] - 1, key=f"{page_key}_next"):
+            st.session_state[f"{page_key}_page"] = min(page_info['total_pages'] - 1, page_info['current_page'] + 1)
+            st.rerun()
     
-    # Find index of current value
-    try:
-        default_index = options.index(current_value) if current_value in options else 0
-    except (ValueError, TypeError):
-        default_index = 0
-    
-    # Create unique key for selectbox
-    unique_key = f"{field_name}_select_{table_name}_{context}"
-    
-    # Create selectbox
-    selected = st.selectbox(
-        f"Select {field_name.replace('_', ' ').title()}",
-        options=options,
-        index=default_index,
-        key=unique_key
-    )
-    
-    # If "Add New" is selected, show text input
-    if selected == "+ Add New":
-        new_value_key = f"{field_name}_new_{table_name}_{context}"
-        new_value = st.text_input(
-            f"Enter new {field_name.replace('_', ' ')}:",
-            placeholder=f"Enter {field_name.replace('_', ' ')}...",
-            key=new_value_key
-        )
-        return new_value.strip() if new_value else ""
-    
-    return selected if selected else ""
-
-
-def get_unique_values_from_session_state(table_name, field_name):
-    """
-    Get unique values from a specific field in session state data
-    
-    Args:
-        table_name: Name of the data source ('people', 'firms', 'employments')
-        field_name: Name of the field
-    
-    Returns:
-        List of unique values
-    """
-    values = set()
-    
-    try:
-        if table_name == "people":
-            data_source = st.session_state.people
-        elif table_name == "firms":
-            data_source = st.session_state.firms
-        elif table_name == "employments":
-            data_source = st.session_state.employments
-        else:
-            return []
-        
-        for item in data_source:
-            value = safe_get(item, field_name)
-            if value and value.strip() and value != 'Unknown':
-                values.add(value.strip())
-        
-        return list(values)
-    
-    except Exception as e:
-        st.error(f"Error getting unique values for {field_name} from {table_name}: {str(e)}")
-        return []
-
-
-def global_search(query):
-    """
-    Global search function for people, firms, and performance metrics
-    
-    Args:
-        query: Search query string
-    
-    Returns:
-        Tuple of (matching_people, matching_firms, matching_metrics)
-    """
-    query_lower = query.lower().strip()
-    
-    if len(query_lower) < 2:
-        return [], [], []
-    
-    matching_people = []
-    matching_firms = []
-    matching_metrics = []
-    
-    # Search people
-    for person in st.session_state.people:
-        searchable_text = " ".join([
-            safe_get(person, 'name', ''),
-            safe_get(person, 'current_title', ''),
-            safe_get(person, 'current_company_name', ''),
-            safe_get(person, 'location', ''),
-            safe_get(person, 'expertise', ''),
-            safe_get(person, 'strategy', ''),
-            safe_get(person, 'education', '')
-        ]).lower()
-        
-        if query_lower in searchable_text:
-            matching_people.append(person)
-    
-    # Search firms
-    for firm in st.session_state.firms:
-        searchable_text = " ".join([
-            safe_get(firm, 'name', ''),
-            safe_get(firm, 'location', ''),
-            safe_get(firm, 'strategy', ''),
-            safe_get(firm, 'description', ''),
-            safe_get(firm, 'headquarters', '')
-        ]).lower()
-        
-        if query_lower in searchable_text:
-            matching_firms.append(firm)
-    
-    # Search performance metrics
-    for metric in st.session_state.performance_metrics:
-        searchable_text = " ".join([
-            safe_get(metric, 'fund_name', ''),
-            safe_get(metric, 'metric_type', ''),
-            safe_get(metric, 'period', ''),
-            safe_get(metric, 'additional_info', '')
-        ]).lower()
-        
-        if query_lower in searchable_text:
-            matching_metrics.append(metric)
-    
-    return matching_people, matching_firms, matching_metrics
+    with col5:
+        if st.button("⏭️ Last", disabled=page_info['current_page'] >= page_info['total_pages'] - 1, key=f"{page_key}_last"):
+            st.session_state[f"{page_key}_page"] = page_info['total_pages'] - 1
+            st.rerun()
 
 # --- Helper Functions ---
 def get_person_by_id(person_id):
@@ -1456,84 +1330,15 @@ with st.sidebar:
     
     selected_model_id = model_options[selected_model_name]
     
-    # Show context caching info
-    st.markdown("---")
-    st.subheader("🚀 Context Caching")
-    st.info("**Smart Token Optimization Enabled!**")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.success("✅ **Cached Context Includes:**")
-        st.write("• Expert extraction instructions")
-        st.write("• Hedge fund examples & patterns") 
-        st.write("• Performance metrics definitions")
-        st.write("• Expected JSON output format")
-    
-    with col2:
-        st.success("💰 **Token Savings:**")
-        st.write("• ~75% reduction in input tokens")
-        st.write("• Faster processing per request")
-        st.write("• Consistent extraction quality")
-        st.write("• Lower API costs")
-    
-    # Show cached context details
-    if st.button("🔍 View Cached Context", use_container_width=True):
-        cached_context = create_cached_context()
-        
-        with st.expander("📋 Cached System Instructions", expanded=True):
-            st.code(cached_context['system_instructions'])
-        
-        with st.expander("📝 Example Input/Output"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**Example Input:**")
-                st.code(cached_context['example_input'])
-            with col2:
-                st.write("**Example Output:**")
-                st.code(cached_context['example_output'][:500] + "...")
-        
-        # Token usage estimation
-        total_cached_tokens = len(cached_context['system_instructions']) + len(cached_context['example_input']) + len(cached_context['example_output']) + len(cached_context['output_format'])
-        estimated_tokens = total_cached_tokens // 4  # Rough estimate: 4 chars per token
-        
-        st.info(f"📊 **Cached Context**: ~{estimated_tokens:,} tokens (reused for every extraction)")
-    
-    # Show model info
-    if "1.5-flash" in selected_model_id:
-        st.success("⚡ **Fast & Reliable**: 15 requests/min, good extraction quality")
-        rate_info = "15 RPM (5s delay)"
-    elif "1.5-pro" in selected_model_id:
-        st.warning("🧠 **Most Advanced**: 2 requests/min, best for complex newsletters")
-        rate_info = "2 RPM (35s delay) - SLOW but thorough"
-    elif "2.0-flash" in selected_model_id:
-        st.info("🔥 **Balanced**: 15 requests/min, improved accuracy over 1.5")
-        rate_info = "15 RPM (5s delay)"
-    elif "latest" in selected_model_id:
-        st.info("🌟 **Latest**: 10 requests/min, cutting-edge capabilities")
-        rate_info = "10 RPM (7s delay)"
-    
-    st.caption(f"📊 Rate limit: {rate_info}")
-    
     # Setup model with selected version
     model = None
     if api_key and GENAI_AVAILABLE:
         model = setup_gemini(api_key, selected_model_id)
         
-        # Show simple rate limit info
-        if model:
-            model_id = getattr(model, 'model_id', 'gemini-1.5-flash')
-            
-            if '1.5-pro' in model_id:
-                st.info("🧠 Gemini 1.5 Pro: Slowest but most thorough (40s between chunks)")
-            elif 'latest' in model_id:
-                st.info("🌟 Gemini Latest: Latest model (10s between chunks)")
-            else:
-                st.info("⚡ Gemini Flash: Fast and reliable (10s between chunks)")
-        
         st.markdown("---")
         st.subheader("📄 Extract from Newsletter")
         
-        # Input method - simplified file handling
+        # Input method - ENHANCED file handling with NO SIZE LIMITS
         input_method = st.radio("Input method:", ["📝 Text", "📁 File"])
         
         newsletter_text = ""
@@ -1541,18 +1346,20 @@ with st.sidebar:
             newsletter_text = st.text_area("Newsletter content:", height=200, 
                                          placeholder="Paste hedge fund newsletter content here...")
         else:
-            uploaded_file = st.file_uploader("Upload newsletter:", type=['txt'], 
-                                            help="Recommended: under 50KB for reliable processing")
+            uploaded_file = st.file_uploader("Upload newsletter:", 
+                                            type=['txt', 'doc', 'docx', 'pdf'], 
+                                            help="✅ No size limits! Large files will be intelligently chunked.")
             if uploaded_file:
                 try:
-                    # Simple file size check
+                    # Get file details
                     file_size = len(uploaded_file.getvalue())
-                    file_size_kb = file_size / 1024
+                    file_size_mb = file_size / (1024 * 1024)
                     
-                    if file_size_kb > 100:  # 100KB limit
-                        st.error(f"File too large: {file_size_kb:.1f}KB. Please use a smaller file.")
-                    else:
-                        # Simple encoding
+                    st.info(f"📁 **File uploaded**: {uploaded_file.name} ({file_size_mb:.1f} MB)")
+                    
+                    # Handle different file types
+                    if uploaded_file.type == "text/plain":
+                        # Simple text file
                         raw_data = uploaded_file.getvalue()
                         try:
                             newsletter_text = raw_data.decode('utf-8')
@@ -1561,37 +1368,30 @@ with st.sidebar:
                                 newsletter_text = raw_data.decode('latin-1')
                             except:
                                 st.error("Could not read file. Try saving as UTF-8 text file.")
+                    else:
+                        st.warning("Currently only .txt files are supported. Please convert your file to .txt format.")
+                    
+                    if newsletter_text:
+                        char_count = len(newsletter_text)
+                        estimated_chunks = max(1, char_count // 20000)
+                        estimated_time = estimated_chunks * 2  # 2 minutes per chunk estimate
                         
-                        if newsletter_text:
-                            st.success(f"✅ File loaded: {file_size_kb:.1f}KB")
+                        st.success(f"✅ **File processed successfully!**")
+                        st.info(f"• **Size**: {char_count:,} characters")
+                        st.info(f"• **Estimated chunks**: {estimated_chunks}")
+                        st.info(f"• **Estimated time**: ~{estimated_time} minutes")
+                        
+                        if estimated_chunks > 10:
+                            st.warning("⚠️ **Large file detected** - Processing will take time but there are no size limits!")
                             
                 except Exception as e:
                     st.error(f"Error reading file: {e}")
         
-        # Show simple processing info
-        if newsletter_text and len(newsletter_text) > 15000:
-            char_count = len(newsletter_text)
-            chunks_needed = max(1, char_count // 15000)
-            st.info(f"Large file: {char_count:,} chars → {chunks_needed} chunks → ~{chunks_needed * 2} minutes estimated")
-        
-        # Show preprocessing preview
-        if newsletter_text:
-            with st.expander("🔍 Preview Text Preprocessing"):
-                st.write("**Raw text preview (first 500 chars):**")
-                st.code(newsletter_text[:500] + "..." if len(newsletter_text) > 500 else newsletter_text)
-                
-                if st.button("🧹 Test Preprocessing", key="test_preprocess"):
-                    cleaned = preprocess_newsletter_text(newsletter_text)
-                    st.write("**Cleaned text preview (first 500 chars):**")
-                    st.code(cleaned[:500] + "..." if len(cleaned) > 500 else cleaned)
-        
         # Debug mode toggle
         debug_mode = st.checkbox("🐛 Enable Debug Mode", help="Shows AI raw output before filtering")
-        
-        # Store debug mode in session state
         st.session_state.debug_mode = debug_mode
 
-        # Extract button - simplified and crash-proof
+        # Extract button - ENHANCED with no size limits
         if st.button("🚀 Extract Talent", use_container_width=True):
             if not newsletter_text.strip():
                 st.error("Please provide newsletter content")
@@ -1599,305 +1399,182 @@ with st.sidebar:
                 st.error("Please provide API key")
             else:
                 char_count = len(newsletter_text)
-                st.info(f"📊 Processing {char_count:,} characters...")
+                st.info(f"📊 **Processing {char_count:,} characters** (No size limits!)")
                 
-                # Simplified size checking - no complex confirmations
-                if char_count > 150000:  # 150KB hard limit
-                    st.error(f"❌ File too large: {char_count:,} characters. Maximum: 150,000")
-                    st.info("💡 **Try**: Split into smaller files or copy/paste key sections")
-                else:
-                    # Show warning for large files but proceed automatically
-                    if char_count > 50000:
-                        chunks_needed = max(1, char_count // 15000)
-                        est_minutes = chunks_needed * 2
-                        st.warning(f"⚠️ **Large file**: {char_count:,} chars → ~{est_minutes} min processing time")
+                # Enhanced processing logic
+                try:
+                    st.info("🤖 **Starting extraction with intelligent chunking...**")
                     
-                    # Always proceed with processing
-                    try:
-                        st.info("🤖 **Starting extraction with cached context...**")
-                        
-                        # Estimate token savings
-                        cached_context = create_cached_context()
-                        cached_tokens = sum(len(v) for v in cached_context.values()) // 4  # Rough estimate
-                        newsletter_tokens = len(newsletter_text) // 4
-                        
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("📝 Newsletter Tokens", f"~{newsletter_tokens:,}")
-                        with col2:
-                            st.metric("🚀 Cached Tokens", f"~{cached_tokens:,}")
-                        with col3:
-                            st.metric("💰 Token Savings", f"~{cached_tokens:,}")
-                        
-                        st.info("💡 **Cached context reused** - only newsletter content sent as new tokens!")
-                        
-                        # Show processing status
-                        with st.status("Processing newsletter...", expanded=True) as status:
-                            st.write("🔄 Initializing extraction...")
-                            people_extractions, performance_extractions = extract_talent_simple(newsletter_text, model)
-                            
-                            if people_extractions or performance_extractions:
-                                st.write(f"✅ Found {len(people_extractions)} people, {len(performance_extractions)} performance metrics!")
-                                status.update(label="✅ Extraction complete!", state="complete")
-                            else:
-                                st.write("⚠️ No data found")
-                                status.update(label="⚠️ No results found", state="complete")
+                    # Show processing status
+                    with st.status("Processing newsletter...", expanded=True) as status:
+                        st.write("🔄 Initializing extraction...")
+                        people_extractions, performance_extractions = extract_talent_simple(newsletter_text, model)
                         
                         if people_extractions or performance_extractions:
-                            # Add metadata to people extractions
-                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            for ext in people_extractions:
-                                ext['timestamp'] = timestamp
-                                ext['id'] = str(uuid.uuid4())
-                            
-                            # Add metadata to performance extractions
-                            for perf in performance_extractions:
-                                perf['timestamp'] = timestamp
-                                perf['id'] = str(uuid.uuid4())
-                            
-                            # Map performance metrics to people and firms
-                            if performance_extractions:
-                                performance_extractions = map_performance_to_entities(performance_extractions)
-                            
-                            # Process people extractions and detect updates
-                            if people_extractions:
-                                st.info("🔍 Checking for existing people and potential updates...")
-                                new_people, pending_updates = process_extractions_with_update_detection(people_extractions)
-                                
-                                # Add pending updates to session state
-                                if pending_updates:
-                                    st.session_state.pending_updates.extend(pending_updates)
-                                    st.session_state.show_update_review = True
-                            else:
-                                new_people = []
-                                pending_updates = []
-                            
-                            # Save new extractions
-                            st.session_state.all_extractions.extend(people_extractions)
-                            
-                            # Save performance metrics
-                            st.session_state.performance_metrics.extend(performance_extractions)
-                            
-                            # Save results
-                            if save_data():
-                                st.success(f"🎉 **Extraction Complete!**")
-                            else:
-                                st.error("⚠️ Extraction successful but save failed!")
-                            
-                            # Show comprehensive summary
-                            col1, col2, col3, col4 = st.columns(4)
-                            with col1:
-                                st.metric("👥 New People", len(new_people))
-                            with col2:
-                                st.metric("🔄 Pending Updates", len(pending_updates))
-                            with col3:
-                                st.metric("📊 Performance Metrics", len(performance_extractions))
-                            with col4:
-                                st.metric("🏢 Total Extracted", len(people_extractions))
-                            
-                            # Show what happened
-                            if new_people:
-                                with st.expander(f"📋 {len(new_people)} New People Found"):
-                                    for person in new_people:
-                                        st.write(f"• **{person['name']}** → {person['company']}")
-                            
-                            if performance_extractions:
-                                with st.expander(f"📊 {len(performance_extractions)} Performance Metrics Found"):
-                                    for perf in performance_extractions[:10]:  # Show first 10
-                                        metric_display = f"{perf.get('fund_name', 'Unknown')} - {perf.get('metric_type', 'Unknown')}: {perf.get('value', 'N/A')}"
-                                        if perf.get('period'):
-                                            metric_display += f" ({perf.get('period')})"
-                                        st.write(f"• {metric_display}")
-                                    
-                                    if len(performance_extractions) > 10:
-                                        st.write(f"... and {len(performance_extractions) - 10} more")
-                            
-                            if pending_updates:
-                                st.warning(f"⚠️ Found {len(pending_updates)} potential updates for existing people!")
-                                st.info("👆 **Review updates in the sidebar before they're applied**")
-                            
+                            st.write(f"✅ Found {len(people_extractions)} people, {len(performance_extractions)} performance metrics!")
+                            status.update(label="✅ Extraction complete!", state="complete")
                         else:
-                            st.warning("⚠️ No people or performance data found. Try a different model or check content.")
+                            st.write("⚠️ No data found")
+                            status.update(label="⚠️ No results found", state="complete")
+                    
+                    if people_extractions or performance_extractions:
+                        # Add metadata to extractions
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        for ext in people_extractions:
+                            ext['timestamp'] = timestamp
+                            ext['id'] = str(uuid.uuid4())
+                        
+                        # Map performance metrics to firms
+                        if performance_extractions:
+                            performance_extractions = map_performance_to_firms(performance_extractions)
+                        
+                        # Process people extractions and detect updates
+                        if people_extractions:
+                            st.info("🔍 Checking for existing people and potential updates...")
+                            new_people, pending_updates = process_extractions_with_update_detection(people_extractions)
                             
-                    except Exception as e:
-                        st.error(f"💥 **Extraction failed**: {str(e)}")
-                        st.info("**Try**: Different model, smaller file, or copy/paste instead")
+                            # Add pending updates to session state
+                            if pending_updates:
+                                st.session_state.pending_updates.extend(pending_updates)
+                                st.session_state.show_update_review = True
+                        else:
+                            new_people = []
+                            pending_updates = []
+                        
+                        # Save new extractions
+                        st.session_state.all_extractions.extend(people_extractions)
+                        
+                        # Save results
+                        if save_data():
+                            st.success(f"🎉 **Extraction Complete!**")
+                        else:
+                            st.error("⚠️ Extraction successful but save failed!")
+                        
+                        # Show comprehensive summary
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("👥 New People", len(new_people))
+                        with col2:
+                            st.metric("🔄 Pending Updates", len(pending_updates))
+                        with col3:
+                            st.metric("📊 Performance Metrics", len(performance_extractions))
+                        with col4:
+                            st.metric("🏢 Total Extracted", len(people_extractions))
+                        
+                        # Show what happened
+                        if new_people:
+                            with st.expander(f"📋 {len(new_people)} New People Found"):
+                                for person in new_people[:10]:  # Show first 10
+                                    st.write(f"• **{person['name']}** → {person['company']}")
+                                if len(new_people) > 10:
+                                    st.write(f"... and {len(new_people) - 10} more")
+                        
+                        if performance_extractions:
+                            with st.expander(f"📊 {len(performance_extractions)} Performance Metrics Found"):
+                                for perf in performance_extractions[:10]:  # Show first 10
+                                    metric_display = f"{perf.get('fund_name', 'Unknown')} - {perf.get('metric_type', 'Unknown')}: {perf.get('value', 'N/A')}"
+                                    if perf.get('period'):
+                                        metric_display += f" ({perf.get('period')})"
+                                    st.write(f"• {metric_display}")
+                                
+                                if len(performance_extractions) > 10:
+                                    st.write(f"... and {len(performance_extractions) - 10} more")
+                        
+                        if pending_updates:
+                            st.warning(f"⚠️ Found {len(pending_updates)} potential updates for existing people!")
+                            st.info("👆 **Review updates in the sidebar before they're applied**")
+                        
+                    else:
+                        st.warning("⚠️ No people or performance data found. Try a different model or check content.")
+                        
+                except Exception as e:
+                    st.error(f"💥 **Extraction failed**: {str(e)}")
+                    st.info("**Try**: Different model or copy/paste instead of file upload")
         
-        # Quick test - simplified
-        if st.button("🧪 Test with Sample + Context Caching", use_container_width=True):
-            sample = """
-            From: With Intelligence <alerts@withintelligence-email.com>
-            Sent: Friday, June 27, 2025 7:50 PM
-            To: Aayesha Ghanekar
-            Subject: Dakota Wealth appoints FoHFs PM to CIO | BNP Paribas adds credit strats
+        # Show recent extractions
+        if st.session_state.all_extractions:
+            st.markdown("---")
+            st.subheader("📊 Recent Extractions")
             
-            Dakota Wealth appoints FoHFs PM to CIO
-            Florida RIA with $6.3bn AuM plots 2025 ETF launch
-            
-            Goldman Sachs veteran John Smith joins Citadel Asia as Managing Director in Hong Kong.
-            Former JPMorgan portfolio manager Lisa Chen launches her own hedge fund, Dragon Capital, 
-            focusing on Asian equities. 
-            
-            Engineers Gate has topped $4 billion in assets and is up 12% this year, continuing 
-            a streak of double-digit returns. The fund's Sharpe ratio improved to 1.8 from 1.2 last year.
-            
-            This message is confidential. Please visit https://tracking.example.com for more.
-            Unsubscribe: https://unsubscribe.example.com
-            """
-            
-            try:
-                st.info("🧪 Testing with improved extraction + debug mode...")
-                
-                # Temporarily enable debug mode for this test
-                original_debug = st.session_state.get('debug_mode', False)
-                st.session_state.debug_mode = True
-                
-                # Show token breakdown
-                cached_context = create_cached_context()
-                cached_tokens = sum(len(v) for v in cached_context.values()) // 4
-                sample_tokens = len(sample) // 4
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Sample Tokens", f"~{sample_tokens:,}")
-                with col2:
-                    st.metric("Cached Tokens", f"~{cached_tokens:,}") 
-                with col3:
-                    reduction_pct = (cached_tokens / (cached_tokens + sample_tokens)) * 100
-                    st.metric("Token Savings", f"{reduction_pct:.0f}%")
-                
-                # Show preprocessing in action
-                with st.expander("📝 Preprocessing Results", expanded=True):
-                    cleaned_sample = preprocess_newsletter_text(sample)
-                
-                # Then extract with caching and debug info
-                people_results, performance_results = extract_single_chunk_safe(cleaned_sample, model)
-                
-                # Restore original debug mode
-                st.session_state.debug_mode = original_debug
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"**Found {len(people_results)} people:**")
-                    for person in people_results:
-                        st.write(f"• {person.get('name', 'Unknown')} → {person.get('company', 'Unknown')}")
-                
-                with col2:
-                    st.write(f"**Found {len(performance_results)} metrics:**")
-                    for perf in performance_results:
-                        st.write(f"• {perf.get('fund_name', 'Unknown')}: {perf.get('metric_type', 'Unknown')} = {perf.get('value', 'N/A')}")
-                
-                if len(people_results) == 0:
-                    st.warning("⚠️ **No people extracted** - This indicates the AI couldn't find specific names in the text")
-                    st.info("💡 **Common causes**: Subject line mentions roles but not names, or preprocessing removed key content")
-                
-                st.success("✅ **Improved extraction with debug info!** Check debug sections above for details.")
-                    
-            except Exception as e:
-                st.error(f"Test failed: {e}")
-    
-    # Show recent extractions
-    if st.session_state.all_extractions or st.session_state.performance_metrics:
-        st.markdown("---")
-        st.subheader("📊 Recent Extractions")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("👥 People", len(st.session_state.all_extractions))
-        with col2:
-            st.metric("📊 Performance", len(st.session_state.performance_metrics))
-        
-        # Show context caching benefits over time
-        if len(st.session_state.all_extractions) > 0:
-            st.markdown("**🚀 Context Caching Benefits:**")
-            
-            # Estimate cumulative savings
-            num_extractions = len(st.session_state.all_extractions)
-            cached_context = create_cached_context()
-            cached_tokens_per_request = sum(len(v) for v in cached_context.values()) // 4
-            total_tokens_saved = cached_tokens_per_request * num_extractions
-            
-            col1, col2, col3 = st.columns(3)
+            col1, col2 = st.columns(2)
             with col1:
-                st.metric("Extractions Done", num_extractions)
+                st.metric("👥 People", len(st.session_state.all_extractions))
             with col2:
-                st.metric("Tokens Saved", f"~{total_tokens_saved:,}")
-            with col3:
-                cost_saved = total_tokens_saved * 0.000125  # Rough estimate: $0.125 per 1K tokens
-                st.metric("Est. Cost Saved", f"${cost_saved:.2f}")
+                # Count total performance metrics across all firms
+                total_metrics = sum(len(firm.get('performance_metrics', [])) for firm in st.session_state.firms)
+                st.metric("📊 Performance", total_metrics)
             
-            st.caption("💡 Context caching reuses instructions/examples, only newsletter content counts as new tokens")
-        
-        # Add people from extractions with safe defaults
-        if st.button("📥 Import New People Only", use_container_width=True):
-            # Only import extractions that don't have existing people
-            added_count = 0
-            skipped_existing = 0
-            
-            for ext in st.session_state.all_extractions:
-                existing_person = find_similar_person(ext)
+            # Add people from extractions with safe defaults
+            if st.button("📥 Import New People Only", use_container_width=True):
+                # Only import extractions that don't have existing people
+                added_count = 0
+                skipped_existing = 0
                 
-                if existing_person:
-                    skipped_existing += 1
-                    continue
-                
-                # Check if person already exists in current database
-                existing = any(safe_get(p, 'name', '').lower() == safe_get(ext, 'name', '').lower() 
-                             for p in st.session_state.people)
-                
-                if not existing and ext.get('name') and ext.get('company'):
-                    # Add person with safe defaults
-                    new_person_id = str(uuid.uuid4())
-                    st.session_state.people.append({
-                        "id": new_person_id,
-                        "name": ext.get('name', 'Unknown'),
-                        "current_title": ext.get('title', 'Unknown'),
-                        "current_company_name": ext.get('company', 'Unknown'),
-                        "location": ext.get('location', 'Unknown'),
-                        "email": "",
-                        "linkedin_profile_url": "",
-                        "phone": "",
-                        "education": "",
-                        "expertise": "",
-                        "aum_managed": "",
-                        "strategy": "Unknown"
-                    })
+                for ext in st.session_state.all_extractions:
+                    existing_person = find_similar_person(ext)
                     
-                    # Add firm if doesn't exist
-                    if not get_firm_by_name(ext.get('company', '')):
-                        st.session_state.firms.append({
-                            "id": str(uuid.uuid4()),
-                            "name": ext.get('company', 'Unknown'),
+                    if existing_person:
+                        skipped_existing += 1
+                        continue
+                    
+                    # Check if person already exists in current database
+                    existing = any(safe_get(p, 'name', '').lower() == safe_get(ext, 'name', '').lower() 
+                                 for p in st.session_state.people)
+                    
+                    if not existing and ext.get('name') and ext.get('company'):
+                        # Add person with safe defaults
+                        new_person_id = str(uuid.uuid4())
+                        st.session_state.people.append({
+                            "id": new_person_id,
+                            "name": ext.get('name', 'Unknown'),
+                            "current_title": ext.get('title', 'Unknown'),
+                            "current_company_name": ext.get('company', 'Unknown'),
                             "location": ext.get('location', 'Unknown'),
-                            "headquarters": "Unknown",
-                            "aum": "Unknown",
-                            "founded": None,
-                            "strategy": "Hedge Fund",
-                            "website": "",
-                            "description": f"Hedge fund - extracted from newsletter"
+                            "email": "",
+                            "linkedin_profile_url": "",
+                            "phone": "",
+                            "education": "",
+                            "expertise": "",
+                            "aum_managed": "",
+                            "strategy": "Unknown"
                         })
-                    
-                    # Add employment with safe defaults
-                    st.session_state.employments.append({
-                        "id": str(uuid.uuid4()),
-                        "person_id": new_person_id,
-                        "company_name": ext.get('company', 'Unknown'),
-                        "title": ext.get('title', 'Unknown'),
-                        "start_date": date.today(),
-                        "end_date": None,
-                        "location": ext.get('location', 'Unknown'),
-                        "strategy": "Unknown"
-                    })
-                    
-                    added_count += 1
-            
-            save_data()  # Save changes
-            if skipped_existing > 0:
-                st.success(f"✅ Added {added_count} new people! Skipped {skipped_existing} existing people.")
-                st.info("💡 Use 'Review Updates' to handle existing people changes")
-            else:
-                st.success(f"✅ Added {added_count} new people to database!")
-            st.rerun()
+                        
+                        # Add firm if doesn't exist
+                        if not get_firm_by_name(ext.get('company', '')):
+                            st.session_state.firms.append({
+                                "id": str(uuid.uuid4()),
+                                "name": ext.get('company', 'Unknown'),
+                                "location": ext.get('location', 'Unknown'),
+                                "headquarters": "Unknown",
+                                "aum": "Unknown",
+                                "founded": None,
+                                "strategy": "Hedge Fund",
+                                "website": "",
+                                "description": f"Hedge fund - extracted from newsletter",
+                                "performance_metrics": []
+                            })
+                        
+                        # Add employment with safe defaults
+                        st.session_state.employments.append({
+                            "id": str(uuid.uuid4()),
+                            "person_id": new_person_id,
+                            "company_name": ext.get('company', 'Unknown'),
+                            "title": ext.get('title', 'Unknown'),
+                            "start_date": date.today(),
+                            "end_date": None,
+                            "location": ext.get('location', 'Unknown'),
+                            "strategy": "Unknown"
+                        })
+                        
+                        added_count += 1
+                
+                save_data()  # Save changes
+                if skipped_existing > 0:
+                    st.success(f"✅ Added {added_count} new people! Skipped {skipped_existing} existing people.")
+                    st.info("💡 Use 'Review Updates' to handle existing people changes")
+                else:
+                    st.success(f"✅ Added {added_count} new people to database!")
+                st.rerun()
 
     # Show pending updates for review
     if st.session_state.pending_updates:
@@ -1908,204 +1585,9 @@ with st.sidebar:
         if st.button("📝 Review & Approve Updates", use_container_width=True):
             st.session_state.show_update_review = True
             st.rerun()
-        
-        # Show quick preview
-        with st.expander("👀 Quick Preview"):
-            for update in st.session_state.pending_updates[:3]:
-                st.write(f"**{update['person_name']}**: {len(update['updates'])} potential changes")
-            if len(st.session_state.pending_updates) > 3:
-                st.write(f"... and {len(st.session_state.pending_updates) - 3} more")
 
     elif not GENAI_AVAILABLE:
         st.error("Please install: pip install google-generativeai")
-
-# --- UPDATE REVIEW MODAL ---
-if st.session_state.show_update_review and st.session_state.pending_updates:
-    st.markdown("---")
-    st.header("🔄 Review Potential Updates")
-    st.info("AI detected changes for existing people. Please review and approve updates below.")
-    
-    # Process each pending update
-    updates_to_remove = []
-    
-    for i, pending_update in enumerate(st.session_state.pending_updates):
-        person_name = pending_update['person_name']
-        updates = pending_update['updates']
-        
-        # Create a clean container for each person
-        with st.container():
-            st.markdown(f"### 👤 {person_name}")
-            col_info, col_actions = st.columns([3, 1])
-            
-            with col_info:
-                st.caption(f"Detected on: {pending_update['timestamp']}")
-                st.write(f"**Found {len(updates)} potential change(s)**")
-            
-            with col_actions:
-                if st.button("👁️ View Profile", key=f"view_profile_{pending_update['id']}", use_container_width=True):
-                    person_id = pending_update['person_id']
-                    go_to_person_details(person_id)
-                    st.rerun()
-            
-            # Show each potential update in a clean format
-            approved_updates = {}
-            
-            for update_key, update_info in updates.items():
-                with st.expander(f"📝 {update_info['reason']}", expanded=True):
-                    col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
-                    
-                    with col1:
-                        st.write(f"**{update_key.title()}**")
-                        confidence = update_info.get('confidence', 'medium')
-                        if confidence == 'high':
-                            st.success("🔴 High confidence")
-                        elif confidence == 'medium':
-                            st.warning("🟡 Medium confidence")
-                        else:
-                            st.info("🔵 Low confidence")
-                    
-                    with col2:
-                        st.write("**Current Value:**")
-                        current_val = update_info['current']
-                        if len(current_val) > 50:
-                            current_val = current_val[:50] + "..."
-                        st.code(current_val)
-                    
-                    with col3:
-                        st.write("**Proposed Value:**")
-                        proposed_val = update_info['proposed']
-                        if len(proposed_val) > 50:
-                            proposed_val = proposed_val[:50] + "..."
-                        st.code(proposed_val)
-                    
-                    with col4:
-                        # Approval checkbox
-                        approve_key = f"approve_{pending_update['id']}_{update_key}"
-                        if st.checkbox("✅ Approve", key=approve_key):
-                            approved_updates[update_key] = update_info
-            
-            # Action buttons for this person
-            st.markdown("---")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button(f"✅ Apply Approved Changes", key=f"apply_{pending_update['id']}", use_container_width=True):
-                    if approved_updates:
-                        # Apply approved updates
-                        person_id = pending_update['person_id']
-                        person = get_person_by_id(person_id)
-                        
-                        if person:
-                            changes_made = []
-                            
-                            # Apply each approved update
-                            for update_key, update_info in approved_updates.items():
-                                old_value = person[update_info['field']]
-                                person[update_info['field']] = update_info['proposed']
-                                changes_made.append(f"{update_key}: '{old_value}' → '{update_info['proposed']}'")
-                                
-                                # If company changed, add new employment record
-                                if update_info['field'] == 'current_company_name':
-                                    st.session_state.employments.append({
-                                        "id": str(uuid.uuid4()),
-                                        "person_id": person_id,
-                                        "company_name": update_info['proposed'],
-                                        "title": safe_get(person, 'current_title'),
-                                        "start_date": date.today(),
-                                        "end_date": None,
-                                        "location": safe_get(person, 'location'),
-                                        "strategy": "Unknown"
-                                    })
-                                    
-                                    # End previous employment
-                                    for emp in st.session_state.employments:
-                                        if (emp['person_id'] == person_id and 
-                                            emp['company_name'] == old_value and 
-                                            emp.get('end_date') is None and
-                                            emp['id'] != st.session_state.employments[-1]['id']):
-                                            emp['end_date'] = date.today()
-                                            break
-                            
-                            # Update the person in the main list
-                            for j, p in enumerate(st.session_state.people):
-                                if p['id'] == person_id:
-                                    st.session_state.people[j] = person
-                                    break
-                            
-                            save_data()
-                            st.success(f"✅ **Updated {person_name}**")
-                            for change in changes_made:
-                                st.write(f"  • {change}")
-                            updates_to_remove.append(i)
-                        
-                    else:
-                        st.warning("Please approve at least one change before applying.")
-            
-            with col2:
-                if st.button(f"❌ Reject All Changes", key=f"reject_{pending_update['id']}", use_container_width=True):
-                    st.info(f"Rejected all updates for {person_name}")
-                    updates_to_remove.append(i)
-            
-            with col3:
-                # Skip this person (keep for later review)
-                if st.button(f"⏭️ Skip for Now", key=f"skip_{pending_update['id']}", use_container_width=True):
-                    st.info(f"Skipped {person_name} - will review later")
-            
-            st.markdown("---")
-    
-    # Remove processed updates
-    if updates_to_remove:
-        for i in sorted(updates_to_remove, reverse=True):
-            del st.session_state.pending_updates[i]
-        save_data()
-        st.rerun()
-    
-    # Bulk actions
-    if len(st.session_state.pending_updates) > 1:
-        st.markdown("### 🔄 Bulk Actions")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("✅ Auto-Approve High Confidence Changes", use_container_width=True):
-                auto_approved = 0
-                for i, update in enumerate(st.session_state.pending_updates):
-                    for update_key, update_info in update['updates'].items():
-                        if update_info.get('confidence') == 'high':
-                            # Auto-approve high confidence changes
-                            person_id = update['person_id']
-                            person = get_person_by_id(person_id)
-                            if person:
-                                person[update_info['field']] = update_info['proposed']
-                                auto_approved += 1
-                
-                if auto_approved > 0:
-                    save_data()
-                    st.success(f"✅ Auto-approved {auto_approved} high-confidence changes")
-                    st.session_state.pending_updates = []  # Clear all for simplicity
-                    st.rerun()
-                else:
-                    st.info("No high-confidence changes found to auto-approve")
-        
-        with col2:
-            if st.button("❌ Reject All Pending Updates", use_container_width=True):
-                st.session_state.pending_updates = []
-                save_data()
-                st.success("✅ All pending updates rejected")
-                st.rerun()
-    
-    # Close button
-    if st.button("✅ Done Reviewing", use_container_width=True):
-        st.session_state.show_update_review = False
-        st.rerun()
-
-elif st.session_state.show_update_review and not st.session_state.pending_updates:
-    st.info("No pending updates to review.")
-    if st.button("✅ Close"):
-        st.session_state.show_update_review = False
-        st.rerun()
-
-elif not GENAI_AVAILABLE:
-    st.error("Please install: pip install google-generativeai")
 
 # --- MAIN CONTENT AREA ---
 st.title("👥 Asian Hedge Fund Talent Network")
@@ -2128,7 +1610,7 @@ with col2:
         st.session_state.global_search = search_query
         st.rerun()
 
-# Handle global search results
+# Handle global search results with pagination
 if search_query and len(search_query.strip()) >= 2:
     st.session_state.global_search = search_query
     matching_people, matching_firms, matching_metrics = global_search(search_query)
@@ -2136,10 +1618,12 @@ if search_query and len(search_query.strip()) >= 2:
     if matching_people or matching_firms or matching_metrics:
         st.markdown("### 🔍 Search Results")
         
-        # Show search results in tabs
+        # Show search results with pagination
         if matching_people:
             st.markdown(f"**👥 People ({len(matching_people)} found)**")
-            for person in matching_people[:5]:  # Show top 5 results
+            people_to_show, people_page_info = paginate_data(matching_people, st.session_state.search_page, 5)
+            
+            for person in people_to_show:
                 col1, col2, col3 = st.columns([3, 2, 1])
                 with col1:
                     st.markdown(f"**{safe_get(person, 'name')}**")
@@ -2152,35 +1636,7 @@ if search_query and len(search_query.strip()) >= 2:
                         st.rerun()
             
             if len(matching_people) > 5:
-                st.caption(f"... and {len(matching_people) - 5} more people")
-        
-        if matching_firms:
-            st.markdown(f"**🏢 Firms ({len(matching_firms)} found)**")
-            for firm in matching_firms[:3]:  # Show top 3 results
-                col1, col2, col3 = st.columns([3, 2, 1])
-                with col1:
-                    st.markdown(f"**{safe_get(firm, 'name')}**")
-                    st.caption(f"{safe_get(firm, 'strategy')}")
-                with col2:
-                    st.caption(f"📍 {safe_get(firm, 'location')} • 💰 {safe_get(firm, 'aum')}")
-                with col3:
-                    if st.button("👁️ View", key=f"search_firm_{firm['id']}", use_container_width=True):
-                        go_to_firm_details(firm['id'])
-                        st.rerun()
-            
-            if len(matching_firms) > 3:
-                st.caption(f"... and {len(matching_firms) - 3} more firms")
-        
-        if matching_metrics:
-            st.markdown(f"**📊 Performance ({len(matching_metrics)} found)**")
-            for metric in matching_metrics[:3]:  # Show top 3 results
-                metric_display = f"{safe_get(metric, 'fund_name')} - {safe_get(metric, 'metric_type')}: {safe_get(metric, 'value')}"
-                if metric.get('period'):
-                    metric_display += f" ({safe_get(metric, 'period')})"
-                st.write(f"• {metric_display}")
-            
-            if len(matching_metrics) > 3:
-                st.caption(f"... and {len(matching_metrics) - 3} more metrics")
+                display_pagination_controls(people_page_info, "search")
         
         # Clear search button
         if st.button("❌ Clear Search"):
@@ -2195,51 +1651,6 @@ if search_query and len(search_query.strip()) >= 2:
             st.session_state.global_search = ""
             st.rerun()
         st.markdown("---")
-
-# Data persistence status indicator
-with st.container():
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-    
-    with col1:
-        st.markdown("**📊 Database Status:**")
-    
-    with col2:
-        # Check if data files exist and show status
-        if PEOPLE_FILE.exists() or FIRMS_FILE.exists():
-            last_modified = max(
-                PEOPLE_FILE.stat().st_mtime if PEOPLE_FILE.exists() else 0,
-                FIRMS_FILE.stat().st_mtime if FIRMS_FILE.exists() else 0
-            )
-            last_save = datetime.fromtimestamp(last_modified).strftime("%H:%M:%S")
-            st.success(f"✅ Saved at {last_save}")
-        else:
-            st.warning("⚠️ No saved data")
-    
-    with col3:
-        if st.button("💾 Force Save"):
-            if save_data():
-                st.success("✅ Saved!")
-            st.rerun()
-    
-    with col4:
-        # Auto-save every time data changes
-        total_items = len(st.session_state.people) + len(st.session_state.firms) + len(st.session_state.all_extractions) + len(st.session_state.performance_metrics)
-        if 'last_saved_count' not in st.session_state:
-            st.session_state.last_saved_count = total_items
-        
-        if total_items != st.session_state.last_saved_count:
-            st.info("💾 Auto-saving...")
-            save_data()
-            st.session_state.last_saved_count = total_items
-        
-        st.caption(f"📁 {DATA_DIR.absolute()}")
-
-# Auto-save indicator
-if st.sidebar.button("💾 Save Data"):
-    if save_data():
-        st.sidebar.success("✅ Data saved!")
-    else:
-        st.sidebar.error("❌ Save failed!")
 
 # Top Navigation
 col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 2])
@@ -2280,7 +1691,9 @@ with col6:
     with col6b:
         st.metric("Firms", len(st.session_state.firms))
     with col6c:
-        st.metric("Metrics", len(st.session_state.performance_metrics))
+        # Count total performance metrics across all firms
+        total_metrics = sum(len(firm.get('performance_metrics', [])) for firm in st.session_state.firms)
+        st.metric("Metrics", total_metrics)
 
 # --- ADD PERSON MODAL ---
 if st.session_state.show_add_person_modal:
@@ -2398,7 +1811,8 @@ if st.session_state.show_add_firm_modal:
                     "founded": founded if founded > 1900 else None,
                     "strategy": strategy,
                     "website": website,
-                    "description": description if description else f"{strategy} hedge fund based in {location}"
+                    "description": description if description else f"{strategy} hedge fund based in {location}",
+                    "performance_metrics": []  # Initialize empty performance metrics
                 })
                 
                 save_data()  # Auto-save
@@ -2411,6 +1825,249 @@ if st.session_state.show_add_firm_modal:
     if st.button("❌ Cancel", key="cancel_add_firm"):
         st.session_state.show_add_firm_modal = False
         st.rerun()
+
+# --- PEOPLE VIEW WITH PAGINATION ---
+if st.session_state.current_view == 'people':
+    st.markdown("---")
+    st.header("👥 Hedge Fund Professionals")
+    
+    if not st.session_state.people:
+        st.info("No people added yet. Use 'Add Person' button above or extract from newsletters using AI.")
+    else:
+        # Filters
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            # Dynamic location filter from existing data
+            locations = ["All"] + sorted(list(set(safe_get(p, 'location') for p in st.session_state.people if safe_get(p, 'location') not in ['Unknown', 'N/A', ''])))
+            location_filter = st.selectbox("Filter by Location", locations)
+        with col2:
+            # Dynamic company filter from existing data
+            companies = ["All"] + sorted(list(set(safe_get(p, 'current_company_name') for p in st.session_state.people if safe_get(p, 'current_company_name') not in ['Unknown', 'N/A', ''])))
+            company_filter = st.selectbox("Filter by Company", companies)
+        with col3:
+            search_term = st.text_input("Search by Name", placeholder="Enter name...")
+        
+        # Apply filters
+        filtered_people = st.session_state.people
+        if location_filter != "All":
+            filtered_people = [p for p in filtered_people if safe_get(p, 'location') == location_filter]
+        if company_filter != "All":
+            filtered_people = [p for p in filtered_people if safe_get(p, 'current_company_name') == company_filter]
+        if search_term:
+            filtered_people = [p for p in filtered_people if search_term.lower() in safe_get(p, 'name').lower()]
+        
+        # Paginate results
+        people_to_show, people_page_info = paginate_data(filtered_people, st.session_state.people_page, 10)
+        
+        st.write(f"**Showing {people_page_info['start_idx'] + 1}-{people_page_info['end_idx']} of {people_page_info['total_items']} people**")
+        
+        # Display people in compact cards
+        for person in people_to_show:
+            with st.container():
+                col1, col2, col3 = st.columns([2, 2, 1])
+                
+                with col1:
+                    st.markdown(f"**👤 {safe_get(person, 'name')}**")
+                    st.caption(f"{safe_get(person, 'current_title')} • {safe_get(person, 'current_company_name')}")
+                
+                with col2:
+                    col2a, col2b = st.columns(2)
+                    with col2a:
+                        location = safe_get(person, 'location')
+                        if len(location) > 10:
+                            location = location[:10] + "..."
+                        st.metric("📍", location, label_visibility="collapsed")
+                    with col2b:
+                        # Show performance metrics count if available
+                        person_metrics = get_person_performance_metrics(person['id'])
+                        if person_metrics:
+                            st.metric("📊", f"{len(person_metrics)} metrics", label_visibility="collapsed")
+                        else:
+                            aum = safe_get(person, 'aum_managed')
+                            if len(aum) > 8:
+                                aum = aum[:8] + "..."
+                            st.metric("💰", aum, label_visibility="collapsed")
+                
+                with col3:
+                    col3a, col3b = st.columns(2)
+                    with col3a:
+                        if st.button("👁️", key=f"view_person_{person['id']}", help="View Profile"):
+                            go_to_person_details(person['id'])
+                            st.rerun()
+                    with col3b:
+                        if st.button("✏️", key=f"edit_person_{person['id']}", help="Edit Person"):
+                            st.session_state.edit_person_data = person
+                            st.session_state.show_edit_person_modal = True
+                            st.rerun()
+                
+                st.markdown("---")
+        
+        # Pagination controls
+        display_pagination_controls(people_page_info, "people")
+
+# --- FIRMS VIEW WITH PAGINATION ---
+elif st.session_state.current_view == 'firms':
+    st.markdown("---")
+    st.header("🏢 Hedge Funds in Asia")
+    
+    if not st.session_state.firms:
+        st.info("No firms added yet. Use 'Add Firm' button above.")
+    else:
+        # Paginate results
+        firms_to_show, firms_page_info = paginate_data(st.session_state.firms, st.session_state.firms_page, 10)
+        
+        st.write(f"**Showing {firms_page_info['start_idx'] + 1}-{firms_page_info['end_idx']} of {firms_page_info['total_items']} firms**")
+        
+        # Display firms in compact cards
+        for firm in firms_to_show:
+            people_count = len(get_people_by_firm(safe_get(firm, 'name')))
+            metrics_count = len(firm.get('performance_metrics', []))
+            
+            # Compact card design
+            with st.container():
+                col1, col2, col3 = st.columns([2, 2, 1])
+                
+                with col1:
+                    st.markdown(f"**🏢 {safe_get(firm, 'name')}**")
+                    st.caption(f"{safe_get(firm, 'strategy')} • {safe_get(firm, 'location')}")
+                
+                with col2:
+                    col2a, col2b, col2c = st.columns(3)
+                    with col2a:
+                        st.metric("💰", safe_get(firm, 'aum'), label_visibility="collapsed")
+                    with col2b:
+                        st.metric("👥", people_count, label_visibility="collapsed")
+                    with col2c:
+                        st.metric("📊", metrics_count, label_visibility="collapsed")
+                
+                with col3:
+                    col3a, col3b = st.columns(2)
+                    with col3a:
+                        if st.button("👁️", key=f"view_firm_{firm['id']}", help="View Details"):
+                            go_to_firm_details(firm['id'])
+                            st.rerun()
+                    with col3b:
+                        if st.button("✏️", key=f"edit_firm_{firm['id']}", help="Edit Firm"):
+                            st.session_state.edit_firm_data = firm
+                            st.session_state.show_edit_firm_modal = True
+                            st.rerun()
+                
+                st.markdown("---")
+        
+        # Pagination controls
+        display_pagination_controls(firms_page_info, "firms")
+
+# --- PERFORMANCE METRICS VIEW (Updated to use firm-linked metrics) ---
+elif st.session_state.current_view == 'performance':
+    st.markdown("---")
+    st.header("📊 Hedge Fund Performance Metrics")
+    
+    # Collect all performance metrics from firms
+    all_performance_metrics = []
+    for firm in st.session_state.firms:
+        if firm.get('performance_metrics'):
+            for metric in firm['performance_metrics']:
+                # Add firm name to metric for display
+                metric_with_firm = {**metric, 'fund_name': firm['name']}
+                all_performance_metrics.append(metric_with_firm)
+    
+    if not all_performance_metrics:
+        st.info("No performance metrics extracted yet. Use the AI extractor in the sidebar to analyze newsletters.")
+    else:
+        # Filter controls
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            # Get unique fund names
+            fund_names = ["All"] + sorted(list(set(safe_get(p, 'fund_name') for p in all_performance_metrics if safe_get(p, 'fund_name') != 'Unknown')))
+            fund_filter = st.selectbox("Filter by Fund", fund_names)
+        with col2:
+            # Get unique metric types
+            metric_types = ["All"] + sorted(list(set(safe_get(p, 'metric_type') for p in all_performance_metrics if safe_get(p, 'metric_type') != 'Unknown')))
+            metric_filter = st.selectbox("Filter by Metric Type", metric_types)
+        with col3:
+            # Get unique periods
+            periods = ["All"] + sorted(list(set(safe_get(p, 'period') for p in all_performance_metrics if safe_get(p, 'period') != 'Unknown')))
+            period_filter = st.selectbox("Filter by Period", periods)
+        
+        # Apply filters
+        filtered_metrics = all_performance_metrics
+        if fund_filter != "All":
+            filtered_metrics = [p for p in filtered_metrics if safe_get(p, 'fund_name') == fund_filter]
+        if metric_filter != "All":
+            filtered_metrics = [p for p in filtered_metrics if safe_get(p, 'metric_type') == metric_filter]
+        if period_filter != "All":
+            filtered_metrics = [p for p in filtered_metrics if safe_get(p, 'period') == period_filter]
+        
+        st.write(f"**Showing {len(filtered_metrics)} performance metrics**")
+        
+        if filtered_metrics:
+            # Create DataFrame for display
+            metrics_data = []
+            for metric in filtered_metrics:
+                metrics_data.append({
+                    "Fund": safe_get(metric, 'fund_name'),
+                    "Metric": safe_get(metric, 'metric_type'),
+                    "Value": safe_get(metric, 'value'),
+                    "Period": safe_get(metric, 'period'),
+                    "Date": safe_get(metric, 'date'),
+                    "Additional Info": safe_get(metric, 'additional_info')
+                })
+            
+            df_metrics = pd.DataFrame(metrics_data)
+            
+            # Display as interactive table
+            st.dataframe(df_metrics, use_container_width=True)
+            
+            # Summary statistics
+            st.markdown("---")
+            st.subheader("📈 Summary Statistics")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                unique_funds = len(set(safe_get(m, 'fund_name') for m in filtered_metrics))
+                st.metric("Unique Funds", unique_funds)
+            with col2:
+                unique_metrics = len(set(safe_get(m, 'metric_type') for m in filtered_metrics))
+                st.metric("Metric Types", unique_metrics)
+            with col3:
+                latest_date = max([safe_get(m, 'date', '1900-01-01') for m in filtered_metrics])
+                st.metric("Latest Data", latest_date)
+            with col4:
+                total_metrics = len(filtered_metrics)
+                st.metric("Total Metrics", total_metrics)
+
+# --- Footer ---
+st.markdown("---")
+st.markdown("### 👥 Asian Hedge Fund Talent Intelligence Platform")
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.markdown("**🔍 Global Search**")
+with col2:
+    st.markdown("**📊 Performance Tracking**") 
+with col3:
+    st.markdown("**🤝 Professional Networks**")
+with col4:
+    st.markdown("**🚀 Intelligent Chunking**")
+
+# Automatic data saving and backup
+if st.button("📥 Export Database Backup", use_container_width=True):
+    export_data = {
+        "people": st.session_state.people,
+        "firms": st.session_state.firms,
+        "employments": st.session_state.employments,
+        "extractions": st.session_state.all_extractions,
+        "export_timestamp": datetime.now().isoformat(),
+        "total_records": len(st.session_state.people) + len(st.session_state.firms)
+    }
+    
+    export_json = json.dumps(export_data, indent=2, default=str)
+    st.download_button(
+        "💾 Download Complete Database",
+        export_json,
+        f"hedge_fund_db_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+        "application/json",
+        use_container_width=True
+    )
 
 # --- EDIT PERSON MODAL ---
 if st.session_state.show_edit_person_modal and st.session_state.edit_person_data:
@@ -2535,6 +2192,30 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         
         description = st.text_area("Description", value=safe_get(firm_data, 'description'))
         
+        # Performance Metrics Management
+        st.markdown("---")
+        st.subheader("📊 Performance Metrics")
+        
+        existing_metrics = firm_data.get('performance_metrics', [])
+        if existing_metrics:
+            st.write(f"**Current Metrics ({len(existing_metrics)}):**")
+            for i, metric in enumerate(existing_metrics):
+                with st.expander(f"{metric.get('metric_type', 'Unknown')} - {metric.get('period', 'Unknown')}"):
+                    col_metric1, col_metric2 = st.columns(2)
+                    with col_metric1:
+                        st.write(f"**Value**: {metric.get('value', 'N/A')}")
+                        st.write(f"**Period**: {metric.get('period', 'N/A')}")
+                    with col_metric2:
+                        st.write(f"**Date**: {metric.get('date', 'N/A')}")
+                        st.write(f"**Info**: {metric.get('additional_info', 'N/A')}")
+                    
+                    if st.button(f"🗑️ Remove Metric", key=f"remove_metric_{i}"):
+                        existing_metrics.pop(i)
+                        firm_data['performance_metrics'] = existing_metrics
+                        st.rerun()
+        else:
+            st.info("No performance metrics yet. Metrics will be added automatically when extracted from newsletters.")
+        
         col_save, col_cancel, col_delete = st.columns(3)
         
         with col_save:
@@ -2598,120 +2279,6 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
                 st.session_state.edit_firm_data = None
                 st.rerun()
 
-# --- PEOPLE VIEW (Now the primary/default view) ---
-if st.session_state.current_view == 'people':
-    st.markdown("---")
-    st.header("👥 Hedge Fund Professionals")
-    
-    if not st.session_state.people:
-        st.info("No people added yet. Use 'Add Person' button above or extract from newsletters using AI.")
-    else:
-        # Filters
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            # Dynamic location filter from existing data
-            locations = ["All"] + sorted(list(set(safe_get(p, 'location') for p in st.session_state.people if safe_get(p, 'location') not in ['Unknown', 'N/A', ''])))
-            location_filter = st.selectbox("Filter by Location", locations)
-        with col2:
-            # Dynamic company filter from existing data
-            companies = ["All"] + sorted(list(set(safe_get(p, 'current_company_name') for p in st.session_state.people if safe_get(p, 'current_company_name') not in ['Unknown', 'N/A', ''])))
-            company_filter = st.selectbox("Filter by Company", companies)
-        with col3:
-            search_term = st.text_input("Search by Name", placeholder="Enter name...")
-        
-        # Apply filters
-        filtered_people = st.session_state.people
-        if location_filter != "All":
-            filtered_people = [p for p in filtered_people if safe_get(p, 'location') == location_filter]
-        if company_filter != "All":
-            filtered_people = [p for p in filtered_people if safe_get(p, 'current_company_name') == company_filter]
-        if search_term:
-            filtered_people = [p for p in filtered_people if search_term.lower() in safe_get(p, 'name').lower()]
-        
-        # Display people in compact cards
-        st.write(f"**Showing {len(filtered_people)} people**")
-        
-        for person in filtered_people:
-            with st.container():
-                col1, col2, col3 = st.columns([2, 2, 1])
-                
-                with col1:
-                    st.markdown(f"**👤 {safe_get(person, 'name')}**")
-                    st.caption(f"{safe_get(person, 'current_title')} • {safe_get(person, 'current_company_name')}")
-                
-                with col2:
-                    col2a, col2b = st.columns(2)
-                    with col2a:
-                        location = safe_get(person, 'location')
-                        if len(location) > 10:
-                            location = location[:10] + "..."
-                        st.metric("📍", location, label_visibility="collapsed")
-                    with col2b:
-                        # Show performance metrics count if available
-                        person_metrics = get_person_performance_metrics(person['id'])
-                        if person_metrics:
-                            st.metric("📊", f"{len(person_metrics)} metrics", label_visibility="collapsed")
-                        else:
-                            aum = safe_get(person, 'aum_managed')
-                            if len(aum) > 8:
-                                aum = aum[:8] + "..."
-                            st.metric("💰", aum, label_visibility="collapsed")
-                
-                with col3:
-                    col3a, col3b = st.columns(2)
-                    with col3a:
-                        if st.button("👁️", key=f"view_person_{person['id']}", help="View Profile"):
-                            go_to_person_details(person['id'])
-                            st.rerun()
-                    with col3b:
-                        if st.button("✏️", key=f"edit_person_{person['id']}", help="Edit Person"):
-                            st.session_state.edit_person_data = person
-                            st.session_state.show_edit_person_modal = True
-                            st.rerun()
-                
-                st.markdown("---")
-
-# --- FIRMS VIEW ---
-elif st.session_state.current_view == 'firms':
-    st.markdown("---")
-    st.header("🏢 Hedge Funds in Asia")
-    
-    if not st.session_state.firms:
-        st.info("No firms added yet. Use 'Add Firm' button above.")
-    else:
-        # Display firms in compact cards
-        for firm in st.session_state.firms:
-            people_count = len(get_people_by_firm(safe_get(firm, 'name')))
-            
-            # Compact card design
-            with st.container():
-                col1, col2, col3 = st.columns([2, 2, 1])
-                
-                with col1:
-                    st.markdown(f"**🏢 {safe_get(firm, 'name')}**")
-                    st.caption(f"{safe_get(firm, 'strategy')} • {safe_get(firm, 'location')}")
-                
-                with col2:
-                    col2a, col2b = st.columns(2)
-                    with col2a:
-                        st.metric("💰 AUM", safe_get(firm, 'aum'), label_visibility="collapsed")
-                    with col2b:
-                        st.metric("👥 People", people_count, label_visibility="collapsed")
-                
-                with col3:
-                    col3a, col3b = st.columns(2)
-                    with col3a:
-                        if st.button("👁️", key=f"view_firm_{firm['id']}", help="View Details"):
-                            go_to_firm_details(firm['id'])
-                            st.rerun()
-                    with col3b:
-                        if st.button("✏️", key=f"edit_firm_{firm['id']}", help="Edit Firm"):
-                            st.session_state.edit_firm_data = firm
-                            st.session_state.show_edit_firm_modal = True
-                            st.rerun()
-                
-                st.markdown("---")
-
 # --- FIRM DETAILS VIEW ---
 elif st.session_state.current_view == 'firm_details' and st.session_state.selected_firm_id:
     firm = get_firm_by_id(st.session_state.selected_firm_id)
@@ -2761,13 +2328,47 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
     if description:
         st.markdown(f"**📄 About:** {description}")
     
+    # Performance Metrics
+    st.markdown("---")
+    st.subheader("📊 Performance Metrics")
+    
+    firm_metrics = firm.get('performance_metrics', [])
+    if firm_metrics:
+        st.write(f"**Found {len(firm_metrics)} performance metrics:**")
+        
+        for metric in firm_metrics:
+            metric_type = safe_get(metric, 'metric_type')
+            value = safe_get(metric, 'value')
+            period = safe_get(metric, 'period')
+            date = safe_get(metric, 'date')
+            additional_info = safe_get(metric, 'additional_info')
+            
+            col1, col2, col3 = st.columns([2, 1, 2])
+            with col1:
+                st.write(f"**{metric_type.title()}**")
+            with col2:
+                st.code(f"{value}%") if metric_type in ['return', 'sharpe', 'alpha'] else st.code(value)
+            with col3:
+                period_info = f"{period}" if period != 'Unknown' else ""
+                date_info = f"({date})" if date != 'Unknown' else ""
+                st.caption(f"{period_info} {date_info}")
+            
+            if additional_info and additional_info != 'Unknown':
+                st.caption(f"ℹ️ {additional_info}")
+    else:
+        st.info("No performance metrics found for this firm.")
+        st.write("💡 Performance metrics will appear here when extracted from newsletters.")
+    
     # People at this firm
     st.markdown("---")
     st.subheader(f"👥 People at {safe_get(firm, 'name')}")
     
     firm_people = get_people_by_firm(safe_get(firm, 'name'))
     if firm_people:
-        for person in firm_people:
+        # Paginate people if there are many
+        people_to_show, people_page_info = paginate_data(firm_people, 0, 10)
+        
+        for person in people_to_show:
             with st.container():
                 col1, col2, col3 = st.columns([2, 2, 1])
                 
@@ -2795,6 +2396,9 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
                         st.rerun()
                 
                 st.markdown("---")
+        
+        if len(firm_people) > 10:
+            st.info(f"Showing first {len(people_to_show)} of {len(firm_people)} people")
     else:
         st.info("No people added for this firm yet.")
 
@@ -2897,71 +2501,31 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     if person_metrics:
         st.write(f"**Found {len(person_metrics)} performance metrics:**")
         
-        # Group metrics by fund for better organization
-        metrics_by_fund = {}
         for metric in person_metrics:
-            fund_name = safe_get(metric, 'fund_name')
-            if fund_name not in metrics_by_fund:
-                metrics_by_fund[fund_name] = []
-            metrics_by_fund[fund_name].append(metric)
-        
-        for fund_name, metrics in metrics_by_fund.items():
-            with st.expander(f"📈 {fund_name} ({len(metrics)} metrics)", expanded=True):
-                for metric in metrics:
-                    metric_type = safe_get(metric, 'metric_type')
-                    value = safe_get(metric, 'value')
-                    period = safe_get(metric, 'period')
-                    date = safe_get(metric, 'date')
-                    additional_info = safe_get(metric, 'additional_info')
-                    
-                    col1, col2, col3 = st.columns([2, 1, 2])
-                    with col1:
-                        st.write(f"**{metric_type.title()}**")
-                    with col2:
-                        st.code(f"{value}%") if metric_type in ['return', 'sharpe', 'alpha'] else st.code(value)
-                    with col3:
-                        period_info = f"{period}" if period != 'Unknown' else ""
-                        date_info = f"({date})" if date != 'Unknown' else ""
-                        st.caption(f"{period_info} {date_info}")
-                    
-                    if additional_info and additional_info != 'Unknown':
-                        st.caption(f"ℹ️ {additional_info}")
-        
-        # Performance summary visualization
-        if len(person_metrics) > 1:
-            st.markdown("**📊 Performance Summary**")
+            metric_type = safe_get(metric, 'metric_type')
+            value = safe_get(metric, 'value')
+            period = safe_get(metric, 'period')
+            date = safe_get(metric, 'date')
+            additional_info = safe_get(metric, 'additional_info')
             
-            # Create a simple performance chart
-            chart_data = []
-            for metric in person_metrics:
-                if metric.get('value') and metric.get('value') != 'Unknown':
-                    try:
-                        value_numeric = float(metric['value'])
-                        chart_data.append({
-                            'Metric': f"{metric.get('metric_type', 'Unknown')} ({metric.get('period', 'Unknown')})",
-                            'Value': value_numeric,
-                            'Fund': metric.get('fund_name', 'Unknown')
-                        })
-                    except ValueError:
-                        continue
+            col1, col2, col3 = st.columns([2, 1, 2])
+            with col1:
+                st.write(f"**{metric_type.title()}**")
+            with col2:
+                st.code(f"{value}%") if metric_type in ['return', 'sharpe', 'alpha'] else st.code(value)
+            with col3:
+                period_info = f"{period}" if period != 'Unknown' else ""
+                date_info = f"({date})" if date != 'Unknown' else ""
+                st.caption(f"{period_info} {date_info}")
             
-            if chart_data:
-                df_chart = pd.DataFrame(chart_data)
-                fig = px.bar(
-                    df_chart,
-                    x='Metric',
-                    y='Value',
-                    color='Fund',
-                    title=f"Performance Metrics for {safe_get(person, 'name')}",
-                    height=400
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            if additional_info and additional_info != 'Unknown':
+                st.caption(f"ℹ️ {additional_info}")
     
     else:
         st.info("No performance metrics found for this person.")
-        st.write("💡 Performance metrics will appear here when extracted from newsletters or when manually added to funds this person manages.")
+        st.write("💡 Performance metrics will appear here when extracted from newsletters.")
     
-    # Shared Work History (The OWL-like feature)
+    # Shared Work History
     st.markdown("---")
     st.subheader("🤝 Professional Network Connections")
     
@@ -2970,242 +2534,29 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     if shared_history:
         st.write(f"**Found {len(shared_history)} colleagues who worked at the same companies:**")
         
-        # Create a nice table
-        network_data = []
-        for connection in shared_history:
-            network_data.append({
-                "Colleague": connection['colleague_name'],
-                "Shared Company": connection['shared_company'],
-                "Overlap (Years)": connection['overlap_years'],
-                "Current Role": f"{connection['colleague_current_title']} at {connection['colleague_current_company']}",
-                "Colleague ID": connection['colleague_id']
-            })
+        # Show top connections with pagination
+        connections_to_show, connections_page_info = paginate_data(shared_history, 0, 10)
         
-        df_network = pd.DataFrame(network_data)
-        
-        # Display as interactive table
-        st.dataframe(df_network.drop(columns=['Colleague ID']), use_container_width=True)
-        
-        # Quick access buttons for top connections
-        st.write("**Quick Access to Top Connections:**")
-        top_connections = shared_history[:5]  # Top 5 connections
-        
-        cols = st.columns(min(5, len(top_connections)))
-        for i, connection in enumerate(top_connections):
-            with cols[i]:
-                if st.button(f"View {connection['colleague_name'].split()[0]}", 
-                           key=f"quick_view_{connection['colleague_id']}",
-                           use_container_width=True):
+        for connection in connections_to_show:
+            col1, col2, col3 = st.columns([2, 2, 1])
+            with col1:
+                st.write(f"**{connection['colleague_name']}**")
+                st.caption(f"Shared: {connection['shared_company']}")
+            with col2:
+                st.write(f"{connection['colleague_current_title']}")
+                st.caption(f"at {connection['colleague_current_company']}")
+            with col3:
+                st.metric("Years Together", f"{connection['overlap_years']}")
+                if st.button("👁️", key=f"view_colleague_{connection['colleague_id']}", help="View Profile"):
                     go_to_person_details(connection['colleague_id'])
                     st.rerun()
-                st.caption(f"{connection['overlap_years']} years together")
         
-        # Visualization of network
-        if len(shared_history) > 0:
-            st.markdown("---")
-            st.subheader("📊 Network Visualization")
-            
-            # Create a simple network chart
-            fig = go.Figure()
-            
-            # Add connections as a bar chart
-            companies = [conn['shared_company'] for conn in shared_history]
-            overlaps = [conn['overlap_years'] for conn in shared_history]
-            colleagues = [conn['colleague_name'] for conn in shared_history]
-            
-            fig.add_trace(go.Bar(
-                x=companies,
-                y=overlaps,
-                text=[f"{colleague}<br>{overlap}y" for colleague, overlap in zip(colleagues, overlaps)],
-                textposition='auto',
-                name="Work Overlap"
-            ))
-            
-            fig.update_layout(
-                title=f"Professional Network Connections for {safe_get(person, 'name')}",
-                xaxis_title="Companies",
-                yaxis_title="Overlap Years",
-                height=400
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+        if len(shared_history) > 10:
+            st.info(f"Showing top {len(connections_to_show)} of {len(shared_history)} connections")
         
     else:
         st.info("No shared work history found with other people in the database.")
         st.write("💡 Add more people who worked at the same companies to see connections!")
-
-# --- PERFORMANCE METRICS VIEW ---
-elif st.session_state.current_view == 'performance':
-    st.markdown("---")
-    st.header("📊 Hedge Fund Performance Metrics")
-    
-    if not st.session_state.performance_metrics:
-        st.info("No performance metrics extracted yet. Use the AI extractor in the sidebar to analyze newsletters.")
-    else:
-        # Filter controls
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            # Get unique fund names
-            fund_names = ["All"] + sorted(list(set(safe_get(p, 'fund_name') for p in st.session_state.performance_metrics if safe_get(p, 'fund_name') != 'Unknown')))
-            fund_filter = st.selectbox("Filter by Fund", fund_names)
-        with col2:
-            # Get unique metric types
-            metric_types = ["All"] + sorted(list(set(safe_get(p, 'metric_type') for p in st.session_state.performance_metrics if safe_get(p, 'metric_type') != 'Unknown')))
-            metric_filter = st.selectbox("Filter by Metric Type", metric_types)
-        with col3:
-            # Get unique periods
-            periods = ["All"] + sorted(list(set(safe_get(p, 'period') for p in st.session_state.performance_metrics if safe_get(p, 'period') != 'Unknown')))
-            period_filter = st.selectbox("Filter by Period", periods)
-        
-        # Apply filters
-        filtered_metrics = st.session_state.performance_metrics
-        if fund_filter != "All":
-            filtered_metrics = [p for p in filtered_metrics if safe_get(p, 'fund_name') == fund_filter]
-        if metric_filter != "All":
-            filtered_metrics = [p for p in filtered_metrics if safe_get(p, 'metric_type') == metric_filter]
-        if period_filter != "All":
-            filtered_metrics = [p for p in filtered_metrics if safe_get(p, 'period') == period_filter]
-        
-        st.write(f"**Showing {len(filtered_metrics)} performance metrics**")
-        
-        if filtered_metrics:
-            # Create DataFrame for display
-            metrics_data = []
-            for metric in filtered_metrics:
-                metrics_data.append({
-                    "Fund": safe_get(metric, 'fund_name'),
-                    "Metric": safe_get(metric, 'metric_type'),
-                    "Value": safe_get(metric, 'value'),
-                    "Period": safe_get(metric, 'period'),
-                    "Date": safe_get(metric, 'date'),
-                    "Benchmark": safe_get(metric, 'benchmark'),
-                    "Additional Info": safe_get(metric, 'additional_info')
-                })
-            
-            df_metrics = pd.DataFrame(metrics_data)
-            
-            # Display as interactive table
-            st.dataframe(df_metrics, use_container_width=True)
-            
-            # Summary statistics
-            st.markdown("---")
-            st.subheader("📈 Summary Statistics")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                unique_funds = len(set(safe_get(m, 'fund_name') for m in filtered_metrics))
-                st.metric("Unique Funds", unique_funds)
-            with col2:
-                unique_metrics = len(set(safe_get(m, 'metric_type') for m in filtered_metrics))
-                st.metric("Metric Types", unique_metrics)
-            with col3:
-                latest_date = max([safe_get(m, 'date', '1900-01-01') for m in filtered_metrics])
-                st.metric("Latest Data", latest_date)
-            with col4:
-                total_metrics = len(filtered_metrics)
-                st.metric("Total Metrics", total_metrics)
-            
-            # Performance visualization
-            if len(filtered_metrics) > 0:
-                st.markdown("---")
-                st.subheader("📊 Performance Visualization")
-                
-                # Group by metric type for visualization
-                metric_types_in_data = list(set(safe_get(m, 'metric_type') for m in filtered_metrics))
-                
-                if len(metric_types_in_data) > 0:
-                    selected_metric_for_chart = st.selectbox("Select metric for chart:", metric_types_in_data)
-                    
-                    # Filter data for selected metric
-                    chart_data = [m for m in filtered_metrics if safe_get(m, 'metric_type') == selected_metric_for_chart]
-                    
-                    if chart_data:
-                        # Prepare data for plotting
-                        chart_df = pd.DataFrame([{
-                            'Fund': safe_get(m, 'fund_name'),
-                            'Value': safe_get(m, 'value'),
-                            'Period': safe_get(m, 'period'),
-                            'Date': safe_get(m, 'date')
-                        } for m in chart_data])
-                        
-                        # Try to convert values to numeric for proper plotting
-                        try:
-                            chart_df['Value_Numeric'] = pd.to_numeric(chart_df['Value'], errors='coerce')
-                            chart_df = chart_df.dropna(subset=['Value_Numeric'])
-                            
-                            if not chart_df.empty:
-                                # Create bar chart
-                                fig = px.bar(
-                                    chart_df,
-                                    x='Fund',
-                                    y='Value_Numeric',
-                                    color='Period',
-                                    title=f'{selected_metric_for_chart.title()} by Fund',
-                                    labels={'Value_Numeric': f'{selected_metric_for_chart.title()}'}
-                                )
-                                fig.update_layout(height=400)
-                                st.plotly_chart(fig, use_container_width=True)
-                            else:
-                                st.info("No numeric data available for visualization")
-                        except Exception as e:
-                            st.warning(f"Could not create chart: {e}")
-                            
-            # Export functionality
-            st.markdown("---")
-            if st.button("📥 Export Performance Data", use_container_width=True):
-                export_data = {
-                    "performance_metrics": filtered_metrics,
-                    "export_timestamp": datetime.now().isoformat(),
-                    "filters_applied": {
-                        "fund": fund_filter,
-                        "metric_type": metric_filter,
-                        "period": period_filter
-                    },
-                    "total_records": len(filtered_metrics)
-                }
-                
-                export_json = json.dumps(export_data, indent=2, default=str)
-                st.download_button(
-                    "💾 Download Performance Metrics",
-                    export_json,
-                    f"performance_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    "application/json",
-                    use_container_width=True
-                )
-
-# --- Footer ---
-st.markdown("---")
-st.markdown("### 👥 Asian Hedge Fund Talent Intelligence Platform")
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.markdown("**🔍 Global Search**")
-with col2:
-    st.markdown("**📊 Performance Tracking**") 
-with col3:
-    st.markdown("**🤝 Professional Networks**")
-with col4:
-    st.markdown("**🚀 Smart Context Caching**")
-
-# Automatic data saving and backup
-if st.button("📥 Export Database Backup", use_container_width=True):
-    export_data = {
-        "people": st.session_state.people,
-        "firms": st.session_state.firms,
-        "employments": st.session_state.employments,
-        "extractions": st.session_state.all_extractions,
-        "performance_metrics": st.session_state.performance_metrics,
-        "export_timestamp": datetime.now().isoformat(),
-        "total_records": len(st.session_state.people) + len(st.session_state.firms) + len(st.session_state.performance_metrics)
-    }
-    
-    export_json = json.dumps(export_data, indent=2, default=str)
-    st.download_button(
-        "💾 Download Complete Database",
-        export_json,
-        f"hedge_fund_db_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-        "application/json",
-        use_container_width=True
-    )
 
 # Force save data periodically
 current_time = datetime.now()
@@ -3214,6 +2565,6 @@ if 'last_auto_save' not in st.session_state:
 
 # Auto-save every 30 seconds if there's data
 time_since_save = (current_time - st.session_state.last_auto_save).total_seconds()
-if time_since_save > 30 and (st.session_state.people or st.session_state.firms or st.session_state.all_extractions or st.session_state.performance_metrics):
+if time_since_save > 30 and (st.session_state.people or st.session_state.firms or st.session_state.all_extractions):
     save_data()
     st.session_state.last_auto_save = current_time
