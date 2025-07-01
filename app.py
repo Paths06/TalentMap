@@ -1961,43 +1961,48 @@ with st.sidebar:
         else:
             uploaded_file = st.file_uploader("Upload newsletter:", type=['txt'])
             if uploaded_file:
-                success, content, error_msg, encoding_used = load_file_content_enhanced(uploaded_file)
-                
-                if success:
-                    newsletter_text = content
-                    char_count = len(newsletter_text)
+                try:
+                    success, content, error_msg, encoding_used = load_file_content_enhanced(uploaded_file)
                     
-                    # Show file info with encoding
-                    st.success(f"✅ **File loaded successfully!**")
-                    col_info1, col_info2 = st.columns(2)
-                    with col_info1:
-                        st.info(f"📁 **Size**: {char_count:,} characters")
-                        st.info(f"🔤 **Encoding**: {encoding_used}")
-                    with col_info2:
-                        # Calculate estimates based on current settings
-                        if chunk_size_mode == "auto":
-                            estimated_chunk_size = min(max(char_count // 50, 15000), 35000)
-                        else:
-                            chunk_sizes = {"single": 25000, "small": 10000, "medium": 20000, "large": 35000, "xlarge": 50000}
-                            estimated_chunk_size = chunk_sizes.get(chunk_size_mode, 20000)
+                    if success:
+                        newsletter_text = content
+                        char_count = len(newsletter_text)
                         
-                        estimated_chunks = max(1, char_count // estimated_chunk_size)
-                        estimated_time = estimated_chunks * 2  # 2 minutes per chunk estimate
+                        # Show file info with encoding
+                        st.success(f"✅ **File loaded successfully!**")
+                        col_info1, col_info2 = st.columns(2)
+                        with col_info1:
+                            st.info(f"📁 **Size**: {char_count:,} characters")
+                            st.info(f"🔤 **Encoding**: {encoding_used}")
+                        with col_info2:
+                            # Calculate estimates based on current settings
+                            if chunk_size_mode == "auto":
+                                estimated_chunk_size = min(max(char_count // 50, 15000), 35000)
+                            else:
+                                chunk_sizes = {"single": 25000, "small": 10000, "medium": 20000, "large": 35000, "xlarge": 50000}
+                                estimated_chunk_size = chunk_sizes.get(chunk_size_mode, 20000)
+                            
+                            estimated_chunks = max(1, char_count // estimated_chunk_size)
+                            estimated_time = estimated_chunks * 2  # 2 minutes per chunk estimate
+                            
+                            st.info(f"📊 **Est. chunks**: {estimated_chunks} ({chunk_size_mode} mode)")
+                            st.info(f"⏱️ **Est. time**: ~{estimated_time} minutes")
                         
-                        st.info(f"📊 **Est. chunks**: {estimated_chunks} ({chunk_size_mode} mode)")
-                        st.info(f"⏱️ **Est. time**: ~{estimated_time} minutes")
-                    
-                    # Show warning message if there was one
-                    if error_msg:
-                        st.warning(f"⚠️ {error_msg}")
-                    
-                    # Show preview of content
-                    with st.expander("👀 Content Preview", expanded=False):
-                        preview_text = newsletter_text[:1000] + "..." if len(newsletter_text) > 1000 else newsletter_text
-                        st.text_area("Preview:", value=preview_text, height=150, disabled=True)
-                else:
-                    st.error(f"❌ {error_msg}")
-                    st.info("💡 **Tips**: Try saving the file as UTF-8 text, or check if it contains special characters")
+                        # Show warning message if there was one
+                        if error_msg:
+                            st.warning(f"⚠️ {error_msg}")
+                        
+                        # Show preview of content
+                        with st.expander("👀 Content Preview", expanded=False):
+                            preview_text = newsletter_text[:1000] + "..." if len(newsletter_text) > 1000 else newsletter_text
+                            st.text_area("Preview:", value=preview_text, height=150, disabled=True)
+                    else:
+                        st.error(f"❌ {error_msg}")
+                        st.info("💡 **Tips**: Try saving the file as UTF-8 text, or check if it contains special characters")
+                        
+                except Exception as file_error:
+                    st.error(f"❌ Error loading file: {str(file_error)}")
+                    st.info("💡 **Try**: Different file encoding or copy/paste the content instead")
 
         # Extract button
         if st.button("🚀 Start Background Extraction", use_container_width=True):
@@ -2175,7 +2180,7 @@ if st.session_state.show_add_person_modal:
         with col4:
             strategy = handle_dynamic_input("strategy", "", "people", "add_person")
         
-        submitted = st.form_submit_button("Add Person")
+        submitted = st.form_submit_button("Add Person", use_container_width=True)
         
         if submitted:
             if name and title and company and location:
@@ -2241,7 +2246,7 @@ if st.session_state.show_add_firm_modal:
         
         with col1:
             firm_name = st.text_input("Firm Name*", placeholder="Tiger Asia Management")
-            location = handle_dynamic_input("location", "", "firms", "add_firm")
+            location = handle_dynamic_input("location", "", "firms", "add_firm", in_form=True)
             aum = st.text_input("AUM", placeholder="5B USD")
             
         with col2:
@@ -2251,7 +2256,7 @@ if st.session_state.show_add_firm_modal:
         
         description = st.text_area("Description", placeholder="Brief description of the firm...")
         
-        submitted = st.form_submit_button("Add Firm")
+        submitted = st.form_submit_button("Add Firm", use_container_width=True)
         
         if submitted:
             if firm_name and location:
@@ -2778,7 +2783,7 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
                 help=f"Available firms: {', '.join(company_options[:3])}{'...' if len(company_options) > 3 else ''}"
             )
             
-            location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person")
+            location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person", in_form=True)
         
         with col2:
             email = st.text_input("Email", value=safe_get(person_data, 'email'))
@@ -2788,16 +2793,23 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
         
         col3, col4 = st.columns(2)
         with col3:
-            expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person")
+            expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person", in_form=True)
             aum = st.text_input("AUM Managed", value=safe_get(person_data, 'aum_managed'))
         
         with col4:
-            strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person")
+            strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person", in_form=True)
         
         col_save, col_cancel, col_delete = st.columns(3)
         
         with col_save:
-            if st.form_submit_button("💾 Save Changes", use_container_width=True):
+            save_submitted = st.form_submit_button("💾 Save Changes", use_container_width=True)
+        with col_cancel:
+            cancel_submitted = st.form_submit_button("❌ Cancel", use_container_width=True)
+        with col_delete:
+            delete_submitted = st.form_submit_button("🗑️ Delete Person", use_container_width=True)
+        
+        # Handle form submissions
+        if save_submitted:
                 if name and title and company and location:
                     person_data.update({
                         "name": name,
@@ -2856,12 +2868,12 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         
         with col1:
             firm_name = st.text_input("Firm Name*", value=safe_get(firm_data, 'name'))
-            location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm")
+            location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm", in_form=True)
             headquarters = st.text_input("Headquarters", value=safe_get(firm_data, 'headquarters'))
             aum = st.text_input("AUM", value=safe_get(firm_data, 'aum'))
             
         with col2:
-            strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm")
+            strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm", in_form=True)
             founded = st.number_input("Founded", min_value=1900, max_value=2025, 
                                     value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
             website = st.text_input("Website", value=safe_get(firm_data, 'website'))
@@ -2895,7 +2907,14 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         col_save, col_cancel, col_delete = st.columns(3)
         
         with col_save:
-            if st.form_submit_button("💾 Save Changes", use_container_width=True):
+            save_submitted = st.form_submit_button("💾 Save Changes", use_container_width=True)
+        with col_cancel:
+            cancel_submitted = st.form_submit_button("❌ Cancel", use_container_width=True)
+        with col_delete:
+            delete_submitted = st.form_submit_button("🗑️ Delete Firm", use_container_width=True)
+        
+        # Handle form submissions
+        if save_submitted:
                 if firm_name and location:
                     old_name = safe_get(firm_data, 'name')
                     firm_data.update({
