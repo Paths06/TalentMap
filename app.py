@@ -3004,7 +3004,7 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
                 help=f"Available firms: {', '.join(company_options[:3])}{'...' if len(company_options) > 3 else ''}"
             )
             
-            location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person", in_form=True)
+            location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person")
         
         with col2:
             email = st.text_input("Email", value=safe_get(person_data, 'email'))
