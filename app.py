@@ -775,34 +775,45 @@ def setup_gemini(api_key, model_id="gemini-1.5-flash"):
         return None
 
 def get_model_rate_limits(model_id):
-    """Get rate limits for different Gemini models - UPDATED FOR PAID TIER 1"""
+    """Get rate limits for different Gemini models - UPDATED FOR ACTUAL TIER 1 LIMITS"""
     rate_limits = {
-        # PAID TIER 1 - Much higher limits
-        "gemini-1.5-flash": {"requests_per_minute": 1000, "delay": 0.1},  # 1000 RPM
-        "gemini-1.5-flash-latest": {"requests_per_minute": 1000, "delay": 0.1},
-        "gemini-1.5-flash-8b": {"requests_per_minute": 4000, "delay": 0.05},  # 4000 RPM
-        "gemini-1.5-pro": {"requests_per_minute": 360, "delay": 0.2},  # 360 RPM
-        "gemini-1.5-pro-latest": {"requests_per_minute": 360, "delay": 0.2},
+        # ACTUAL TIER 1 LIMITS - Much higher than before
+        "gemini-1.5-flash": {"requests_per_minute": 2000, "delay": 0.03},  # 2000 RPM = 33/sec
+        "gemini-1.5-flash-latest": {"requests_per_minute": 2000, "delay": 0.03},
+        "gemini-1.5-flash-8b": {"requests_per_minute": 4000, "delay": 0.015},  # 4000 RPM = 67/sec
+        "gemini-1.5-pro": {"requests_per_minute": 1000, "delay": 0.06},  # 1000 RPM = 17/sec
+        "gemini-1.5-pro-latest": {"requests_per_minute": 1000, "delay": 0.06},
         # 2.0 models with conservative paid limits
-        "gemini-2.0-flash-thinking-exp": {"requests_per_minute": 300, "delay": 0.3},
-        "gemini-2.0-flash-exp": {"requests_per_minute": 300, "delay": 0.3},
-        "gemini-2.5-flash-exp": {"requests_per_minute": 200, "delay": 0.4},
-        "gemini-exp-1114": {"requests_per_minute": 100, "delay": 0.8},
-        "gemini-exp-1121": {"requests_per_minute": 100, "delay": 0.8}
+        "gemini-2.0-flash-thinking-exp": {"requests_per_minute": 300, "delay": 0.2},
+        "gemini-2.0-flash-exp": {"requests_per_minute": 300, "delay": 0.2},
+        "gemini-2.5-flash-exp": {"requests_per_minute": 200, "delay": 0.3},
+        "gemini-exp-1114": {"requests_per_minute": 100, "delay": 0.6},
+        "gemini-exp-1121": {"requests_per_minute": 100, "delay": 0.6}
     }
     
     # Get base limits
-    base_limits = rate_limits.get(model_id, {"requests_per_minute": 100, "delay": 0.8})
+    base_limits = rate_limits.get(model_id, {"requests_per_minute": 100, "delay": 0.6})
     
     # Special handling for 2.0+ models which can be unstable
     if any(version in model_id for version in ["2.0", "2.5"]):
-        base_limits["delay"] = max(base_limits["delay"], 0.3)  # Minimum 0.3s delay
+        base_limits["delay"] = max(base_limits["delay"], 0.2)  # Minimum 0.2s delay
         base_limits["max_retries"] = 3
         base_limits["timeout_seconds"] = 90  # Longer timeout for newer models
         base_limits["experimental"] = True
     else:
         base_limits["timeout_seconds"] = 60
         base_limits["experimental"] = False
+    
+    # Add batching info for ultra-high rate models
+    if base_limits["requests_per_minute"] >= 2000:
+        base_limits["supports_batching"] = True
+        base_limits["batch_size"] = 3  # Process 3 chunks with minimal delay
+    elif base_limits["requests_per_minute"] >= 1000:
+        base_limits["supports_batching"] = True
+        base_limits["batch_size"] = 2  # Process 2 chunks with minimal delay
+    else:
+        base_limits["supports_batching"] = False
+        base_limits["batch_size"] = 1
     
     return base_limits
 
@@ -1068,7 +1079,7 @@ def extract_single_chunk_safe(text, model):
 
 # --- BACKGROUND PROCESSING FUNCTIONS ---
 def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode):
-    """OPTIMIZED: Start background extraction with Tier 1 optimizations"""
+    """OPTIMIZED: Start background extraction with 2000 RPM Flash 1.5 optimizations"""
     st.session_state.background_processing = {
         'is_running': True,
         'progress': 0,
@@ -1088,48 +1099,57 @@ def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode
         # Preprocess text
         cleaned_text = preprocess_newsletter_text(text, preprocessing_mode)
         
-        # TIER 1 OPTIMIZED: Much larger chunk sizes for faster processing
-        tier1_chunk_sizes = {
-            "small": 25000,      # Was 10K, now 25K
-            "medium": 50000,     # Was 20K, now 50K  
-            "large": 75000,      # Was 35K, now 75K
-            "xlarge": 100000,    # Was 50K, now 100K
-            "auto": min(max(len(cleaned_text) // 25, 40000), 75000)  # Much more aggressive auto-sizing
+        # 2000 RPM OPTIMIZED: Even larger chunk sizes for ultra-fast processing
+        flash_2000_chunk_sizes = {
+            "small": 40000,      # Was 25K, now 40K for 2000 RPM
+            "medium": 80000,     # Was 50K, now 80K
+            "large": 120000,     # Was 75K, now 120K
+            "xlarge": 150000,    # Was 100K, now 150K
+            "auto": min(max(len(cleaned_text) // 15, 60000), 120000),  # Much more aggressive auto-sizing
+            "single": len(cleaned_text)  # Process entire text as single chunk if possible
         }
         
-        # Use tier 1 optimized sizes
-        chunk_size = tier1_chunk_sizes.get(chunk_size_mode, 50000)
+        # Use 2000 RPM optimized sizes
+        chunk_size = flash_2000_chunk_sizes.get(chunk_size_mode, 80000)
         
-        # Create larger, optimized chunks
-        chunks = []
-        current_pos = 0
-        while current_pos < len(cleaned_text):
-            end_pos = min(current_pos + chunk_size, len(cleaned_text))
-            if end_pos < len(cleaned_text):
-                # Look for natural break points in larger window
-                search_start = max(end_pos - 1000, current_pos)  # Larger search window
-                para_break = cleaned_text.rfind('\n\n', search_start, end_pos)
-                if para_break > current_pos:
-                    end_pos = para_break + 2
-            
-            chunk = cleaned_text[current_pos:end_pos].strip()
-            if len(chunk) > 500:  # Minimum chunk size increased
-                chunks.append(chunk)
-            current_pos = end_pos
+        # For single chunk mode with 2000 RPM, try to process everything at once
+        if chunk_size_mode == "single" and len(cleaned_text) <= 200000:  # Up to 200K chars in single chunk
+            chunks = [cleaned_text]
+        else:
+            # Create optimized chunks for batching
+            chunks = []
+            current_pos = 0
+            while current_pos < len(cleaned_text):
+                end_pos = min(current_pos + chunk_size, len(cleaned_text))
+                if end_pos < len(cleaned_text):
+                    # Look for natural break points in larger window
+                    search_start = max(end_pos - 2000, current_pos)  # Much larger search window
+                    para_break = cleaned_text.rfind('\n\n', search_start, end_pos)
+                    if para_break > current_pos:
+                        end_pos = para_break + 2
+                
+                chunk = cleaned_text[current_pos:end_pos].strip()
+                if len(chunk) > 1000:  # Minimum chunk size for 2000 RPM
+                    chunks.append(chunk)
+                current_pos = end_pos
         
         st.session_state.background_processing['total_chunks'] = len(chunks)
-        logger.info(f"TIER 1 OPTIMIZED: {len(chunks)} chunks, avg size: {len(cleaned_text)//len(chunks) if chunks else 0}, model: {model.model_id}")
+        logger.info(f"2000 RPM OPTIMIZED: {len(chunks)} chunks, avg size: {len(cleaned_text)//len(chunks) if chunks else 0}, model: {model.model_id}")
         
-        # TIER 1 PROCESSING: Much faster with higher limits
+        # 2000 RPM PROCESSING: Ultra-fast with batching
         rate_limits = get_model_rate_limits(model.model_id)
         delay = rate_limits['delay']
+        supports_batching = rate_limits.get('supports_batching', False)
+        batch_size = rate_limits.get('batch_size', 1)
         
         all_people = []
         all_performance = []
         failed_chunks = []
         consecutive_failures = 0
         
-        for i, chunk in enumerate(chunks):
+        # Process chunks with batching for high-rate models
+        i = 0
+        while i < len(chunks):
             # Check if processing should stop
             if not st.session_state.background_processing['is_running']:
                 logger.info(f"Processing stopped by user at chunk {i+1}")
@@ -1138,123 +1158,126 @@ def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode
             # Update activity timestamp
             st.session_state.background_processing['last_activity'] = datetime.now()
             
+            # Determine batch size for this iteration
+            if supports_batching and consecutive_failures == 0:
+                current_batch_size = min(batch_size, len(chunks) - i)
+                chunk_batch = chunks[i:i + current_batch_size]
+            else:
+                current_batch_size = 1
+                chunk_batch = [chunks[i]]
+            
             # Update progress
             st.session_state.background_processing.update({
-                'current_chunk': i + 1,
-                'progress': int(((i + 1) / len(chunks)) * 100),
-                'status_message': f'Processing chunk {i + 1}/{len(chunks)}... (Tier 1 Speed)'
+                'current_chunk': i + current_batch_size,
+                'progress': int(((i + current_batch_size) / len(chunks)) * 100),
+                'status_message': f'Processing batch {i//batch_size + 1} (chunks {i + 1}-{i + current_batch_size}/{len(chunks)})... (2000 RPM)'
             })
             
-            try:
-                logger.info(f"Processing chunk {i+1}/{len(chunks)} (size: {len(chunk)} chars, delay: {delay}s)")
-                people, performance = extract_single_chunk_safe(chunk, model)
-                
-                if people or performance:
-                    all_people.extend(people)
-                    all_performance.extend(performance)
-                    consecutive_failures = 0  # Reset failure counter
+            # Process batch
+            batch_people = []
+            batch_performance = []
+            batch_errors = 0
+            
+            for j, chunk in enumerate(chunk_batch):
+                try:
+                    logger.info(f"Processing chunk {i+j+1}/{len(chunks)} (size: {len(chunk)} chars, delay: {delay}s)")
+                    people, performance = extract_single_chunk_safe(chunk, model)
                     
-                    # TIER 1 OPTIMIZED: More frequent auto-saves (every 3 chunks or 15+ items)
-                    if (i + 1) % 3 == 0 or len(all_people) >= 15:
-                        if not st.session_state.enable_review_mode:
-                            # Direct save
-                            saved_p, saved_perf = save_approved_extractions(all_people, all_performance)
-                            st.session_state.background_processing['saved_people'] += saved_p
-                            st.session_state.background_processing['saved_performance'] += saved_perf
-                            
-                            # Clear saved items from memory
-                            all_people = []
-                            all_performance = []
-                            
-                            logger.info(f"Tier 1 auto-saved {saved_p} people, {saved_perf} metrics at chunk {i+1}")
+                    if people or performance:
+                        batch_people.extend(people)
+                        batch_performance.extend(performance)
+                        logger.info(f"Chunk {i+j+1} success: {len(people)} people, {len(performance)} metrics")
+                    else:
+                        batch_errors += 1
+                        logger.warning(f"Chunk {i+j+1}: No results found")
                     
-                    logger.info(f"Chunk {i+1} success: {len(people)} people, {len(performance)} metrics")
-                else:
-                    consecutive_failures += 1
-                    logger.warning(f"Chunk {i+1}: No results found")
+                    # 2000 RPM: Very minimal delay between chunks in batch
+                    if j < len(chunk_batch) - 1:  # Don't delay after last chunk in batch
+                        time.sleep(delay)
+                        
+                except Exception as e:
+                    batch_errors += 1
+                    error_msg = f"Chunk {i+j+1} failed: {str(e)}"
+                    st.session_state.background_processing['errors'].append(error_msg)
+                    failed_chunks.append(i+j+1)
+                    logger.error(error_msg)
+            
+            # Process batch results
+            if batch_people or batch_performance:
+                all_people.extend(batch_people)
+                all_performance.extend(batch_performance)
+                consecutive_failures = 0  # Reset failure counter on success
                 
-                # Store results
-                st.session_state.background_processing['results'] = {
-                    'people': all_people,
-                    'performance': all_performance
-                }
-                
-                # TIER 1 OPTIMIZED: Minimal delays, exponential backoff only on failures
-                if consecutive_failures >= 3:
-                    actual_delay = min(delay * (1.2 ** consecutive_failures), delay * 3)  # Less aggressive backoff
-                    logger.warning(f"Multiple failures detected, increasing delay to {actual_delay}s")
-                else:
-                    actual_delay = delay  # Use the very short Tier 1 delays
-                
-                if i < len(chunks) - 1:  # Don't delay after last chunk
-                    # TIER 1: Much shorter delays
-                    time.sleep(actual_delay)
-                
-                # Emergency stop if too many consecutive failures (increased tolerance)
-                if consecutive_failures >= 15:  # Was 10, now 15 for Tier 1
-                    logger.error(f"Too many consecutive failures ({consecutive_failures}), stopping processing")
-                    st.session_state.background_processing['errors'].append(f"Stopped due to {consecutive_failures} consecutive failures")
-                    break
-                    
-            except TimeoutError as timeout_error:
-                consecutive_failures += 1
-                error_msg = f"Chunk {i + 1} timed out: {str(timeout_error)}"
-                st.session_state.background_processing['errors'].append(error_msg)
-                failed_chunks.append(i + 1)
-                logger.error(error_msg)
-                
-                # For timeouts, wait slightly longer but still much faster than before
-                time.sleep(max(delay * 2, 0.5))  # Minimum 0.5s, max based on model
-                
-                if consecutive_failures >= 8:  # Increased tolerance for Tier 1
-                    logger.error(f"Too many timeouts ({consecutive_failures}), stopping processing")
-                    break
-                    
-            except Exception as e:
-                consecutive_failures += 1
-                error_msg = f"Chunk {i + 1} failed: {str(e)}"
-                st.session_state.background_processing['errors'].append(error_msg)
-                failed_chunks.append(i + 1)
-                logger.error(error_msg)
-                
-                # Handle specific errors with Tier 1 optimizations
-                if "rate" in str(e).lower() or "quota" in str(e).lower():
-                    logger.warning(f"Rate limit hit at chunk {i+1} (unexpected for Tier 1), waiting...")
-                    time.sleep(max(delay * 4, 2))  # Still wait on rate limits but less than before
-                elif "503" in str(e) or "502" in str(e):
-                    logger.warning(f"Server error at chunk {i+1}, brief wait...")
-                    time.sleep(max(delay * 2, 1))  # Shorter waits for server errors
-                elif consecutive_failures >= 8:  # Increased tolerance
-                    logger.error(f"Too many failures ({consecutive_failures}), stopping processing")
-                    break
+                # 2000 RPM OPTIMIZED: Very frequent auto-saves (every 2 batches or 10+ items)
+                if (i // batch_size + 1) % 2 == 0 or len(all_people) >= 10:
+                    if not st.session_state.enable_review_mode:
+                        # Direct save
+                        saved_p, saved_perf = save_approved_extractions(all_people, all_performance)
+                        st.session_state.background_processing['saved_people'] += saved_p
+                        st.session_state.background_processing['saved_performance'] += saved_perf
+                        
+                        # Clear saved items from memory
+                        all_people = []
+                        all_performance = []
+                        
+                        logger.info(f"2000 RPM auto-saved {saved_p} people, {saved_perf} metrics at batch {i//batch_size + 1}")
+            else:
+                consecutive_failures += batch_errors
+            
+            # Store results
+            st.session_state.background_processing['results'] = {
+                'people': all_people,
+                'performance': all_performance
+            }
+            
+            # 2000 RPM: Minimal inter-batch delays, light backoff on failures
+            if consecutive_failures >= 3:
+                actual_delay = min(delay * (1.1 ** consecutive_failures), delay * 2)  # Very light backoff
+                logger.warning(f"Multiple failures detected, increasing delay to {actual_delay}s")
+            else:
+                actual_delay = delay * 2  # Small inter-batch delay even on success
+            
+            # Inter-batch delay
+            if i + current_batch_size < len(chunks):
+                time.sleep(actual_delay)
+            
+            # Move to next batch
+            i += current_batch_size
+            
+            # Emergency stop if too many consecutive failures (very high tolerance for 2000 RPM)
+            if consecutive_failures >= 20:  # Was 15, now 20 for ultra-fast processing
+                logger.error(f"Too many consecutive failures ({consecutive_failures}), stopping processing")
+                st.session_state.background_processing['errors'].append(f"Stopped due to {consecutive_failures} consecutive failures")
+                break
         
         # Final save of any remaining items
         if all_people or all_performance:
             if st.session_state.enable_review_mode:
                 # Add to review queue
-                add_to_review_queue(all_people, all_performance, f"Tier 1 Background Extraction ({len(chunks)} chunks)")
+                add_to_review_queue(all_people, all_performance, f"2000 RPM Flash Extraction ({len(chunks)} chunks)")
                 logger.info(f"Added {len(all_people)} people, {len(all_performance)} metrics to review queue")
             else:
                 # Direct save
                 saved_p, saved_perf = save_approved_extractions(all_people, all_performance)
                 st.session_state.background_processing['saved_people'] += saved_p
                 st.session_state.background_processing['saved_performance'] += saved_perf
-                logger.info(f"Final Tier 1 save: {saved_p} people, {saved_perf} metrics")
+                logger.info(f"Final 2000 RPM save: {saved_p} people, {saved_perf} metrics")
         
         # Complete processing
         total_found = st.session_state.background_processing['saved_people'] + len(st.session_state.background_processing['results']['people'])
         total_metrics = st.session_state.background_processing['saved_performance'] + len(st.session_state.background_processing['results']['performance'])
         
         processing_time = (datetime.now() - st.session_state.background_processing['start_time']).total_seconds()
+        chunks_per_minute = (len(chunks) / processing_time) * 60 if processing_time > 0 else 0
         
         st.session_state.background_processing.update({
             'is_running': False,
-            'status_message': f'Tier 1 Complete! Found {total_found} people, {total_metrics} metrics in {processing_time:.1f}s',
+            'status_message': f'2000 RPM Complete! Found {total_found} people, {total_metrics} metrics in {processing_time:.1f}s ({chunks_per_minute:.1f} chunks/min)',
             'progress': 100,
             'failed_chunks': failed_chunks
         })
         
-        logger.info(f"Tier 1 background extraction completed: {total_found} people, {total_metrics} metrics, {len(failed_chunks)} failed chunks, {processing_time:.1f}s total")
+        logger.info(f"2000 RPM background extraction completed: {total_found} people, {total_metrics} metrics, {len(failed_chunks)} failed chunks, {processing_time:.1f}s total, {chunks_per_minute:.1f} chunks/min")
         
     except Exception as e:
         st.session_state.background_processing.update({
@@ -1262,7 +1285,7 @@ def start_background_extraction(text, model, preprocessing_mode, chunk_size_mode
             'status_message': f'Failed: {str(e)}',
             'errors': [str(e)]
         })
-        logger.error(f"Tier 1 background extraction failed: {e}")
+        logger.error(f"2000 RPM background extraction failed: {e}")
 
 def display_background_processing_widget():
     """SIMPLIFIED: Display minimal background processing widget in sidebar only"""
@@ -2023,13 +2046,22 @@ with st.sidebar:
         delay_str = f"{int(rate_limits['delay'] * 1000)}ms delay"
     else:
         delay_str = f"{rate_limits['delay']}s delay"
-    st.caption(f"⚡ Tier 1: {rate_limits['requests_per_minute']} req/min, {delay_str}")
+    
+    # Show batching support
+    batching_info = ""
+    if rate_limits.get('supports_batching', False):
+        batch_size = rate_limits.get('batch_size', 1)
+        batching_info = f" • Batching: {batch_size} chunks"
+    
+    st.caption(f"⚡ Flash 1.5: {rate_limits['requests_per_minute']} req/min, {delay_str}{batching_info}")
     
     # Show optimization note
-    if rate_limits['delay'] < 0.5:  # Very fast models
-        st.success("🚀 **Tier 1 Optimized**: Ultra-fast processing with larger chunks!")
-    elif rate_limits['delay'] < 2:
-        st.info("⚡ **Tier 1 Optimized**: Fast processing enabled")
+    if rate_limits['requests_per_minute'] >= 2000:  # 2000 RPM Flash
+        st.success("🚀 **2000 RPM OPTIMIZED**: Ultra-fast batched processing with massive chunks!")
+    elif rate_limits['requests_per_minute'] >= 1000:  # 1000+ RPM
+        st.info("⚡ **High-Speed Processing**: Fast batched processing enabled")
+    elif rate_limits['delay'] < 0.5:  # Very fast models
+        st.info("⚡ **Fast Processing**: Optimized for speed")
     else:
         st.caption("🔬 Experimental model - slower processing")
     
@@ -2065,17 +2097,17 @@ with st.sidebar:
     chunking_options = {
         "🤖 Auto (Recommended)": "auto",
         "📄 Single Chunk": "single",
-        "🔹 Small Chunks (25K)": "small",      # Updated for Tier 1
-        "⚖️ Medium Chunks (50K)": "medium",     # Updated for Tier 1
-        "🔷 Large Chunks (75K)": "large",       # Updated for Tier 1
-        "🔶 XLarge Chunks (100K)": "xlarge"     # Updated for Tier 1
+        "🔹 Small Chunks (40K)": "small",      # Updated for 2000 RPM
+        "⚖️ Medium Chunks (80K)": "medium",     # Updated for 2000 RPM
+        "🔷 Large Chunks (120K)": "large",      # Updated for 2000 RPM
+        "🔶 XLarge Chunks (150K)": "xlarge"     # Updated for 2000 RPM
     }
     
     selected_chunking = st.selectbox(
         "Chunking Strategy:",
         options=list(chunking_options.keys()),
         index=0,
-        help="TIER 1 OPTIMIZED: Much larger chunks for faster processing. Auto mode uses intelligent sizing based on content length."
+        help="2000 RPM OPTIMIZED: Ultra-large chunks with batching for maximum speed. Auto mode uses intelligent sizing with batching support."
     )
     chunk_size_mode = chunking_options[selected_chunking]
     
@@ -2139,22 +2171,26 @@ with st.sidebar:
                             st.info(f"📁 **Size**: {char_count:,} characters")
                             st.info(f"🔤 **Encoding**: {encoding_used}")
                         with col_info2:
-                            # TIER 1 OPTIMIZED: Calculate estimates based on new chunk sizes and speed
+                            # 2000 RPM OPTIMIZED: Calculate estimates based on ultra-fast processing
                             if chunk_size_mode == "auto":
-                                estimated_chunk_size = min(max(char_count // 25, 40000), 75000)  # New auto logic
+                                estimated_chunk_size = min(max(char_count // 15, 60000), 120000)  # New auto logic
                             else:
-                                tier1_chunk_sizes = {"single": 50000, "small": 25000, "medium": 50000, "large": 75000, "xlarge": 100000}
-                                estimated_chunk_size = tier1_chunk_sizes.get(chunk_size_mode, 50000)
+                                flash_2000_chunk_sizes = {"single": char_count, "small": 40000, "medium": 80000, "large": 120000, "xlarge": 150000}
+                                estimated_chunk_size = flash_2000_chunk_sizes.get(chunk_size_mode, 80000)
                             
-                            estimated_chunks = max(1, char_count // estimated_chunk_size)
-                            # TIER 1 SPEED: Much faster processing time (0.3-0.5 minutes per chunk)
-                            estimated_time = estimated_chunks * 0.4  # 24 seconds per chunk average for Tier 1
+                            if chunk_size_mode == "single" and char_count <= 200000:
+                                estimated_chunks = 1
+                            else:
+                                estimated_chunks = max(1, char_count // estimated_chunk_size)
+                            
+                            # 2000 RPM SPEED: Ultra-fast processing (0.1-0.2 minutes per chunk with batching)
+                            estimated_time = estimated_chunks * 0.15  # 9 seconds per chunk average for 2000 RPM
                             
                             st.info(f"📊 **Est. chunks**: {estimated_chunks} ({chunk_size_mode} mode)")
                             if estimated_time < 1:
-                                st.info(f"⚡ **Est. time**: ~{int(estimated_time * 60)}s (Tier 1)")
+                                st.info(f"⚡ **Est. time**: ~{int(estimated_time * 60)}s (2000 RPM)")
                             else:
-                                st.info(f"⚡ **Est. time**: ~{estimated_time:.1f}min (Tier 1)")
+                                st.info(f"⚡ **Est. time**: ~{estimated_time:.1f}min (2000 RPM)")
                         
                         # Show warning message if there was one
                         if error_msg:
@@ -2201,7 +2237,7 @@ with st.sidebar:
             else:
                 # Start background processing
                 start_background_extraction(newsletter_text, model, preprocessing_mode, chunk_size_mode)
-                st.success("🚀 Tier 1 background extraction started! Much faster processing enabled.")
+                st.success("🚀 2000 RPM Flash extraction started! Ultra-fast batched processing enabled.")
                 st.rerun()
 
     elif not GENAI_AVAILABLE:
