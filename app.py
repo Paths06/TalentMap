@@ -1431,8 +1431,10 @@ def get_firm_performance_metrics(firm_id):
         return []
     return firm.get('performance_metrics', [])
 
+# --- ENHANCED OVERLAP WORK HISTORY SYSTEM ---
+
 def calculate_overlap_years(start1, end1, start2, end2):
-    """Calculate overlap between two employment periods"""
+    """Calculate overlap between two employment periods with detailed info"""
     today = date.today()
     period1_end = end1 if end1 is not None else today
     period2_end = end2 if end2 is not None else today
@@ -1442,11 +1444,47 @@ def calculate_overlap_years(start1, end1, start2, end2):
     
     overlap_days = (earliest_end - latest_start).days
     if overlap_days <= 0:
-        return 0.0
-    return round(overlap_days / 365.25, 1)
+        return {
+            'years': 0.0,
+            'days': 0,
+            'start_date': None,
+            'end_date': None,
+            'is_current': False
+        }
+    
+    overlap_years = round(overlap_days / 365.25, 1)
+    is_current = (period1_end == today or period2_end == today) and earliest_end == today
+    
+    return {
+        'years': overlap_years,
+        'days': overlap_days,
+        'start_date': latest_start,
+        'end_date': earliest_end if earliest_end != today else None,
+        'is_current': is_current
+    }
 
-def get_shared_work_history(person_id):
-    """Get people who worked at same companies with overlap periods"""
+def get_person_connection_strength(person_id):
+    """Calculate overall connection strength for a person"""
+    shared_history = get_shared_work_history(person_id)
+    
+    if not shared_history:
+        return {'strength': 0, 'connections': 0, 'total_overlap_years': 0}
+    
+    total_overlap = sum(conn['overlap_years'] for conn in shared_history)
+    connection_count = len(shared_history)
+    
+    # Calculate strength score (0-100)
+    strength = min(100, (total_overlap * 10) + (connection_count * 5))
+    
+    return {
+        'strength': round(strength, 1),
+        'connections': connection_count,
+        'total_overlap_years': round(total_overlap, 1),
+        'top_connections': shared_history[:3]  # Top 3 connections
+    }
+
+def get_enhanced_shared_work_history(person_id):
+    """Enhanced version with detailed overlap analysis"""
     person_employments = get_employments_by_person_id(person_id)
     shared_history = []
     
@@ -1455,34 +1493,132 @@ def get_shared_work_history(person_id):
             continue
         
         other_employments = get_employments_by_person_id(other_person['id'])
+        person_connections = []
         
         for person_emp in person_employments:
             for other_emp in other_employments:
                 if person_emp['company_name'] == other_emp['company_name']:
-                    overlap = calculate_overlap_years(
+                    overlap_info = calculate_overlap_years(
                         person_emp['start_date'], person_emp['end_date'],
                         other_emp['start_date'], other_emp['end_date']
                     )
-                    if overlap > 0:
-                        shared_history.append({
+                    
+                    if overlap_info['years'] > 0:
+                        person_connections.append({
                             "colleague_name": safe_get(other_person, 'name'),
                             "colleague_id": other_person['id'],
                             "shared_company": person_emp['company_name'],
                             "colleague_current_company": safe_get(other_person, 'current_company_name'),
                             "colleague_current_title": safe_get(other_person, 'current_title'),
-                            "overlap_years": overlap,
+                            "overlap_info": overlap_info,
+                            "overlap_years": overlap_info['years'],  # For compatibility
                             "person_title": person_emp['title'],
-                            "colleague_title": other_emp['title']
+                            "colleague_title": other_emp['title'],
+                            "overlap_period": f"{overlap_info['start_date'].strftime('%Y-%m')} to {'Present' if overlap_info['is_current'] else overlap_info['end_date'].strftime('%Y-%m')}",
+                            "connection_strength": min(100, overlap_info['years'] * 20)  # 0-100 scale
                         })
+        
+        # Merge multiple connections with same person
+        if person_connections:
+            # Take the strongest connection if multiple
+            best_connection = max(person_connections, key=lambda x: x['overlap_years'])
+            best_connection['total_shared_companies'] = len(person_connections)
+            shared_history.append(best_connection)
     
-    # Remove duplicates and sort by overlap
-    unique_shared = {}
-    for item in shared_history:
-        key = f"{item['colleague_id']}_{item['shared_company']}"
-        if key not in unique_shared or item['overlap_years'] > unique_shared[key]['overlap_years']:
-            unique_shared[key] = item
+    # Sort by connection strength, then by overlap years
+    return sorted(shared_history, key=lambda x: (x['connection_strength'], x['overlap_years']), reverse=True)
+
+def get_company_network_analysis(company_name):
+    """Analyze network connections within a specific company"""
+    company_people = get_people_by_firm(company_name)
     
-    return sorted(unique_shared.values(), key=lambda x: x['overlap_years'], reverse=True)
+    if len(company_people) < 2:
+        return {'connections': [], 'network_density': 0}
+    
+    connections = []
+    total_possible = len(company_people) * (len(company_people) - 1) / 2
+    actual_connections = 0
+    
+    for i, person1 in enumerate(company_people):
+        for person2 in company_people[i+1:]:
+            shared = get_enhanced_shared_work_history(person1['id'])
+            connection = next((conn for conn in shared if conn['colleague_id'] == person2['id']), None)
+            
+            if connection:
+                connections.append({
+                    'person1': person1,
+                    'person2': person2,
+                    'connection': connection
+                })
+                actual_connections += 1
+    
+    network_density = round((actual_connections / total_possible) * 100, 1) if total_possible > 0 else 0
+    
+    return {
+        'connections': connections,
+        'network_density': network_density,
+        'total_people': len(company_people),
+        'connected_pairs': actual_connections
+    }
+
+def get_top_networked_people(limit=10):
+    """Get people with strongest professional networks"""
+    people_networks = []
+    
+    for person in st.session_state.people:
+        network_info = get_person_connection_strength(person['id'])
+        if network_info['connections'] > 0:
+            people_networks.append({
+                'person': person,
+                'network': network_info
+            })
+    
+    # Sort by connection strength
+    return sorted(people_networks, key=lambda x: x['network']['strength'], reverse=True)[:limit]
+
+def get_network_insights():
+    """Generate overall network insights"""
+    all_people = st.session_state.people
+    total_connections = 0
+    companies_with_networks = set()
+    
+    for person in all_people:
+        connections = get_person_connection_strength(person['id'])
+        total_connections += connections['connections']
+        
+        if connections['connections'] > 0:
+            companies_with_networks.add(safe_get(person, 'current_company_name'))
+    
+    # Remove duplicates (each connection counted twice)
+    unique_connections = total_connections // 2
+    
+    return {
+        'total_people': len(all_people),
+        'connected_people': len([p for p in all_people if get_person_connection_strength(p['id'])['connections'] > 0]),
+        'total_connections': unique_connections,
+        'companies_with_networks': len(companies_with_networks),
+        'network_coverage': round((len([p for p in all_people if get_person_connection_strength(p['id'])['connections'] > 0]) / len(all_people)) * 100, 1) if all_people else 0
+    }
+
+def get_shared_work_history(person_id):
+    """Get people who worked at same companies with overlap periods - LEGACY COMPATIBILITY"""
+    enhanced_history = get_enhanced_shared_work_history(person_id)
+    
+    # Convert to legacy format for backward compatibility
+    legacy_format = []
+    for connection in enhanced_history:
+        legacy_format.append({
+            "colleague_name": connection['colleague_name'],
+            "colleague_id": connection['colleague_id'],
+            "shared_company": connection['shared_company'],
+            "colleague_current_company": connection['colleague_current_company'],
+            "colleague_current_title": connection['colleague_current_title'],
+            "overlap_years": connection['overlap_years'],
+            "person_title": connection['person_title'],
+            "colleague_title": connection['colleague_title']
+        })
+    
+    return legacy_format
 
 # --- PAGINATION HELPERS ---
 def paginate_data(data, page, items_per_page=10):
@@ -1916,6 +2052,9 @@ def go_to_firm_details(firm_id):
     st.session_state.selected_firm_id = firm_id
     st.session_state.current_view = 'firm_details'
 
+def go_to_network():
+    st.session_state.current_view = 'network'
+
 # Initialize session state
 try:
     initialize_session_state()
@@ -2273,8 +2412,8 @@ if st.session_state.global_search and len(st.session_state.global_search.strip()
             st.rerun()
         st.markdown("---")
 
-# Top Navigation (without Performance tab)
-col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 2])
+# Top Navigation (with Network tab)
+col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
 
 with col1:
     if st.button("👥 People", use_container_width=True, 
@@ -2289,25 +2428,27 @@ with col2:
         st.rerun()
 
 with col3:
-    if st.button("➕ Add Person", use_container_width=True):
-        st.session_state.show_add_person_modal = True
+    if st.button("🔗 Network", use_container_width=True, 
+                 type="primary" if st.session_state.current_view == 'network' else "secondary"):
+        st.session_state.current_view = 'network'
         st.rerun()
 
 with col4:
-    if st.button("🏢➕ Add Firm", use_container_width=True):
-        st.session_state.show_add_firm_modal = True
+    if st.button("➕ Person", use_container_width=True):
+        st.session_state.show_add_person_modal = True
         st.rerun()
 
 with col5:
+    if st.button("🏢➕ Firm", use_container_width=True):
+        st.session_state.show_add_firm_modal = True
+        st.rerun()
+
+with col6:
     # Quick stats
-    col5a, col5b, col5c = st.columns(3)
-    with col5a:
-        st.metric("People", len(st.session_state.people))
-    with col5b:
-        st.metric("Firms", len(st.session_state.firms))
-    with col5c:
-        total_metrics = sum(len(firm.get('performance_metrics', [])) for firm in st.session_state.firms)
-        st.metric("Metrics", total_metrics)
+    total_metrics = sum(len(firm.get('performance_metrics', [])) for firm in st.session_state.firms)
+    insights = get_network_insights()
+    st.metric("📊", f"{len(st.session_state.people)}P/{len(st.session_state.firms)}F/{insights['total_connections']}C", 
+              label_visibility="collapsed", help="People/Firms/Connections")
 
 # --- ADD PERSON MODAL (FIXED: Using simple_text_input in forms) ---
 if st.session_state.show_add_person_modal:
@@ -2551,10 +2692,20 @@ if st.session_state.current_view == 'people':
                                 if aum and aum != 'Unknown':
                                     st.text(f"💰 {aum}")
                                 
-                                # Performance metrics count
+                                # Performance metrics count and network info
                                 person_metrics = get_person_performance_metrics(person['id'])
-                                if person_metrics:
-                                    st.text(f"📊 {len(person_metrics)} metrics")
+                                network_info = get_person_connection_strength(person['id'])
+                                
+                                col_metrics, col_network = st.columns(2)
+                                with col_metrics:
+                                    if person_metrics:
+                                        st.text(f"📊 {len(person_metrics)} metrics")
+                                with col_network:
+                                    if network_info['connections'] > 0:
+                                        strength_emoji = "💪" if network_info['strength'] >= 75 else "⭐" if network_info['strength'] >= 50 else "🔸"
+                                        st.text(f"{strength_emoji} {network_info['connections']} connections")
+                                    else:
+                                        st.text("🔗 No connections")
                                 
                                 # Show when added/updated
                                 if 'created_date' in person or 'last_updated' in person:
@@ -2788,15 +2939,32 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
         st.info("No performance metrics found for this firm.")
         st.write("💡 Performance metrics will appear here when extracted from newsletters.")
     
-    # People at this firm
+    # People at this firm with network analysis
     st.markdown("---")
     st.subheader(f"👥 People at {safe_get(firm, 'name')}")
     
     firm_people = get_people_by_firm(safe_get(firm, 'name'))
     if firm_people:
+        # Get network analysis for this company
+        network_analysis = get_company_network_analysis(safe_get(firm, 'name'))
+        
+        # Company network overview
+        if len(firm_people) > 1:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Internal Connections", network_analysis['connected_pairs'])
+            with col2:
+                st.metric("Network Density", f"{network_analysis['network_density']}%")
+            with col3:
+                avg_connections = sum(get_person_connection_strength(p['id'])['connections'] for p in firm_people) / len(firm_people)
+                st.metric("Avg Connections/Person", f"{avg_connections:.1f}")
+        
+        # Show people with their network info
         for person in firm_people[:10]:  # Show first 10
-            with st.container():
-                col1, col2, col3 = st.columns([2, 2, 1])
+            network_info = get_person_connection_strength(person['id'])
+            
+            with st.container(border=True):
+                col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
                 
                 with col1:
                     st.markdown(f"**👤 {safe_get(person, 'name')}**")
@@ -2811,14 +2979,34 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
                         st.caption(f"🏆 {expertise}")
                 
                 with col3:
+                    # Network strength
+                    if network_info['connections'] > 0:
+                        strength_emoji = "💪" if network_info['strength'] >= 75 else "⭐" if network_info['strength'] >= 50 else "🔸"
+                        st.metric("🔗", network_info['connections'], label_visibility="collapsed")
+                        st.caption(f"{strength_emoji} {network_info['strength']}/100")
+                    else:
+                        st.metric("🔗", 0, label_visibility="collapsed")
+                        st.caption("No connections")
+                
+                with col4:
                     if st.button("👁️ Profile", key=f"view_full_{person['id']}", use_container_width=True):
                         go_to_person_details(person['id'])
                         st.rerun()
-                
-                st.markdown("---")
         
         if len(firm_people) > 10:
             st.info(f"Showing first 10 of {len(firm_people)} people")
+        
+        # Show internal connections if any
+        if network_analysis['connections']:
+            with st.expander(f"🔗 Internal Network Connections ({len(network_analysis['connections'])})", expanded=False):
+                for connection in network_analysis['connections'][:5]:  # Show top 5
+                    person1 = connection['person1']
+                    person2 = connection['person2']
+                    conn_info = connection['connection']
+                    
+                    st.markdown(f"**{safe_get(person1, 'name')}** ↔ **{safe_get(person2, 'name')}**")
+                    st.caption(f"Worked together {conn_info['overlap_years']} years at {conn_info['shared_company']}")
+                    st.caption(f"Connection strength: {conn_info['connection_strength']}/100")
     else:
         st.info("No people added for this firm yet.")
 
@@ -2937,34 +3125,106 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     else:
         st.info("No employment history available.")
     
-    # Shared Work History
+    # ENHANCED PROFESSIONAL NETWORK CONNECTIONS
     st.markdown("---")
-    st.subheader("🤝 Professional Network Connections")
+    st.subheader("🤝 Professional Network Analysis")
     
-    shared_history = get_shared_work_history(person['id'])
+    # Network strength overview
+    network_info = get_person_connection_strength(person['id'])
     
-    if shared_history:
-        st.write(f"**Found {len(shared_history)} colleagues who worked at the same companies:**")
+    if network_info['connections'] > 0:
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("🔗 Connections", network_info['connections'])
+        with col2:
+            st.metric("💪 Network Strength", f"{network_info['strength']}/100")
+        with col3:
+            st.metric("⏱️ Total Overlap", f"{network_info['total_overlap_years']} years")
+        with col4:
+            if network_info['strength'] >= 75:
+                st.success("🌟 Super Networked")
+            elif network_info['strength'] >= 50:
+                st.info("⭐ Well Connected")
+            elif network_info['strength'] >= 25:
+                st.warning("🔸 Moderately Connected")
+            else:
+                st.caption("🔹 Lightly Connected")
+        
+        # Enhanced connection details
+        shared_history = get_enhanced_shared_work_history(person['id'])
+        
+        st.markdown("#### 🔗 Professional Connections")
         
         for connection in shared_history[:10]:  # Show first 10
-            col1, col2, col3 = st.columns([2, 2, 1])
-            with col1:
-                st.write(f"**{connection['colleague_name']}**")
-                st.caption(f"Shared: {connection['shared_company']}")
-            with col2:
-                st.write(f"{connection['colleague_current_title']}")
-                st.caption(f"at {connection['colleague_current_company']}")
-            with col3:
-                st.metric("Years Together", f"{connection['overlap_years']}")
-                if st.button("👁️", key=f"view_colleague_{connection['colleague_id']}", help="View Profile"):
-                    go_to_person_details(connection['colleague_id'])
-                    st.rerun()
+            with st.container(border=True):
+                col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+                
+                with col1:
+                    st.markdown(f"**{connection['colleague_name']}**")
+                    st.caption(f"Shared: {connection['shared_company']}")
+                    if connection.get('total_shared_companies', 1) > 1:
+                        st.caption(f"🔄 {connection['total_shared_companies']} shared companies")
+                
+                with col2:
+                    st.caption(f"**Current:** {connection['colleague_current_title']}")
+                    st.caption(f"at {connection['colleague_current_company']}")
+                    st.caption(f"**Then:** {connection['colleague_title']}")
+                
+                with col3:
+                    overlap_info = connection['overlap_info']
+                    st.metric("Overlap", f"{connection['overlap_years']}y")
+                    st.caption(f"📅 {connection['overlap_period']}")
+                    if overlap_info['is_current']:
+                        st.success("🔄 Current")
+                
+                with col4:
+                    strength = connection['connection_strength']
+                    if strength >= 75:
+                        st.success("💪")
+                        st.caption("Strong")
+                    elif strength >= 50:
+                        st.info("⭐")
+                        st.caption("Medium")
+                    else:
+                        st.caption("🔸")
+                        st.caption("Weak")
+                    
+                    if st.button("👁️", key=f"view_connection_{connection['colleague_id']}", help="View Profile"):
+                        go_to_person_details(connection['colleague_id'])
+                        st.rerun()
         
         if len(shared_history) > 10:
-            st.info(f"Showing top 10 of {len(shared_history)} connections")
+            st.info(f"Showing top 10 of {len(shared_history)} total connections")
         
+        # Network insights
+        with st.expander("📊 Network Insights", expanded=False):
+            # Company diversity
+            companies = set(conn['shared_company'] for conn in shared_history)
+            st.write(f"**Company Diversity:** Worked with people from {len(companies)} different companies")
+            
+            # Current vs past connections
+            current_connections = sum(1 for conn in shared_history if conn['overlap_info']['is_current'])
+            past_connections = len(shared_history) - current_connections
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("🔄 Current Overlaps", current_connections)
+            with col2:
+                st.metric("📅 Past Overlaps", past_connections)
+            
+            # Connection strength distribution
+            strong_connections = sum(1 for conn in shared_history if conn['connection_strength'] >= 75)
+            medium_connections = sum(1 for conn in shared_history if 50 <= conn['connection_strength'] < 75)
+            weak_connections = len(shared_history) - strong_connections - medium_connections
+            
+            st.write(f"**Connection Strength:** {strong_connections} strong, {medium_connections} medium, {weak_connections} weak")
+    
     else:
-        st.info("No shared work history found with other people in the database.")
+        st.info("No professional connections found yet.")
+        st.write("💡 This person will show network connections when:")
+        st.write("• Other people in the database have worked at the same companies")
+        st.write("• Employment periods overlap in time")
+        st.write("• More employment history is added to the system")
 
 # --- EDIT PERSON MODAL (FIXED: Using simple_text_input in forms) ---
 if st.session_state.show_edit_person_modal and st.session_state.edit_person_data:
@@ -3352,14 +3612,16 @@ with col3:
 # --- FOOTER ---
 st.markdown("---")
 st.markdown("### 👥 Asian Financial Industry Intelligence Platform")
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
     st.markdown("**🔍 Global Search**")
 with col2:
     st.markdown("**📊 Performance Tracking**") 
 with col3:
-    st.markdown("**🤝 Professional Networks**")
+    st.markdown("**🔗 Network Analysis**")
 with col4:
+    st.markdown("**🤝 Connection Mapping**")
+with col5:
     st.markdown("**📋 Smart Review System**")
 
 # Auto-save functionality
