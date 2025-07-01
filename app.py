@@ -9,6 +9,18 @@ import plotly.graph_objects as go
 import time
 from pathlib import Path
 
+# Additional imports for enhanced export functionality
+import zipfile
+from io import BytesIO, StringIO
+
+# Try to import openpyxl for Excel exports
+try:
+    import openpyxl
+    EXCEL_AVAILABLE = True
+except ImportError:
+    EXCEL_AVAILABLE = False
+    st.sidebar.warning("📊 Excel export unavailable. Install openpyxl: pip install openpyxl")
+
 # Try to import google.generativeai, handle if not available
 try:
     import google.generativeai as genai
@@ -34,7 +46,7 @@ def safe_get(data, key, default='Unknown'):
 
 def handle_dynamic_input(field_name, current_value, table_name, context=""):
     """
-    Handle dynamic input for fields with existing options and ability to add new ones
+    Enhanced dynamic input that prioritizes typing with suggestions
     
     Args:
         field_name: Name of the field (e.g., 'location', 'company')
@@ -53,83 +65,44 @@ def handle_dynamic_input(field_name, current_value, table_name, context=""):
     # Remove None/empty values and sort
     existing_options = sorted([opt for opt in existing_options if opt and opt.strip() and opt != 'Unknown'])
     
-    # Add "Add New..." option
-    options = [""] + existing_options + ["+ Add New"]
+    # Create unique key for input
+    unique_key = f"{field_name}_input_{table_name}_{context}"
     
-    # Find index of current value
-    try:
-        default_index = options.index(current_value) if current_value in options else 0
-    except (ValueError, TypeError):
-        default_index = 0
-    
-    # Create unique key for selectbox
-    unique_key = f"{field_name}_select_{table_name}_{context}"
-    
-    # Create selectbox
-    selected = st.selectbox(
-        f"Select {field_name.replace('_', ' ').title()}",
-        options=options,
-        index=default_index,
-        key=unique_key
+    # Primary text input with current value
+    user_input = st.text_input(
+        f"{field_name.replace('_', ' ').title()}",
+        value=current_value if current_value and current_value != 'Unknown' else "",
+        placeholder=f"Enter {field_name.replace('_', ' ')} or select from suggestions below",
+        key=unique_key,
+        help=f"Type directly or choose from {len(existing_options)} existing options below"
     )
     
-    # If "Add New" is selected, show text input
-    if selected == "+ Add New":
-        new_value_key = f"{field_name}_new_{table_name}_{context}"
-        new_value = st.text_input(
-            f"Enter new {field_name.replace('_', ' ')}:",
-            placeholder=f"Enter {field_name.replace('_', ' ')}...",
-            key=new_value_key
-        )
-        return new_value.strip() if new_value else ""
-    
-    return selected if selected else ""
-
-
-def get_unique_values_from_session_state(table_name, field_name):
-    """
-    Get unique values from a specific field in session state data
-    
-    Args:
-        table_name: Name of the data source ('people', 'firms', 'employments')
-        field_name: Name of the field
-    
-    Returns:
-        List of unique values
-    """
-    values = set()
-    
-    try:
-        if table_name == "people":
-            data_source = st.session_state.people
-        elif table_name == "firms":
-            data_source = st.session_state.firms
-        elif table_name == "employments":
-            data_source = st.session_state.employments
-        else:
-            return []
+    # Show existing options as clickable suggestions if there are any
+    if existing_options and len(existing_options) > 0:
+        st.caption(f"💡 **Suggestions** (click to use):")
         
-        for item in data_source:
-            value = safe_get(item, field_name)
-            if value and value.strip() and value != 'Unknown':
-                values.add(value.strip())
+        # Display suggestions in columns for better layout
+        cols_per_row = 3
+        suggestion_cols = st.columns(cols_per_row)
         
-        return list(values)
+        for i, option in enumerate(existing_options[:9]):  # Show max 9 suggestions
+            col_idx = i % cols_per_row
+            with suggestion_cols[col_idx]:
+                # Use a button that updates the input when clicked
+                if st.button(f"📍 {option}", key=f"{unique_key}_suggestion_{i}", help=f"Use: {option}"):
+                    # Return the selected suggestion
+                    st.session_state[unique_key] = option
+                    st.rerun()
+        
+        if len(existing_options) > 9:
+            st.caption(f"... and {len(existing_options) - 9} more options available")
     
-    except Exception as e:
-        st.error(f"Error getting unique values for {field_name} from {table_name}: {str(e)}")
-        return []
+    # Return the user input (either typed or from session state if suggestion was clicked)
+    return user_input.strip() if user_input else ""
 
-
-def global_search(query):
+def enhanced_global_search(query):
     """
-    Global search function for people, firms, and performance metrics
-    
-    Args:
-        query: Search query string
-    
-    Returns:
-        Tuple of (matching_people, matching_firms, matching_metrics)
+    Enhanced global search function with better matching and debugging
     """
     query_lower = query.lower().strip()
     
@@ -140,46 +113,62 @@ def global_search(query):
     matching_firms = []
     matching_metrics = []
     
-    # Search people
+    # Search people with enhanced matching
     for person in st.session_state.people:
-        searchable_text = " ".join([
+        # Create comprehensive searchable text
+        searchable_fields = [
             safe_get(person, 'name', ''),
             safe_get(person, 'current_title', ''),
             safe_get(person, 'current_company_name', ''),
             safe_get(person, 'location', ''),
             safe_get(person, 'expertise', ''),
             safe_get(person, 'strategy', ''),
-            safe_get(person, 'education', '')
-        ]).lower()
+            safe_get(person, 'education', ''),
+            safe_get(person, 'email', ''),
+            safe_get(person, 'aum_managed', '')
+        ]
         
-        if query_lower in searchable_text:
+        searchable_text = " ".join([field for field in searchable_fields if field and field != 'Unknown']).lower()
+        
+        # Multiple search methods
+        if (query_lower in searchable_text or 
+            any(query_lower in field.lower() for field in searchable_fields if field and field != 'Unknown')):
             matching_people.append(person)
     
-    # Search firms
+    # Search firms with enhanced matching  
     for firm in st.session_state.firms:
-        searchable_text = " ".join([
+        searchable_fields = [
             safe_get(firm, 'name', ''),
             safe_get(firm, 'location', ''),
             safe_get(firm, 'strategy', ''),
             safe_get(firm, 'description', ''),
-            safe_get(firm, 'headquarters', '')
-        ]).lower()
+            safe_get(firm, 'headquarters', ''),
+            safe_get(firm, 'aum', ''),
+            safe_get(firm, 'website', '')
+        ]
         
-        if query_lower in searchable_text:
+        searchable_text = " ".join([field for field in searchable_fields if field and field != 'Unknown']).lower()
+        
+        if (query_lower in searchable_text or 
+            any(query_lower in field.lower() for field in searchable_fields if field and field != 'Unknown')):
             matching_firms.append(firm)
     
     # Search performance metrics in firms
     for firm in st.session_state.firms:
         if firm.get('performance_metrics'):
             for metric in firm['performance_metrics']:
-                searchable_text = " ".join([
+                searchable_fields = [
                     safe_get(metric, 'metric_type', ''),
                     safe_get(metric, 'period', ''),
                     safe_get(metric, 'additional_info', ''),
+                    safe_get(metric, 'value', ''),
                     safe_get(firm, 'name', '')
-                ]).lower()
+                ]
                 
-                if query_lower in searchable_text:
+                searchable_text = " ".join([field for field in searchable_fields if field and field != 'Unknown']).lower()
+                
+                if (query_lower in searchable_text or 
+                    any(query_lower in field.lower() for field in searchable_fields if field and field != 'Unknown')):
                     matching_metrics.append({**metric, 'fund_name': firm['name']})
     
     return matching_people, matching_firms, matching_metrics
@@ -481,6 +470,18 @@ def initialize_session_state():
         st.session_state.preprocessing_mode = "balanced"
     if 'chunk_size_preference' not in st.session_state:
         st.session_state.chunk_size_preference = "auto"
+    
+    # NEW: Review system
+    if 'enable_review_mode' not in st.session_state:
+        st.session_state.enable_review_mode = True
+    if 'pending_review_data' not in st.session_state:
+        st.session_state.pending_review_data = []
+    if 'review_start_time' not in st.session_state:
+        st.session_state.review_start_time = None
+    if 'show_review_interface' not in st.session_state:
+        st.session_state.show_review_interface = False
+    if 'auto_save_timeout' not in st.session_state:
+        st.session_state.auto_save_timeout = 180  # 3 minutes in seconds
 
 # --- AI Setup ---
 @st.cache_resource
@@ -1453,6 +1454,563 @@ def get_shared_work_history(person_id):
     
     return sorted(unique_shared.values(), key=lambda x: x['overlap_years'], reverse=True)
 
+# --- REVIEW SYSTEM FUNCTIONS ---
+
+def add_to_review_queue(people_extractions, performance_extractions, source_info="Manual extraction"):
+    """Add extracted data to review queue"""
+    review_item = {
+        'id': str(uuid.uuid4()),
+        'timestamp': datetime.now(),
+        'source': source_info,
+        'people': people_extractions,
+        'performance': performance_extractions,
+        'status': 'pending',
+        'reviewed_people': [],
+        'reviewed_performance': []
+    }
+    
+    st.session_state.pending_review_data.append(review_item)
+    st.session_state.review_start_time = datetime.now()
+    st.session_state.show_review_interface = True
+    
+    return review_item['id']
+
+def get_review_time_remaining():
+    """Get remaining time before auto-save (in seconds)"""
+    if not st.session_state.review_start_time:
+        return st.session_state.auto_save_timeout
+    
+    elapsed = (datetime.now() - st.session_state.review_start_time).total_seconds()
+    remaining = max(0, st.session_state.auto_save_timeout - elapsed)
+    return remaining
+
+def auto_save_pending_reviews():
+    """Auto-save all pending reviews after timeout"""
+    saved_count = 0
+    
+    for review_item in st.session_state.pending_review_data:
+        if review_item['status'] == 'pending':
+            # Auto-approve all pending items
+            approved_people, approved_performance = approve_all_in_review(review_item['id'])
+            saved_count += len(approved_people)
+            
+            # Save to database
+            save_approved_extractions(approved_people, approved_performance)
+    
+    # Clear review queue
+    st.session_state.pending_review_data = []
+    st.session_state.show_review_interface = False
+    st.session_state.review_start_time = None
+    
+    return saved_count
+
+def approve_all_in_review(review_id):
+    """Approve all items in a specific review"""
+    review_item = next((r for r in st.session_state.pending_review_data if r['id'] == review_id), None)
+    if not review_item:
+        return [], []
+    
+    # Mark all as approved
+    review_item['reviewed_people'] = review_item['people'].copy()
+    review_item['reviewed_performance'] = review_item['performance'].copy()
+    review_item['status'] = 'approved'
+    
+    return review_item['reviewed_people'], review_item['reviewed_performance']
+
+def save_approved_extractions(approved_people, approved_performance):
+    """Save approved extractions to main database"""
+    # Process people extractions and detect updates
+    if approved_people:
+        new_people, pending_updates = process_extractions_with_update_detection(approved_people)
+        
+        # Add new people to database
+        for person_data in new_people:
+            new_person_id = str(uuid.uuid4())
+            st.session_state.people.append({
+                "id": new_person_id,
+                "name": person_data.get('name', 'Unknown'),
+                "current_title": person_data.get('title', 'Unknown'),
+                "current_company_name": person_data.get('company', 'Unknown'),
+                "location": person_data.get('location', 'Unknown'),
+                "email": "",
+                "linkedin_profile_url": "",
+                "phone": "",
+                "education": "",
+                "expertise": "",
+                "aum_managed": "",
+                "strategy": "Unknown"
+            })
+            
+            # Add firm if doesn't exist
+            if not get_firm_by_name(person_data.get('company', '')):
+                st.session_state.firms.append({
+                    "id": str(uuid.uuid4()),
+                    "name": person_data.get('company', 'Unknown'),
+                    "location": person_data.get('location', 'Unknown'),
+                    "headquarters": "Unknown",
+                    "aum": "Unknown",
+                    "founded": None,
+                    "strategy": "Hedge Fund",
+                    "website": "",
+                    "description": f"Hedge fund - extracted from newsletter",
+                    "performance_metrics": []
+                })
+            
+            # Add employment record
+            st.session_state.employments.append({
+                "id": str(uuid.uuid4()),
+                "person_id": new_person_id,
+                "company_name": person_data.get('company', 'Unknown'),
+                "title": person_data.get('title', 'Unknown'),
+                "start_date": date.today(),
+                "end_date": None,
+                "location": person_data.get('location', 'Unknown'),
+                "strategy": "Unknown"
+            })
+        
+        # Add pending updates
+        if pending_updates:
+            st.session_state.pending_updates.extend(pending_updates)
+    
+    # Map performance metrics to firms
+    if approved_performance:
+        map_performance_to_firms(approved_performance)
+    
+    # Save everything
+    save_data()
+    
+    return len(approved_people), len(approved_performance)
+
+def display_review_interface():
+    """Display the review interface for pending extractions"""
+    if not st.session_state.pending_review_data:
+        return
+    
+    st.markdown("---")
+    st.header("📋 Review Extracted Data")
+    
+    # Timer display
+    remaining_time = get_review_time_remaining()
+    if remaining_time > 0:
+        minutes_left = int(remaining_time // 60)
+        seconds_left = int(remaining_time % 60)
+        
+        col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+        with col1:
+            st.info(f"⏱️ **Auto-save in**: {minutes_left}m {seconds_left}s")
+        with col2:
+            if st.button("🔄 Refresh Timer", use_container_width=True):
+                st.rerun()
+        with col3:
+            if st.button("💾 Save All Now", use_container_width=True):
+                saved_count = 0
+                for review_item in st.session_state.pending_review_data:
+                    approved_people, approved_performance = approve_all_in_review(review_item['id'])
+                    people_saved, perf_saved = save_approved_extractions(approved_people, approved_performance)
+                    saved_count += people_saved
+                
+                st.session_state.pending_review_data = []
+                st.session_state.show_review_interface = False
+                st.success(f"✅ Saved {saved_count} items to database!")
+                st.rerun()
+        with col4:
+            if st.button("❌ Cancel Review", use_container_width=True):
+                st.session_state.pending_review_data = []
+                st.session_state.show_review_interface = False
+                st.rerun()
+    else:
+        # Auto-save triggered
+        saved_count = auto_save_pending_reviews()
+        st.success(f"⏰ Auto-save completed! Saved {saved_count} items to database.")
+        st.rerun()
+    
+    # Display each review batch
+    for i, review_item in enumerate(st.session_state.pending_review_data):
+        if review_item['status'] == 'approved':
+            continue
+            
+        st.markdown(f"### 📦 Batch {i+1}: {review_item['source']}")
+        st.caption(f"Extracted at: {review_item['timestamp'].strftime('%H:%M:%S')}")
+        
+        # People review
+        if review_item['people']:
+            st.markdown("#### 👥 People Found")
+            
+            people_to_review = review_item['people']
+            approved_people_ids = {p.get('temp_id', p.get('name', '')) for p in review_item['reviewed_people']}
+            
+            for j, person in enumerate(people_to_review):
+                person_id = person.get('temp_id', person.get('name', f'person_{j}'))
+                is_approved = person_id in approved_people_ids
+                
+                with st.container():
+                    col1, col2, col3 = st.columns([3, 2, 1])
+                    
+                    with col1:
+                        status_icon = "✅" if is_approved else "⏳"
+                        st.markdown(f"{status_icon} **{person.get('name', 'Unknown Name')}**")
+                        st.caption(f"{person.get('title', 'Unknown Title')} at {person.get('company', 'Unknown Company')}")
+                        
+                        # Check for existing person
+                        existing = find_similar_person(person)
+                        if existing:
+                            st.warning(f"⚠️ Similar person exists: {existing.get('name')}")
+                    
+                    with col2:
+                        st.write(f"📍 {person.get('location', 'Unknown')}")
+                        movement_type = person.get('movement_type', 'Unknown')
+                        st.caption(f"🔄 Movement: {movement_type}")
+                    
+                    with col3:
+                        if is_approved:
+                            if st.button("❌", key=f"reject_person_{review_item['id']}_{j}", help="Remove from approval"):
+                                # Remove from approved list
+                                review_item['reviewed_people'] = [p for p in review_item['reviewed_people'] 
+                                                                if p.get('temp_id', p.get('name', '')) != person_id]
+                                st.rerun()
+                        else:
+                            if st.button("✅", key=f"approve_person_{review_item['id']}_{j}", help="Approve for saving"):
+                                # Add to approved list
+                                person['temp_id'] = person_id
+                                review_item['reviewed_people'].append(person)
+                                st.rerun()
+                
+                st.markdown("---")
+        
+        # Performance metrics review
+        if review_item['performance']:
+            st.markdown("#### 📊 Performance Metrics Found")
+            
+            metrics_to_review = review_item['performance']
+            approved_metrics_ids = {f"{m.get('fund_name', '')}_{m.get('metric_type', '')}_{m.get('period', '')}" 
+                                  for m in review_item['reviewed_performance']}
+            
+            for j, metric in enumerate(metrics_to_review):
+                metric_id = f"{metric.get('fund_name', '')}_{metric.get('metric_type', '')}_{metric.get('period', '')}"
+                is_approved = metric_id in approved_metrics_ids
+                
+                with st.container():
+                    col1, col2, col3 = st.columns([3, 2, 1])
+                    
+                    with col1:
+                        status_icon = "✅" if is_approved else "⏳"
+                        st.markdown(f"{status_icon} **{metric.get('fund_name', 'Unknown Fund')}**")
+                        st.caption(f"{metric.get('metric_type', 'Unknown')} - {metric.get('value', 'N/A')}")
+                    
+                    with col2:
+                        st.write(f"📅 {metric.get('period', 'Unknown')} ({metric.get('date', 'Unknown')})")
+                        if metric.get('additional_info'):
+                            st.caption(f"ℹ️ {metric.get('additional_info', '')[:50]}...")
+                    
+                    with col3:
+                        if is_approved:
+                            if st.button("❌", key=f"reject_metric_{review_item['id']}_{j}", help="Remove from approval"):
+                                # Remove from approved list
+                                review_item['reviewed_performance'] = [m for m in review_item['reviewed_performance'] 
+                                                                     if f"{m.get('fund_name', '')}_{m.get('metric_type', '')}_{m.get('period', '')}" != metric_id]
+                                st.rerun()
+                        else:
+                            if st.button("✅", key=f"approve_metric_{review_item['id']}_{j}", help="Approve for saving"):
+                                # Add to approved list
+                                review_item['reviewed_performance'].append(metric)
+                                st.rerun()
+                
+                st.markdown("---")
+        
+        # Batch actions
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button(f"✅ Approve All in Batch {i+1}", key=f"approve_batch_{review_item['id']}", use_container_width=True):
+                approve_all_in_review(review_item['id'])
+                st.rerun()
+        
+        with col2:
+            approved_count = len(review_item['reviewed_people']) + len(review_item['reviewed_performance'])
+            if approved_count > 0:
+                if st.button(f"💾 Save Approved ({approved_count})", key=f"save_batch_{review_item['id']}", use_container_width=True):
+                    people_saved, perf_saved = save_approved_extractions(
+                        review_item['reviewed_people'], 
+                        review_item['reviewed_performance']
+                    )
+                    
+                    # Remove this review item
+                    st.session_state.pending_review_data = [r for r in st.session_state.pending_review_data 
+                                                          if r['id'] != review_item['id']]
+                    
+                    st.success(f"✅ Saved {people_saved} people and {perf_saved} metrics!")
+                    
+                    # Check if all reviews are done
+                    if not st.session_state.pending_review_data:
+                        st.session_state.show_review_interface = False
+                    
+                    st.rerun()
+        
+        with col3:
+            if st.button(f"🗑️ Discard Batch {i+1}", key=f"discard_batch_{review_item['id']}", use_container_width=True):
+                # Remove this review item
+                st.session_state.pending_review_data = [r for r in st.session_state.pending_review_data 
+                                                      if r['id'] != review_item['id']]
+                
+                # Check if all reviews are done
+                if not st.session_state.pending_review_data:
+                    st.session_state.show_review_interface = False
+                
+                st.rerun()
+        
+        st.markdown("---")
+
+# --- DATA EXPORT FUNCTIONS ---
+
+def export_people_to_dataframe():
+    """Convert people data to pandas DataFrame"""
+    if not st.session_state.people:
+        return pd.DataFrame()
+    
+    people_data = []
+    for person in st.session_state.people:
+        # Get employment history for this person
+        employments = get_employments_by_person_id(person['id'])
+        current_employment = None
+        past_employments = []
+        
+        for emp in employments:
+            if emp.get('end_date') is None:
+                current_employment = emp
+            else:
+                past_employments.append(emp)
+        
+        # Get performance metrics count
+        person_metrics = get_person_performance_metrics(person['id'])
+        
+        people_data.append({
+            'Name': safe_get(person, 'name'),
+            'Current_Title': safe_get(person, 'current_title'),
+            'Current_Company': safe_get(person, 'current_company_name'),
+            'Location': safe_get(person, 'location'),
+            'Email': safe_get(person, 'email'),
+            'Phone': safe_get(person, 'phone'),
+            'LinkedIn': safe_get(person, 'linkedin_profile_url'),
+            'Education': safe_get(person, 'education'),
+            'Expertise': safe_get(person, 'expertise'),
+            'AUM_Managed': safe_get(person, 'aum_managed'),
+            'Strategy': safe_get(person, 'strategy'),
+            'Performance_Metrics_Count': len(person_metrics),
+            'Total_Employments': len(employments),
+            'Current_Start_Date': current_employment.get('start_date') if current_employment else None,
+            'Person_ID': person['id']
+        })
+    
+    return pd.DataFrame(people_data)
+
+def export_firms_to_dataframe():
+    """Convert firms data to pandas DataFrame"""
+    if not st.session_state.firms:
+        return pd.DataFrame()
+    
+    firms_data = []
+    for firm in st.session_state.firms:
+        people_count = len(get_people_by_firm(safe_get(firm, 'name')))
+        metrics_count = len(firm.get('performance_metrics', []))
+        
+        firms_data.append({
+            'Name': safe_get(firm, 'name'),
+            'Location': safe_get(firm, 'location'),
+            'Headquarters': safe_get(firm, 'headquarters'),
+            'AUM': safe_get(firm, 'aum'),
+            'Founded': safe_get(firm, 'founded'),
+            'Strategy': safe_get(firm, 'strategy'),
+            'Website': safe_get(firm, 'website'),
+            'Description': safe_get(firm, 'description'),
+            'People_Count': people_count,
+            'Performance_Metrics_Count': metrics_count,
+            'Firm_ID': firm['id']
+        })
+    
+    return pd.DataFrame(firms_data)
+
+def export_employments_to_dataframe():
+    """Convert employment history to pandas DataFrame"""
+    if not st.session_state.employments:
+        return pd.DataFrame()
+    
+    employment_data = []
+    for emp in st.session_state.employments:
+        # Get person details
+        person = get_person_by_id(emp['person_id'])
+        person_name = safe_get(person, 'name') if person else 'Unknown'
+        
+        # Calculate duration
+        start_date = emp.get('start_date')
+        end_date = emp.get('end_date')
+        duration_days = None
+        duration_years = None
+        is_current = end_date is None
+        
+        if start_date:
+            end_for_calc = end_date if end_date else date.today()
+            duration_days = (end_for_calc - start_date).days
+            duration_years = round(duration_days / 365.25, 2)
+        
+        employment_data.append({
+            'Person_Name': person_name,
+            'Company_Name': safe_get(emp, 'company_name'),
+            'Title': safe_get(emp, 'title'),
+            'Start_Date': start_date,
+            'End_Date': end_date,
+            'Is_Current_Role': is_current,
+            'Duration_Days': duration_days,
+            'Duration_Years': duration_years,
+            'Location': safe_get(emp, 'location'),
+            'Strategy': safe_get(emp, 'strategy'),
+            'Person_ID': emp['person_id'],
+            'Employment_ID': emp['id']
+        })
+    
+    return pd.DataFrame(employment_data)
+
+def export_performance_metrics_to_dataframe():
+    """Convert performance metrics to pandas DataFrame"""
+    all_performance_metrics = []
+    
+    for firm in st.session_state.firms:
+        if firm.get('performance_metrics'):
+            for metric in firm['performance_metrics']:
+                all_performance_metrics.append({
+                    'Fund_Name': firm['name'],
+                    'Firm_Location': safe_get(firm, 'location'),
+                    'Firm_Strategy': safe_get(firm, 'strategy'),
+                    'Metric_Type': safe_get(metric, 'metric_type'),
+                    'Value': safe_get(metric, 'value'),
+                    'Period': safe_get(metric, 'period'),
+                    'Date': safe_get(metric, 'date'),
+                    'Benchmark': safe_get(metric, 'benchmark'),
+                    'Additional_Info': safe_get(metric, 'additional_info'),
+                    'Firm_ID': firm['id'],
+                    'Metric_ID': metric.get('id', str(uuid.uuid4()))
+                })
+    
+    return pd.DataFrame(all_performance_metrics)
+
+def export_extractions_to_dataframe():
+    """Convert all extraction history to pandas DataFrame"""
+    if not st.session_state.all_extractions:
+        return pd.DataFrame()
+    
+    extraction_data = []
+    for extraction in st.session_state.all_extractions:
+        extraction_data.append({
+            'Name': safe_get(extraction, 'name'),
+            'Company': safe_get(extraction, 'company'),
+            'Title': safe_get(extraction, 'title'),
+            'Location': safe_get(extraction, 'location'),
+            'Movement_Type': safe_get(extraction, 'movement_type'),
+            'Extraction_Timestamp': safe_get(extraction, 'timestamp'),
+            'Extraction_ID': extraction.get('id', str(uuid.uuid4()))
+        })
+    
+    return pd.DataFrame(extraction_data)
+
+def export_review_queue_to_dataframe():
+    """Convert pending review data to pandas DataFrame"""
+    if not st.session_state.pending_review_data:
+        return pd.DataFrame()
+    
+    review_data = []
+    for review_item in st.session_state.pending_review_data:
+        # Add people from this review batch
+        for person in review_item.get('people', []):
+            review_data.append({
+                'Type': 'Person',
+                'Review_Batch_ID': review_item['id'],
+                'Source': review_item['source'],
+                'Timestamp': review_item['timestamp'],
+                'Status': review_item['status'],
+                'Name': safe_get(person, 'name'),
+                'Company': safe_get(person, 'company'),
+                'Title': safe_get(person, 'title'),
+                'Location': safe_get(person, 'location'),
+                'Movement_Type': safe_get(person, 'movement_type'),
+                'Is_Approved': person in review_item.get('reviewed_people', [])
+            })
+        
+        # Add performance metrics from this review batch
+        for metric in review_item.get('performance', []):
+            review_data.append({
+                'Type': 'Performance_Metric',
+                'Review_Batch_ID': review_item['id'],
+                'Source': review_item['source'],
+                'Timestamp': review_item['timestamp'],
+                'Status': review_item['status'],
+                'Name': safe_get(metric, 'fund_name'),
+                'Company': safe_get(metric, 'fund_name'),
+                'Title': safe_get(metric, 'metric_type'),
+                'Location': safe_get(metric, 'value'),
+                'Movement_Type': safe_get(metric, 'period'),
+                'Is_Approved': metric in review_item.get('reviewed_performance', [])
+            })
+    
+    return pd.DataFrame(review_data)
+
+def create_comprehensive_export():
+    """Create a comprehensive export with multiple sheets/files"""
+    export_data = {}
+    
+    # Export each data type
+    people_df = export_people_to_dataframe()
+    firms_df = export_firms_to_dataframe()
+    employments_df = export_employments_to_dataframe()
+    performance_df = export_performance_metrics_to_dataframe()
+    extractions_df = export_extractions_to_dataframe()
+    review_df = export_review_queue_to_dataframe()
+    
+    # Add non-empty dataframes to export
+    if not people_df.empty:
+        export_data['People'] = people_df
+    if not firms_df.empty:
+        export_data['Firms'] = firms_df
+    if not employments_df.empty:
+        export_data['Employment_History'] = employments_df
+    if not performance_df.empty:
+        export_data['Performance_Metrics'] = performance_df
+    if not extractions_df.empty:
+        export_data['Extraction_History'] = extractions_df
+    if not review_df.empty:
+        export_data['Pending_Reviews'] = review_df
+    
+    return export_data
+
+def export_to_excel(export_data):
+    """Export data to Excel with multiple sheets"""
+    if not EXCEL_AVAILABLE:
+        raise ImportError("Excel export requires openpyxl. Install with: pip install openpyxl")
+    
+    from io import BytesIO
+    
+    output = BytesIO()
+    
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        for sheet_name, df in export_data.items():
+            # Ensure sheet name is valid for Excel
+            safe_sheet_name = sheet_name.replace('/', '_').replace('\\', '_')[:31]
+            df.to_excel(writer, sheet_name=safe_sheet_name, index=False)
+    
+    output.seek(0)
+    return output
+
+def export_to_csv_zip(export_data):
+    """Export data to ZIP file containing multiple CSV files"""
+    zip_buffer = BytesIO()
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for sheet_name, df in export_data.items():
+            csv_buffer = StringIO()
+            df.to_csv(csv_buffer, index=False)
+            csv_content = csv_buffer.getvalue().encode('utf-8')
+            zip_file.writestr(f"{sheet_name}.csv", csv_content)
+    
+    zip_buffer.seek(0)
+    return zip_buffer
+
 # --- Navigation Functions ---
 def go_to_firms():
     st.session_state.current_view = 'firms'
@@ -1561,6 +2119,50 @@ with st.sidebar:
         st.write(f"**Preprocessing**: {selected_preprocessing}")
         st.write(f"**Chunking**: {selected_chunking}")
     
+    # ENHANCED: Review Mode Toggle
+    st.markdown("---")
+    st.subheader("👀 Review Settings")
+    
+    enable_review = st.checkbox(
+        "📋 Enable Review Mode", 
+        value=st.session_state.enable_review_mode,
+        help="Review extracted data before saving to database"
+    )
+    st.session_state.enable_review_mode = enable_review
+    
+    if enable_review:
+        timeout_options = {
+            "2 minutes": 120,
+            "3 minutes": 180,
+            "5 minutes": 300,
+            "10 minutes": 600
+        }
+        
+        selected_timeout = st.selectbox(
+            "⏱️ Auto-save timeout:",
+            options=list(timeout_options.keys()),
+            index=1,  # Default to 3 minutes
+            help="Time before auto-saving unreviewed data"
+        )
+        
+        st.session_state.auto_save_timeout = timeout_options[selected_timeout]
+        
+        if st.session_state.pending_review_data:
+            remaining = get_review_time_remaining()
+            if remaining > 0:
+                minutes_left = int(remaining // 60)
+                seconds_left = int(remaining % 60)
+                st.warning(f"⏱️ **{len(st.session_state.pending_review_data)} items pending review!**")
+                st.info(f"Auto-save in: {minutes_left}m {seconds_left}s")
+                
+                if st.button("🔍 Go to Review", use_container_width=True):
+                    st.session_state.show_review_interface = True
+                    st.rerun()
+            else:
+                st.error("⏰ Review timeout reached!")
+    else:
+        st.info("Review mode disabled - data will be saved directly")
+    
     # Setup model with selected version
     model = None
     if api_key and GENAI_AVAILABLE:
@@ -1652,65 +2254,82 @@ with st.sidebar:
                             ext['timestamp'] = timestamp
                             ext['id'] = str(uuid.uuid4())
                         
-                        # Map performance metrics to firms
-                        if performance_extractions:
-                            performance_extractions = map_performance_to_firms(performance_extractions)
-                        
-                        # Process people extractions and detect updates
-                        if people_extractions:
-                            st.info("🔍 Checking for existing people and potential updates...")
-                            new_people, pending_updates = process_extractions_with_update_detection(people_extractions)
-                            
-                            # Add pending updates to session state
-                            if pending_updates:
-                                st.session_state.pending_updates.extend(pending_updates)
-                                st.session_state.show_update_review = True
-                        else:
-                            new_people = []
-                            pending_updates = []
-                        
-                        # Save new extractions
+                        # Save new extractions to history
                         st.session_state.all_extractions.extend(people_extractions)
                         
-                        # Save results
-                        if save_data():
-                            st.success(f"🎉 **Extraction Complete!**")
+                        # ENHANCED: Route to review or direct save based on user preference
+                        if st.session_state.enable_review_mode:
+                            # Add to review queue
+                            source_info = f"File: {uploaded_file.name if 'uploaded_file' in locals() and uploaded_file else 'Text Input'}"
+                            review_id = add_to_review_queue(people_extractions, performance_extractions, source_info)
+                            
+                            st.success(f"🎉 **Extraction Complete - Added to Review Queue!**")
+                            st.info(f"📋 **{len(people_extractions)} people** and **{len(performance_extractions)} metrics** ready for review")
+                            st.info(f"⏱️ **Auto-save in {st.session_state.auto_save_timeout // 60} minutes** if not reviewed")
+                            
+                            # Show review button
+                            if st.button("🔍 Review Now", use_container_width=True):
+                                st.session_state.show_review_interface = True
+                                st.rerun()
+                            
                         else:
-                            st.error("⚠️ Extraction successful but save failed!")
-                        
-                        # Show comprehensive summary
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("👥 New People", len(new_people))
-                        with col2:
-                            st.metric("🔄 Pending Updates", len(pending_updates))
-                        with col3:
-                            st.metric("📊 Performance Metrics", len(performance_extractions))
-                        with col4:
-                            st.metric("🏢 Total Extracted", len(people_extractions))
-                        
-                        # Show what happened
-                        if new_people:
-                            with st.expander(f"📋 {len(new_people)} New People Found"):
-                                for person in new_people[:10]:  # Show first 10
-                                    st.write(f"• **{person['name']}** → {person['company']}")
-                                if len(new_people) > 10:
-                                    st.write(f"... and {len(new_people) - 10} more")
-                        
-                        if performance_extractions:
-                            with st.expander(f"📊 {len(performance_extractions)} Performance Metrics Found"):
-                                for perf in performance_extractions[:10]:  # Show first 10
-                                    metric_display = f"{perf.get('fund_name', 'Unknown')} - {perf.get('metric_type', 'Unknown')}: {perf.get('value', 'N/A')}"
-                                    if perf.get('period'):
-                                        metric_display += f" ({perf.get('period')})"
-                                    st.write(f"• {metric_display}")
+                            # Direct save (original workflow)
+                            # Map performance metrics to firms
+                            if performance_extractions:
+                                performance_extractions = map_performance_to_firms(performance_extractions)
+                            
+                            # Process people extractions and detect updates
+                            if people_extractions:
+                                st.info("🔍 Checking for existing people and potential updates...")
+                                new_people, pending_updates = process_extractions_with_update_detection(people_extractions)
                                 
-                                if len(performance_extractions) > 10:
-                                    st.write(f"... and {len(performance_extractions) - 10} more")
-                        
-                        if pending_updates:
-                            st.warning(f"⚠️ Found {len(pending_updates)} potential updates for existing people!")
-                            st.info("👆 **Review updates in the sidebar before they're applied**")
+                                # Add pending updates to session state
+                                if pending_updates:
+                                    st.session_state.pending_updates.extend(pending_updates)
+                                    st.session_state.show_update_review = True
+                            else:
+                                new_people = []
+                                pending_updates = []
+                            
+                            # Save results
+                            if save_data():
+                                st.success(f"🎉 **Extraction Complete!**")
+                            else:
+                                st.error("⚠️ Extraction successful but save failed!")
+                            
+                            # Show comprehensive summary
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("👥 New People", len(new_people))
+                            with col2:
+                                st.metric("🔄 Pending Updates", len(pending_updates))
+                            with col3:
+                                st.metric("📊 Performance Metrics", len(performance_extractions))
+                            with col4:
+                                st.metric("🏢 Total Extracted", len(people_extractions))
+                            
+                            # Show what happened
+                            if new_people:
+                                with st.expander(f"📋 {len(new_people)} New People Found"):
+                                    for person in new_people[:10]:  # Show first 10
+                                        st.write(f"• **{person['name']}** → {person['company']}")
+                                    if len(new_people) > 10:
+                                        st.write(f"... and {len(new_people) - 10} more")
+                            
+                            if performance_extractions:
+                                with st.expander(f"📊 {len(performance_extractions)} Performance Metrics Found"):
+                                    for perf in performance_extractions[:10]:  # Show first 10
+                                        metric_display = f"{perf.get('fund_name', 'Unknown')} - {perf.get('metric_type', 'Unknown')}: {perf.get('value', 'N/A')}"
+                                        if perf.get('period'):
+                                            metric_display += f" ({perf.get('period')})"
+                                        st.write(f"• {metric_display}")
+                                    
+                                    if len(performance_extractions) > 10:
+                                        st.write(f"... and {len(performance_extractions) - 10} more")
+                            
+                            if pending_updates:
+                                st.warning(f"⚠️ Found {len(pending_updates)} potential updates for existing people!")
+                                st.info("👆 **Review updates in the sidebar before they're applied**")
                         
                     else:
                         st.warning("⚠️ No people or performance data found.")
@@ -1822,6 +2441,10 @@ with st.sidebar:
 st.title("👥 Asian Hedge Fund Talent Network")
 st.markdown("### Professional intelligence platform for Asia's hedge fund industry")
 
+# --- REVIEW INTERFACE (Priority Display) ---
+if st.session_state.show_review_interface and st.session_state.pending_review_data:
+    display_review_interface()
+
 # --- GLOBAL SEARCH BAR ---
 st.markdown("---")
 col1, col2 = st.columns([4, 1])
@@ -1839,13 +2462,43 @@ with col2:
         st.session_state.global_search = search_query
         st.rerun()
 
+# --- GLOBAL SEARCH BAR ---
+st.markdown("---")
+col1, col2 = st.columns([4, 1])
+
+with col1:
+    search_query = st.text_input(
+        "🔍 Search people, firms, or performance...", 
+        value=st.session_state.global_search,
+        placeholder="Try: 'Goldman Sachs', 'Portfolio Manager', 'Citadel', 'Sharpe ratio'...",
+        key="global_search_input"
+    )
+
+with col2:
+    if st.button("🔍 Search", use_container_width=True) or search_query != st.session_state.global_search:
+        st.session_state.global_search = search_query
+        if search_query and len(search_query.strip()) >= 2:
+            st.rerun()
+
 # Handle global search results with pagination
-if search_query and len(search_query.strip()) >= 2:
-    st.session_state.global_search = search_query
-    matching_people, matching_firms, matching_metrics = global_search(search_query)
+if st.session_state.global_search and len(st.session_state.global_search.strip()) >= 2:
+    search_query = st.session_state.global_search
+    matching_people, matching_firms, matching_metrics = enhanced_global_search(search_query)
     
     if matching_people or matching_firms or matching_metrics:
         st.markdown("### 🔍 Search Results")
+        
+        # Summary of results
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("👥 People", len(matching_people))
+        with col2:
+            st.metric("🏢 Firms", len(matching_firms))
+        with col3:
+            st.metric("📊 Metrics", len(matching_metrics))
+        with col4:
+            total_results = len(matching_people) + len(matching_firms) + len(matching_metrics)
+            st.metric("🎯 Total", total_results)
         
         # Show search results with pagination
         if matching_people:
@@ -1859,6 +2512,9 @@ if search_query and len(search_query.strip()) >= 2:
                     st.caption(f"{safe_get(person, 'current_title')} at {safe_get(person, 'current_company_name')}")
                 with col2:
                     st.caption(f"📍 {safe_get(person, 'location')}")
+                    expertise = safe_get(person, 'expertise')
+                    if expertise and expertise != 'Unknown':
+                        st.caption(f"🏆 {expertise}")
                 with col3:
                     if st.button("👁️ View", key=f"search_person_{person['id']}", use_container_width=True):
                         go_to_person_details(person['id'])
@@ -1867,18 +2523,65 @@ if search_query and len(search_query.strip()) >= 2:
             if len(matching_people) > 5:
                 display_pagination_controls(people_page_info, "search")
         
+        if matching_firms:
+            st.markdown(f"**🏢 Firms ({len(matching_firms)} found)**")
+            for firm in matching_firms[:5]:  # Show first 5 firms
+                col1, col2, col3 = st.columns([3, 2, 1])
+                with col1:
+                    st.markdown(f"**{safe_get(firm, 'name')}**")
+                    st.caption(f"{safe_get(firm, 'strategy')} • {safe_get(firm, 'location')}")
+                with col2:
+                    st.caption(f"💰 {safe_get(firm, 'aum')}")
+                    people_count = len(get_people_by_firm(safe_get(firm, 'name')))
+                    if people_count > 0:
+                        st.caption(f"👥 {people_count} people")
+                with col3:
+                    if st.button("👁️ View", key=f"search_firm_{firm['id']}", use_container_width=True):
+                        go_to_firm_details(firm['id'])
+                        st.rerun()
+        
+        if matching_metrics:
+            st.markdown(f"**📊 Performance Metrics ({len(matching_metrics)} found)**")
+            for metric in matching_metrics[:5]:  # Show first 5 metrics
+                col1, col2, col3 = st.columns([3, 2, 1])
+                with col1:
+                    st.markdown(f"**{safe_get(metric, 'fund_name')}**")
+                    st.caption(f"{safe_get(metric, 'metric_type')} - {safe_get(metric, 'value')}")
+                with col2:
+                    st.caption(f"📅 {safe_get(metric, 'period')} ({safe_get(metric, 'date')})")
+                with col3:
+                    # Find the firm for this metric
+                    firm = get_firm_by_name(safe_get(metric, 'fund_name'))
+                    if firm:
+                        if st.button("👁️ View", key=f"search_metric_{metric.get('id', 'unknown')}", use_container_width=True):
+                            go_to_firm_details(firm['id'])
+                            st.rerun()
+        
         # Clear search button
         if st.button("❌ Clear Search"):
             st.session_state.global_search = ""
+            st.session_state.search_page = 0  # Reset pagination
             st.rerun()
         
         st.markdown("---")
     
     else:
         st.info(f"🔍 No results found for '{search_query}'. Try different keywords.")
-        if st.button("❌ Clear Search"):
-            st.session_state.global_search = ""
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("❌ Clear Search"):
+                st.session_state.global_search = ""
+                st.rerun()
+        with col2:
+            if st.button("💡 Search Tips"):
+                st.info("""
+                **Search Tips:**
+                • Try partial matches: "Gold" finds "Goldman Sachs"
+                • Search by role: "Portfolio Manager", "CIO"
+                • Search by location: "Hong Kong", "Singapore"
+                • Search by strategy: "Long/Short", "Quant"
+                • Search metrics: "Sharpe", "return", "AUM"
+                """)
         st.markdown("---")
 
 # Top Navigation
@@ -1936,11 +2639,34 @@ if st.session_state.show_add_person_modal:
             name = st.text_input("Full Name*", placeholder="John Smith")
             title = st.text_input("Current Title*", placeholder="Portfolio Manager")
             
-            # Dynamic company selection
-            company_options = [""] + [f['name'] for f in st.session_state.firms]
-            company = st.selectbox("Current Company*", options=company_options)
+            # Enhanced company selection - allow typing + suggestions
+            st.markdown("**Current Company***")
+            company_options = [f['name'] for f in st.session_state.firms if f.get('name')]
             
-            # Dynamic location selection
+            if company_options:
+                company = st.text_input(
+                    "Company Name",
+                    placeholder="Type company name or select suggestion below",
+                    help=f"Type directly or choose from {len(company_options)} existing firms",
+                    key="add_person_company"
+                )
+                
+                # Show company suggestions
+                if company_options:
+                    st.caption("💡 **Existing Firms** (click to use):")
+                    cols = st.columns(3)
+                    for i, comp in enumerate(company_options[:6]):  # Show max 6
+                        col_idx = i % 3
+                        with cols[col_idx]:
+                            if st.button(f"🏢 {comp}", key=f"add_person_company_sugg_{i}"):
+                                st.session_state.add_person_company = comp
+                                st.rerun()
+                    if len(company_options) > 6:
+                        st.caption(f"... and {len(company_options) - 6} more firms")
+            else:
+                company = st.text_input("Current Company*", placeholder="Company Name")
+            
+            # Dynamic location input
             location = handle_dynamic_input("location", "", "people", "add_person")
         
         with col2:
@@ -1948,7 +2674,7 @@ if st.session_state.show_add_person_modal:
             phone = st.text_input("Phone", placeholder="+852-1234-5678")
             education = st.text_input("Education", placeholder="Harvard, MIT")
             
-            # Dynamic expertise selection
+            # Dynamic expertise input
             expertise = handle_dynamic_input("expertise", "", "people", "add_person")
         
         # Additional fields
@@ -1956,7 +2682,7 @@ if st.session_state.show_add_person_modal:
         with col3:
             aum_managed = st.text_input("AUM Managed", placeholder="500M USD")
         with col4:
-            # Dynamic strategy selection
+            # Dynamic strategy input
             strategy = handle_dynamic_input("strategy", "", "people", "add_person")
         
         submitted = st.form_submit_button("Add Person")
@@ -2013,13 +2739,13 @@ if st.session_state.show_add_firm_modal:
         with col1:
             firm_name = st.text_input("Firm Name*", placeholder="Tiger Asia Management")
             
-            # Dynamic location selection
+            # Dynamic location input
             location = handle_dynamic_input("location", "", "firms", "add_firm")
             
             aum = st.text_input("AUM", placeholder="5B USD")
             
         with col2:
-            # Dynamic strategy selection
+            # Dynamic strategy input
             strategy = handle_dynamic_input("strategy", "", "firms", "add_firm")
             
             founded = st.number_input("Founded", min_value=1900, max_value=2025, value=2000)
@@ -2558,15 +3284,33 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
             name = st.text_input("Full Name*", value=safe_get(person_data, 'name'))
             title = st.text_input("Current Title*", value=safe_get(person_data, 'current_title'))
             
-            # Dynamic company selection
+            # Enhanced company selection
+            st.markdown("**Current Company***")
             current_company = safe_get(person_data, 'current_company_name')
-            company_options = [""] + [f['name'] for f in st.session_state.firms]
-            company_index = 0
-            if current_company and current_company in company_options:
-                company_index = company_options.index(current_company)
-            company = st.selectbox("Current Company*", options=company_options, index=company_index)
+            company_options = [f['name'] for f in st.session_state.firms if f.get('name')]
             
-            # Dynamic location selection
+            company = st.text_input(
+                "Company Name",
+                value=current_company,
+                placeholder="Type company name or select suggestion below",
+                help=f"Type directly or choose from {len(company_options)} existing firms",
+                key="edit_person_company"
+            )
+            
+            # Show company suggestions
+            if company_options:
+                st.caption("💡 **Existing Firms** (click to use):")
+                cols = st.columns(3)
+                for i, comp in enumerate(company_options[:6]):  # Show max 6
+                    col_idx = i % 3
+                    with cols[col_idx]:
+                        if st.button(f"🏢 {comp}", key=f"edit_person_company_sugg_{i}"):
+                            st.session_state.edit_person_company = comp
+                            st.rerun()
+                if len(company_options) > 6:
+                    st.caption(f"... and {len(company_options) - 6} more firms")
+            
+            # Dynamic location input
             location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person")
         
         with col2:
@@ -2577,12 +3321,12 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
         
         col3, col4 = st.columns(2)
         with col3:
-            # Dynamic expertise selection
+            # Dynamic expertise input
             expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person")
             aum = st.text_input("AUM Managed", value=safe_get(person_data, 'aum_managed'))
         
         with col4:
-            # Dynamic strategy selection
+            # Dynamic strategy input
             strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person")
         
         col_save, col_cancel, col_delete = st.columns(3)
@@ -2651,14 +3395,14 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         with col1:
             firm_name = st.text_input("Firm Name*", value=safe_get(firm_data, 'name'))
             
-            # Dynamic location selection
+            # Dynamic location input
             location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm")
             
             headquarters = st.text_input("Headquarters", value=safe_get(firm_data, 'headquarters'))
             aum = st.text_input("AUM", value=safe_get(firm_data, 'aum'))
             
         with col2:
-            # Dynamic strategy selection
+            # Dynamic strategy input
             strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm")
             
             founded = st.number_input("Founded", min_value=1900, max_value=2025, 
@@ -2765,33 +3509,262 @@ with col2:
 with col3:
     st.markdown("**🤝 Professional Networks**")
 with col4:
-    st.markdown("**🚀 Enhanced Large File Support**")
+    st.markdown("**📋 Smart Review System**")
 
-# Automatic data saving and backup
-if st.button("📥 Export Database Backup", use_container_width=True):
-    export_data = {
-        "people": st.session_state.people,
-        "firms": st.session_state.firms,
-        "employments": st.session_state.employments,
-        "extractions": st.session_state.all_extractions,
-        "export_timestamp": datetime.now().isoformat(),
-        "total_records": len(st.session_state.people) + len(st.session_state.firms),
-        "processing_config": {
-            "preprocessing_mode": st.session_state.preprocessing_mode,
-            "chunk_size_preference": st.session_state.chunk_size_preference
-        }
-    }
+# --- Footer ---
+st.markdown("---")
+st.markdown("### 👥 Asian Hedge Fund Talent Intelligence Platform")
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.markdown("**🔍 Global Search**")
+with col2:
+    st.markdown("**📊 Performance Tracking**") 
+with col3:
+    st.markdown("**🤝 Professional Networks**")
+with col4:
+    st.markdown("**📋 Smart Review System**")
+
+# Enhanced Export Section
+st.markdown("---")
+st.markdown("### 📊 Data Export & Backup")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("#### 📁 Database Exports")
     
-    export_json = json.dumps(export_data, indent=2, default=str)
-    st.download_button(
-        "💾 Download Complete Database",
-        export_json,
-        f"hedge_fund_db_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-        "application/json",
-        use_container_width=True
+    # Export format selection
+    export_format_options = ["📄 CSV Files (.zip)", "🗄️ JSON Backup"]
+    if EXCEL_AVAILABLE:
+        export_format_options.insert(0, "📊 Excel (.xlsx)")
+    
+    export_format = st.radio(
+        "Choose export format:",
+        export_format_options,
+        horizontal=True
     )
+    
+    if not EXCEL_AVAILABLE and "Excel" in str(export_format):
+        st.warning("📊 Excel export requires openpyxl. Install with: `pip install openpyxl`")
+    
+    # Data selection
+    st.markdown("**Select data to export:**")
+    
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        export_people = st.checkbox("👥 People", value=True, help=f"{len(st.session_state.people)} records")
+        export_firms = st.checkbox("🏢 Firms", value=True, help=f"{len(st.session_state.firms)} records")
+    with col_b:
+        export_employments = st.checkbox("💼 Employment History", value=True, help=f"{len(st.session_state.employments)} records")
+        export_performance = st.checkbox("📊 Performance Metrics", value=True, help=f"{sum(len(f.get('performance_metrics', [])) for f in st.session_state.firms)} records")
+    with col_c:
+        export_extractions = st.checkbox("🤖 Extraction History", value=False, help=f"{len(st.session_state.all_extractions)} records")
+        export_reviews = st.checkbox("📋 Pending Reviews", value=False, help=f"{len(st.session_state.pending_review_data)} batches")
 
-# Force save data periodically
+with col2:
+    st.markdown("#### 📈 Export Preview")
+    
+    # Calculate export statistics
+    total_records = 0
+    export_details = []
+    
+    if export_people and st.session_state.people:
+        total_records += len(st.session_state.people)
+        export_details.append(f"👥 {len(st.session_state.people)} People")
+    
+    if export_firms and st.session_state.firms:
+        total_records += len(st.session_state.firms)
+        export_details.append(f"🏢 {len(st.session_state.firms)} Firms")
+    
+    if export_employments and st.session_state.employments:
+        total_records += len(st.session_state.employments)
+        export_details.append(f"💼 {len(st.session_state.employments)} Employment Records")
+    
+    if export_performance:
+        perf_count = sum(len(f.get('performance_metrics', [])) for f in st.session_state.firms)
+        if perf_count > 0:
+            total_records += perf_count
+            export_details.append(f"📊 {perf_count} Performance Metrics")
+    
+    if export_extractions and st.session_state.all_extractions:
+        total_records += len(st.session_state.all_extractions)
+        export_details.append(f"🤖 {len(st.session_state.all_extractions)} Extractions")
+    
+    if export_reviews and st.session_state.pending_review_data:
+        review_items = sum(len(r.get('people', [])) + len(r.get('performance', [])) for r in st.session_state.pending_review_data)
+        if review_items > 0:
+            total_records += review_items
+            export_details.append(f"📋 {review_items} Review Items")
+    
+    if export_details:
+        st.success(f"**Ready to export {total_records} total records:**")
+        for detail in export_details:
+            st.write(f"• {detail}")
+    else:
+        st.warning("No data selected for export")
+
+# Export buttons
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button("📊 Export Selected Data", use_container_width=True, disabled=total_records == 0):
+        try:
+            # Prepare export data based on selections
+            export_data = {}
+            
+            if export_people and st.session_state.people:
+                people_df = export_people_to_dataframe()
+                if not people_df.empty:
+                    export_data['People'] = people_df
+            
+            if export_firms and st.session_state.firms:
+                firms_df = export_firms_to_dataframe()
+                if not firms_df.empty:
+                    export_data['Firms'] = firms_df
+            
+            if export_employments and st.session_state.employments:
+                employments_df = export_employments_to_dataframe()
+                if not employments_df.empty:
+                    export_data['Employment_History'] = employments_df
+            
+            if export_performance:
+                performance_df = export_performance_metrics_to_dataframe()
+                if not performance_df.empty:
+                    export_data['Performance_Metrics'] = performance_df
+            
+            if export_extractions and st.session_state.all_extractions:
+                extractions_df = export_extractions_to_dataframe()
+                if not extractions_df.empty:
+                    export_data['Extraction_History'] = extractions_df
+            
+            if export_reviews and st.session_state.pending_review_data:
+                review_df = export_review_queue_to_dataframe()
+                if not review_df.empty:
+                    export_data['Pending_Reviews'] = review_df
+            
+            # Generate export based on format
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            if export_format == "📊 Excel (.xlsx)" and EXCEL_AVAILABLE:
+                if export_data:
+                    excel_file = export_to_excel(export_data)
+                    st.download_button(
+                        "💾 Download Excel File",
+                        excel_file.getvalue(),
+                        f"hedge_fund_data_{timestamp}.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                    st.success(f"✅ Excel export ready! {len(export_data)} sheets created.")
+                
+            elif export_format == "📄 CSV Files (.zip)":
+                if export_data:
+                    csv_zip = export_to_csv_zip(export_data)
+                    st.download_button(
+                        "💾 Download CSV Archive",
+                        csv_zip.getvalue(),
+                        f"hedge_fund_data_{timestamp}.zip",
+                        "application/zip",
+                        use_container_width=True
+                    )
+                    st.success(f"✅ CSV archive ready! {len(export_data)} files in ZIP.")
+                
+            elif export_format == "🗄️ JSON Backup":
+                # Use existing JSON backup functionality but with selections
+                backup_data = {}
+                
+                if export_people:
+                    backup_data["people"] = st.session_state.people
+                if export_firms:
+                    backup_data["firms"] = st.session_state.firms
+                if export_employments:
+                    backup_data["employments"] = st.session_state.employments
+                if export_extractions:
+                    backup_data["extractions"] = st.session_state.all_extractions
+                if export_reviews:
+                    backup_data["pending_reviews"] = st.session_state.pending_review_data
+                
+                if export_performance:
+                    # Include performance metrics within firms
+                    pass  # Already included in firms data
+                
+                backup_data.update({
+                    "export_timestamp": datetime.now().isoformat(),
+                    "total_records": total_records,
+                    "processing_config": {
+                        "preprocessing_mode": st.session_state.preprocessing_mode,
+                        "chunk_size_preference": st.session_state.chunk_size_preference,
+                        "review_mode_enabled": st.session_state.enable_review_mode,
+                        "auto_save_timeout": st.session_state.auto_save_timeout
+                    }
+                })
+                
+                export_json = json.dumps(backup_data, indent=2, default=str)
+                st.download_button(
+                    "💾 Download JSON Backup",
+                    export_json,
+                    f"hedge_fund_backup_{timestamp}.json",
+                    "application/json",
+                    use_container_width=True
+                )
+                st.success(f"✅ JSON backup ready! {total_records} records included.")
+        
+        except Exception as e:
+            st.error(f"Export failed: {str(e)}")
+
+with col2:
+    excel_available_text = "📊 Export Everything (Excel)" if EXCEL_AVAILABLE else "📊 Excel (Install openpyxl)"
+    if st.button(excel_available_text, use_container_width=True, disabled=not EXCEL_AVAILABLE):
+        if EXCEL_AVAILABLE:
+            try:
+                export_data = create_comprehensive_export()
+                if export_data:
+                    excel_file = export_to_excel(export_data)
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    
+                    st.download_button(
+                        "💾 Download Complete Excel Export",
+                        excel_file.getvalue(),
+                        f"hedge_fund_complete_{timestamp}.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                    
+                    total_sheets = len(export_data)
+                    total_records = sum(len(df) for df in export_data.values())
+                    st.success(f"✅ Complete export ready! {total_sheets} sheets, {total_records} total records.")
+                else:
+                    st.warning("No data available for export")
+            except Exception as e:
+                st.error(f"Complete export failed: {str(e)}")
+        else:
+            st.error("Excel export requires openpyxl. Install with: pip install openpyxl")
+
+with col3:
+    if st.button("📄 Export Everything (CSV)", use_container_width=True):
+        try:
+            export_data = create_comprehensive_export()
+            if export_data:
+                csv_zip = export_to_csv_zip(export_data)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                
+                st.download_button(
+                    "💾 Download Complete CSV Archive",
+                    csv_zip.getvalue(),
+                    f"hedge_fund_complete_{timestamp}.zip",
+                    "application/zip",
+                    use_container_width=True
+                )
+                
+                total_files = len(export_data)
+                total_records = sum(len(df) for df in export_data.values())
+                st.success(f"✅ Complete CSV archive ready! {total_files} files, {total_records} total records.")
+            else:
+                st.warning("No data available for export")
+        except Exception as e:
+            st.error(f"Complete CSV export failed: {str(e)}")
+
+# Enhanced auto-save with review handling
 current_time = datetime.now()
 if 'last_auto_save' not in st.session_state:
     st.session_state.last_auto_save = current_time
@@ -2801,3 +3774,24 @@ time_since_save = (current_time - st.session_state.last_auto_save).total_seconds
 if time_since_save > 30 and (st.session_state.people or st.session_state.firms or st.session_state.all_extractions):
     save_data()
     st.session_state.last_auto_save = current_time
+
+# Handle review timeout
+if st.session_state.pending_review_data and st.session_state.review_start_time:
+    if get_review_time_remaining() <= 0:
+        saved_count = auto_save_pending_reviews()
+        if saved_count > 0:
+            st.sidebar.success(f"⏰ Auto-saved {saved_count} items from review queue!")
+            st.rerun()
+
+# Auto-refresh for review interface using Streamlit's built-in mechanisms
+if st.session_state.show_review_interface and st.session_state.pending_review_data:
+    remaining = get_review_time_remaining()
+    if remaining > 0:
+        # Use JavaScript to refresh the page periodically when in review mode
+        st.markdown("""
+        <script>
+        setTimeout(function() {
+            window.location.reload();
+        }, 30000); // Refresh every 30 seconds
+        </script>
+        """, unsafe_allow_html=True)
