@@ -428,17 +428,158 @@ def extract_talent_simple(text, model):
     if not model:
         return []
     
+    # Preprocess and clean the text first
+    cleaned_text = preprocess_newsletter_text(text)
+    
     # Simple size-based processing decision
     max_single_chunk = 15000
     
-    if len(text) <= max_single_chunk:
+    if len(cleaned_text) <= max_single_chunk:
         # Single chunk - simple and reliable
         st.info("📄 Processing as single chunk...")
-        return extract_single_chunk_safe(text, model)
+        return extract_single_chunk_safe(cleaned_text, model)
     else:
         # Multi-chunk with crash protection
-        st.info(f"📊 Large file detected ({len(text):,} chars). Using safe chunking...")
-        return extract_multi_chunk_safe(text, model, max_single_chunk)
+        st.info(f"📊 Large file detected ({len(cleaned_text):,} chars). Using safe chunking...")
+        return extract_multi_chunk_safe(cleaned_text, model, max_single_chunk)
+
+def preprocess_newsletter_text(text):
+    """Clean and preprocess newsletter text to remove noise and focus on relevant content"""
+    import re
+    
+    # Show original size
+    original_size = len(text)
+    
+    # Step 1: Remove email headers (From, To, Subject, Sent, etc.)
+    email_header_patterns = [
+        r'From:\s*.*?\n',
+        r'To:\s*.*?\n', 
+        r'Sent:\s*.*?\n',
+        r'Subject:\s*.*?\n',
+        r'Date:\s*.*?\n',
+        r'Reply-To:\s*.*?\n',
+        r'Return-Path:\s*.*?\n'
+    ]
+    
+    for pattern in email_header_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.MULTILINE)
+    
+    # Step 2: Remove URLs and tracking links
+    url_patterns = [
+        r'https?://[^\s<>"{}|\\^`\[\]]+',  # Standard URLs
+        r'<https?://[^>]+>',  # URLs in angle brackets
+        r'urldefense\.proofpoint\.com[^\s]*',  # Proofpoint URLs
+        r'pardot\.withintelligence\.com[^\s]*',  # Tracking URLs
+        r'jpmorgan\.email\.streetcontxt\.net[^\s]*'  # Email tracking
+    ]
+    
+    for pattern in url_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+    
+    # Step 3: Remove email disclaimers and legal text
+    disclaimer_patterns = [
+        r'This section contains materials produced by third parties.*?(?=\n\n|\Z)',
+        r'This message is confidential and subject to terms.*?(?=\n\n|\Z)',
+        r'Important Reminder: JPMorgan Chase will never send emails.*?(?=\n\n|\Z)',
+        r'Although this transmission and any links.*?(?=\n\n|\Z)',
+        r'©.*?All rights reserved.*?(?=\n\n|\Z)',
+        r'Unsubscribe.*?(?=\n\n|\Z)',
+        r'Privacy Policy.*?(?=\n\n|\Z)',
+        r'Update email preferences.*?(?=\n\n|\Z)',
+        r'Not seeing what you expected\?.*?(?=\n\n|\Z)',
+        r'Log in to my account.*?(?=\n\n|\Z)'
+    ]
+    
+    for pattern in disclaimer_patterns:
+        text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Step 4: Remove HTML artifacts and email formatting
+    html_patterns = [
+        r'<[^>]+>',  # HTML tags
+        r'&[a-zA-Z0-9#]+;',  # HTML entities
+        r'\[cid:[^\]]+\]',  # Email embedded images
+        r'________________________________+',  # Email separators
+        r'\*\s*\|.*?\|\s*\*',  # Email table formatting
+    ]
+    
+    for pattern in html_patterns:
+        text = re.sub(pattern, '', text)
+    
+    # Step 5: Remove tracking and navigation elements
+    navigation_patterns = [
+        r'View article\s*View mandate\s*',
+        r'View investor\s*View mandate\s*',
+        r'Asset class:.*?(?=\n)',
+        r'Region:.*?(?=\n)',
+        r'Strategy:.*?(?=\n)',
+        r'Contact us\s*',
+        r'SEE ALL ARTICLES.*?(?=\n)',
+        r'CAPITAL ADVISORY GROUP.*?(?=\n)',
+    ]
+    
+    for pattern in navigation_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+    
+    # Step 6: Clean up excessive whitespace and formatting
+    # Remove multiple consecutive newlines
+    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+    
+    # Remove lines with only special characters or whitespace
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        # Keep line if it has meaningful content (letters and useful words)
+        if re.search(r'[a-zA-Z].*[a-zA-Z]', line) and len(line.strip()) > 5:
+            # Clean up the line
+            line = re.sub(r'\s+', ' ', line.strip())  # Normalize whitespace
+            if line:
+                cleaned_lines.append(line)
+    
+    text = '\n'.join(cleaned_lines)
+    
+    # Step 7: Focus on hedge fund relevant content
+    # Look for common hedge fund keywords and keep paragraphs containing them
+    hf_keywords = [
+        'hedge fund', 'portfolio manager', 'pm', 'cio', 'chief investment officer',
+        'managing director', 'md', 'vice president', 'vp', 'analyst', 'trader',
+        'fund launch', 'fund debut', 'joins', 'moves', 'promotes', 'appoints',
+        'former', 'ex-', 'launches', 'capital management', 'partners', 'advisors',
+        'assets under management', 'aum', 'long/short', 'equity', 'credit',
+        'quantitative', 'macro', 'multi-strategy', 'arbitrage'
+    ]
+    
+    # Split into paragraphs and keep relevant ones
+    paragraphs = text.split('\n\n')
+    relevant_paragraphs = []
+    
+    for para in paragraphs:
+        para_lower = para.lower()
+        if any(keyword in para_lower for keyword in hf_keywords):
+            relevant_paragraphs.append(para)
+        elif len(para) > 100 and ('capital' in para_lower or 'management' in para_lower):
+            # Keep longer paragraphs that might be relevant
+            relevant_paragraphs.append(para)
+    
+    # If we didn't find enough relevant content, keep more of the original
+    if len(relevant_paragraphs) < 3:
+        relevant_paragraphs = paragraphs[:10]  # Keep first 10 paragraphs as fallback
+    
+    cleaned_text = '\n\n'.join(relevant_paragraphs)
+    
+    # Final cleanup
+    cleaned_text = cleaned_text.strip()
+    
+    # Show cleaning results
+    final_size = len(cleaned_text)
+    reduction_pct = ((original_size - final_size) / original_size) * 100 if original_size > 0 else 0
+    
+    st.info(f"📝 **Text Preprocessing Complete**")
+    st.write(f"• **Original size**: {original_size:,} characters")
+    st.write(f"• **Cleaned size**: {final_size:,} characters") 
+    st.write(f"• **Reduction**: {reduction_pct:.1f}% noise removed")
+    st.write(f"• **Relevant paragraphs**: {len(relevant_paragraphs)} found")
+    
+    return cleaned_text
 
 def find_similar_person(extracted_person):
     """Find existing person that might match the extracted data"""
@@ -742,6 +883,17 @@ with st.sidebar:
             char_count = len(newsletter_text)
             chunks_needed = max(1, char_count // 15000)
             st.info(f"Large file: {char_count:,} chars → {chunks_needed} chunks → ~{chunks_needed * 2} minutes estimated")
+        
+        # Show preprocessing preview
+        if newsletter_text:
+            with st.expander("🔍 Preview Text Preprocessing"):
+                st.write("**Raw text preview (first 500 chars):**")
+                st.code(newsletter_text[:500] + "..." if len(newsletter_text) > 500 else newsletter_text)
+                
+                if st.button("🧹 Test Preprocessing", key="test_preprocess"):
+                    cleaned = preprocess_newsletter_text(newsletter_text)
+                    st.write("**Cleaned text preview (first 500 chars):**")
+                    st.code(cleaned[:500] + "..." if len(cleaned) > 500 else cleaned)
 
         # Extract button - simplified and crash-proof
         if st.button("🚀 Extract Talent", use_container_width=True):
@@ -834,18 +986,32 @@ with st.sidebar:
         # Quick test - simplified
         if st.button("🧪 Test with Sample", use_container_width=True):
             sample = """
+            From: Newsletter <newsletter@hedgefund.com>
+            Sent: Friday, June 27, 2025 4:56 PM
+            Subject: Daily Hedge Fund News
+            
             Goldman Sachs veteran John Smith joins Citadel Asia as Managing Director in Hong Kong.
             Former JPMorgan portfolio manager Lisa Chen launches her own hedge fund, Dragon Capital, 
             focusing on Asian equities. Millennium Partners promotes Alex Wang to head of quant trading 
             in Singapore. Sarah Kim moves from Bridgewater to become CIO at newly formed Tiger Asia.
+            
+            This message is confidential. Please visit https://tracking.example.com for more.
+            Unsubscribe: https://unsubscribe.example.com
             """
             
             try:
-                st.info("Testing extraction...")
-                extractions = extract_single_chunk_safe(sample, model)
+                st.info("Testing preprocessing + extraction...")
+                
+                # Show preprocessing in action
+                with st.expander("📝 Preprocessing Results", expanded=True):
+                    cleaned_sample = preprocess_newsletter_text(sample)
+                
+                # Then extract
+                extractions = extract_single_chunk_safe(cleaned_sample, model)
                 st.write(f"**Found {len(extractions)} people:**")
                 for ext in extractions:
                     st.write(f"• {ext.get('name', 'Unknown')} → {ext.get('company', 'Unknown')}")
+                    
             except Exception as e:
                 st.error(f"Test failed: {e}")
     
