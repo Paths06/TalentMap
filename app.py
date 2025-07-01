@@ -1827,10 +1827,10 @@ def display_review_interface():
         with col1:
             st.info(f"⏱️ **Auto-save in**: {minutes_left}m {seconds_left}s")
         with col2:
-            if st.button("🔄 Refresh Timer", use_container_width=True):
+            if st.button("🔄 Refresh Timer", use_container_width=True, key="refresh_timer_button"):
                 st.rerun()
         with col3:
-            if st.button("💾 Save All Now", use_container_width=True):
+            if st.button("💾 Save All Now", use_container_width=True, key="save_all_now_button"):
                 saved_count = 0
                 for review_item in st.session_state.pending_review_data:
                     approved_people, approved_performance = approve_all_in_review(review_item['id'])
@@ -1842,7 +1842,7 @@ def display_review_interface():
                 st.success(f"✅ Saved {saved_count} items to database!")
                 st.rerun()
         with col4:
-            if st.button("❌ Cancel Review", use_container_width=True):
+            if st.button("❌ Cancel Review", use_container_width=True, key="cancel_review_button"):
                 st.session_state.pending_review_data = []
                 st.session_state.show_review_interface = False
                 st.rerun()
@@ -2408,7 +2408,7 @@ with st.sidebar:
                 st.warning(f"⏱️ **{len(st.session_state.pending_review_data)} items pending review!**")
                 st.info(f"Auto-save in: {minutes_left}m {seconds_left}s")
                 
-                if st.button("🔍 Go to Review", use_container_width=True):
+                if st.button("🔍 Go to Review", use_container_width=True, key="sidebar_goto_review"):
                     st.session_state.show_review_interface = True
                     st.rerun()
             else:
@@ -2756,7 +2756,7 @@ with col1:
     )
 
 with col2:
-    if st.button("🔍 Search", use_container_width=True) or search_query != st.session_state.global_search:
+    if st.button("🔍 Search", use_container_width=True, key="main_search_button") or search_query != st.session_state.global_search:
         st.session_state.global_search = search_query
         if search_query and len(search_query.strip()) >= 2:
             st.rerun()
@@ -2839,7 +2839,7 @@ if st.session_state.global_search and len(st.session_state.global_search.strip()
                             st.rerun()
         
         # Clear search button
-        if st.button("❌ Clear Search"):
+        if st.button("❌ Clear Search", key="main_clear_search"):
             st.session_state.global_search = ""
             st.session_state.search_page = 0  # Reset pagination
             st.rerun()
@@ -2850,11 +2850,11 @@ if st.session_state.global_search and len(st.session_state.global_search.strip()
         st.info(f"🔍 No results found for '{search_query}'. Try different keywords.")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("❌ Clear Search"):
+            if st.button("❌ Clear Search", key="no_results_clear_search"):
                 st.session_state.global_search = ""
                 st.rerun()
         with col2:
-            if st.button("💡 Search Tips"):
+            if st.button("💡 Search Tips", key="search_tips_button"):
                 st.info("""
                 **Search Tips:**
                 • Try partial matches: "Gold" finds "Goldman Sachs"
