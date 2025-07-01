@@ -238,22 +238,21 @@ def emergency_stop_processing():
 
 # --- MISSING FUNCTIONS - MOVED TO TOP ---
 
-def handle_dynamic_input(field_name, current_value, table_name, context=""):
+def handle_dynamic_input(field_name, current_value, table_name, context="", in_form=False):
     """
-    Enhanced dynamic input that prioritizes typing with suggestions
+    Enhanced dynamic input that prioritizes typing with suggestions.
+    Supports both inside and outside of st.form via `in_form` flag.
     """
     import streamlit as st
-    
-    # Get existing options from database based on field and table
+
+    # Get existing options from session state
     existing_options = get_unique_values_from_session_state(table_name, field_name)
-    
-    # Remove None/empty values and sort
     existing_options = sorted([opt for opt in existing_options if opt and opt.strip() and opt != 'Unknown'])
-    
-    # Create unique key for input
+
+    # Create unique key
     unique_key = f"{field_name}_input_{table_name}_{context}"
-    
-    # Primary text input with current value
+
+    # Main text input field
     user_input = st.text_input(
         f"{field_name.replace('_', ' ').title()}",
         value=current_value if current_value and current_value != 'Unknown' else "",
@@ -261,41 +260,37 @@ def handle_dynamic_input(field_name, current_value, table_name, context=""):
         key=unique_key,
         help=f"Type directly or choose from {len(existing_options)} existing options below"
     )
-    
-    # Show existing options as clickable suggestions if there are any
-    if existing_options and len(existing_options) > 0:
-        st.caption(f"💡 **Suggestions** (click to use):")
-        
-        # Display suggestions in columns for better layout
+
+    # Suggestion buttons (only shown outside form)
+    if not in_form and existing_options:
+        st.caption("💡 **Suggestions** (click to use):")
         cols_per_row = 3
         suggestion_cols = st.columns(cols_per_row)
-        
-        for i, option in enumerate(existing_options[:9]):  # Show max 9 suggestions
+
+        for i, option in enumerate(existing_options[:9]):
             col_idx = i % cols_per_row
             with suggestion_cols[col_idx]:
-                # Use a button that updates the input when clicked
                 if st.button(f"📍 {option}", key=f"{unique_key}_suggestion_{i}", help=f"Use: {option}"):
-                    # Return the selected suggestion
                     st.session_state[unique_key] = option
                     st.rerun()
-    
-    # Cancel button outside form for better UX
-    if st.button("❌ Cancel Edit", key="cancel_edit_firm_outside"):
-        st.session_state.show_edit_firm_modal = False
-        st.session_state.edit_firm_data = None
-        st.rerun()
-    
-    # Cancel button outside form for better UX
-    if st.button("❌ Cancel Edit", key="cancel_edit_person_outside"):
-        st.session_state.show_edit_person_modal = False
-        st.session_state.edit_person_data = None
-        st.rerun()
-        
+
         if len(existing_options) > 9:
             st.caption(f"... and {len(existing_options) - 9} more options available")
-    
-    # Return the user input (either typed or from session state if suggestion was clicked)
+
+    # Cancel buttons (only shown outside form)
+    if not in_form:
+        if st.button("❌ Cancel Edit", key="cancel_edit_firm_outside"):
+            st.session_state.show_edit_firm_modal = False
+            st.session_state.edit_firm_data = None
+            st.rerun()
+
+        if st.button("❌ Cancel Edit", key="cancel_edit_person_outside"):
+            st.session_state.show_edit_person_modal = False
+            st.session_state.edit_person_data = None
+            st.rerun()
+
     return user_input.strip() if user_input else ""
+
 
 def enhanced_global_search(query):
     """Enhanced global search function with better matching and debugging"""
@@ -2387,19 +2382,19 @@ if st.session_state.show_add_person_modal:
             else:
                 company = st.text_input("Current Company*", placeholder="Company Name")
             
-            location = handle_dynamic_input("location", "", "people", "add_person")
+            location = handle_dynamic_input("location", "", "people", "add_person", in_form=True)
         
         with col2:
             email = st.text_input("Email", placeholder="john.smith@company.com")
             phone = st.text_input("Phone", placeholder="+852-1234-5678")
             education = st.text_input("Education", placeholder="Harvard, MIT")
-            expertise = handle_dynamic_input("expertise", "", "people", "add_person")
+            expertise = handle_dynamic_input("expertise", "", "people", "add_person",in_form=True)
         
         col3, col4 = st.columns(2)
         with col3:
             aum_managed = st.text_input("AUM Managed", placeholder="500M USD")
         with col4:
-            strategy = handle_dynamic_input("strategy", "", "people", "add_person")
+            strategy = handle_dynamic_input("strategy", "", "people", "add_person",in_form=True)
         
         submitted = st.form_submit_button("Add Person", use_container_width=True)
         
@@ -2467,11 +2462,11 @@ if st.session_state.show_add_firm_modal:
         
         with col1:
             firm_name = st.text_input("Firm Name*", placeholder="Tiger Asia Management")
-            location = handle_dynamic_input("location", "", "firms", "add_firm")
+            location = handle_dynamic_input("location", "", "firms", "add_firm",in_form=True)
             aum = st.text_input("AUM", placeholder="5B USD")
             
         with col2:
-            strategy = handle_dynamic_input("strategy", "", "firms", "add_firm")
+            strategy = handle_dynamic_input("strategy", "", "firms", "add_firm",in_form=True)
             founded = st.number_input("Founded", min_value=1900, max_value=2025, value=2000)
             website = st.text_input("Website", placeholder="https://company.com")
         
@@ -3004,7 +2999,7 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
                 help=f"Available firms: {', '.join(company_options[:3])}{'...' if len(company_options) > 3 else ''}"
             )
             
-            location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person")
+            location = handle_dynamic_input("location", safe_get(person_data, 'location'), "people", "edit_person",in_form=True)
         
         with col2:
             email = st.text_input("Email", value=safe_get(person_data, 'email'))
@@ -3014,11 +3009,11 @@ if st.session_state.show_edit_person_modal and st.session_state.edit_person_data
         
         col3, col4 = st.columns(2)
         with col3:
-            expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person")
+            expertise = handle_dynamic_input("expertise", safe_get(person_data, 'expertise'), "people", "edit_person",in_form=True)
             aum = st.text_input("AUM Managed", value=safe_get(person_data, 'aum_managed'))
         
         with col4:
-            strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person")
+            strategy = handle_dynamic_input("strategy", safe_get(person_data, 'strategy'), "people", "edit_person",in_form=True)
         
         col_save, col_cancel, col_delete = st.columns(3)
         
@@ -3089,12 +3084,12 @@ if st.session_state.show_edit_firm_modal and st.session_state.edit_firm_data:
         
         with col1:
             firm_name = st.text_input("Firm Name*", value=safe_get(firm_data, 'name'))
-            location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm")
+            location = handle_dynamic_input("location", safe_get(firm_data, 'location'), "firms", "edit_firm",in_form=True)
             headquarters = st.text_input("Headquarters", value=safe_get(firm_data, 'headquarters'))
             aum = st.text_input("AUM", value=safe_get(firm_data, 'aum'))
             
         with col2:
-            strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm")
+            strategy = handle_dynamic_input("strategy", safe_get(firm_data, 'strategy'), "firms", "edit_firm",in_form=True)
             founded = st.number_input("Founded", min_value=1900, max_value=2025, 
                                     value=firm_data.get('founded', 2000) if firm_data.get('founded') else 2000)
             website = st.text_input("Website", value=safe_get(firm_data, 'website'))
