@@ -55,84 +55,6 @@ def safe_get(data, key, default='Unknown'):
         logger.warning(f"Error in safe_get for key {key}: {e}")
         return default
 
-# --- ENHANCED: Duplicate prevention functions ---
-def get_person_key(name, company):
-    """Generate a normalized key for person identification"""
-    if not name or not company:
-        return None
-    return f"{name.strip().lower()}|{company.strip().lower()}"
-
-def find_duplicate_person(name, company, exclude_id=None):
-    """Find existing person with same name and company"""
-    search_key = get_person_key(name, company)
-    if not search_key:
-        return None
-    
-    for person in st.session_state.people:
-        if exclude_id and person['id'] == exclude_id:
-            continue
-        
-        person_key = get_person_key(
-            safe_get(person, 'name'), 
-            safe_get(person, 'current_company_name')
-        )
-        
-        if person_key == search_key:
-            return person
-    
-    return None
-
-def clean_existing_duplicates():
-    """Remove duplicate people based on name+company combination"""
-    seen_keys = set()
-    unique_people = []
-    duplicate_ids = []
-    
-    for person in st.session_state.people:
-        person_key = get_person_key(
-            safe_get(person, 'name'),
-            safe_get(person, 'current_company_name')
-        )
-        
-        if person_key and person_key not in seen_keys:
-            seen_keys.add(person_key)
-            unique_people.append(person)
-        else:
-            duplicate_ids.append(person['id'])
-    
-    # Remove duplicate employments as well
-    if duplicate_ids:
-        st.session_state.employments = [
-            emp for emp in st.session_state.employments
-            if emp['person_id'] not in duplicate_ids
-        ]
-        
-        st.session_state.people = unique_people
-        return len(duplicate_ids)
-    
-    return 0
-
-def should_update_person(existing_person, new_data):
-    """Check if person data should be updated with new information"""
-    updates = {}
-    
-    # List of fields to check for updates
-    update_fields = [
-        'current_title', 'location', 'email', 'linkedin_profile_url',
-        'phone', 'education', 'expertise', 'aum_managed', 'strategy'
-    ]
-    
-    for field in update_fields:
-        existing_value = safe_get(existing_person, field, '')
-        new_value = safe_get(new_data, field, '')
-        
-        # Update if new value is more informative
-        if (new_value and new_value != 'Unknown' and 
-            (not existing_value or existing_value == 'Unknown' or len(new_value) > len(existing_value))):
-            updates[field] = new_value
-    
-    return updates
-
 # --- Context/News tracking functions ---
 def add_context_to_person(person_id, context_type, content, source_info=""):
     """Add context/news mention to a person"""
@@ -180,7 +102,7 @@ def add_context_to_firm(firm_id, context_type, content, source_info=""):
     
     return True
 
-# --- FIXED: Enhanced JSON repair and cleanup function ---
+# --- JSON repair function ---
 def repair_json_response(json_text):
     """Repair common JSON formatting issues from responses"""
     try:
@@ -195,63 +117,30 @@ def repair_json_response(json_text):
             json_text = json_text[:json_end + 1]
         
         # Fix common JSON issues
-        
-        # 1. Fix trailing commas before closing brackets/braces
         json_text = re.sub(r',(\s*[}\]])', r'\1', json_text)
-        
-        # 2. Fix missing commas between objects/arrays
         json_text = re.sub(r'}\s*{', r'},{', json_text)
         json_text = re.sub(r']\s*\[', r'],[', json_text)
-        
-        # 3. Fix quotes around property names
         json_text = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_text)
-        
-        # 4. Fix unescaped quotes in strings
         json_text = re.sub(r'(?<!\\)"(?![,}\]:])([^"]*)"(?![,}\]:])([^"]*)"', r'"\1\"\2"', json_text)
         
-        # 5. Handle truncated strings (add closing quote)
+        # Handle truncated strings
         lines = json_text.split('\n')
         for i, line in enumerate(lines):
-            # If line ends with incomplete string, try to close it
             if '"' in line and line.count('"') % 2 == 1 and not line.rstrip().endswith('"'):
                 lines[i] = line + '"'
         json_text = '\n'.join(lines)
         
-        # 6. Handle incomplete objects - add closing braces if needed
+        # Handle incomplete objects
         open_braces = json_text.count('{') - json_text.count('}')
         open_brackets = json_text.count('[') - json_text.count(']')
         
-        # Add missing closing braces
         for _ in range(open_braces):
             json_text += '}'
-        
-        # Add missing closing brackets  
         for _ in range(open_brackets):
             json_text += ']'
-            
-        # 7. Remove any remaining content after the main JSON object
-        try:
-            # Find the main object boundaries
-            brace_count = 0
-            end_pos = -1
-            for i, char in enumerate(json_text):
-                if char == '{':
-                    brace_count += 1
-                elif char == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        end_pos = i + 1
-                        break
-            
-            if end_pos > 0:
-                json_text = json_text[:end_pos]
-        except:
-            pass
         
-        # 8. Fix escape sequences
+        # Fix escape sequences and remove control characters
         json_text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_text)
-        
-        # 9. Remove control characters
         json_text = re.sub(r'[\x00-\x1F\x7F]', '', json_text)
         
         return json_text
@@ -260,12 +149,9 @@ def repair_json_response(json_text):
         logger.warning(f"JSON repair failed: {e}")
         return json_text
 
-# --- FIXED: Calculate date overlap for work history ---
+# --- Date overlap calculation ---
 def calculate_date_overlap(start1, end1, start2, end2):
-    """
-    Calculate overlap between two date periods
-    Returns: (overlap_start, overlap_end, overlap_days) or None if no overlap
-    """
+    """Calculate overlap between two date periods"""
     try:
         # Handle None end dates (current positions)
         if end1 is None:
@@ -288,29 +174,23 @@ def calculate_date_overlap(start1, end1, start2, end2):
         logger.warning(f"Error calculating date overlap: {e}")
         return None
 
-# --- Enhanced File Loading with Encoding Detection ---
+# --- File Loading ---
 def load_file_content_enhanced(uploaded_file):
-    """Enhanced file loading with robust encoding detection and error handling"""
+    """Enhanced file loading with robust encoding detection"""
     try:
         file_size = len(uploaded_file.getvalue())
         file_size_mb = file_size / (1024 * 1024)
         
         logger.info(f"Loading file: {uploaded_file.name} ({file_size_mb:.1f} MB)")
         
-        # Handle different file types
         if uploaded_file.type == "text/plain" or uploaded_file.name.endswith('.txt'):
-            # Text file - try multiple encodings in order of preference
             raw_data = uploaded_file.getvalue()
             
-            # Try common encodings in order
-            encodings_to_try = [
-                'utf-8', 'utf-8-sig', 'cp1252', 'latin1', 'iso-8859-1',
-                'cp1251', 'ascii', 'utf-16', 'utf-16le', 'utf-16be'
-            ]
+            # Try common encodings
+            encodings_to_try = ['utf-8', 'utf-8-sig', 'cp1252', 'latin1', 'iso-8859-1']
             
             content = None
             encoding_used = None
-            decode_errors = []
             
             for encoding in encodings_to_try:
                 try:
@@ -318,75 +198,35 @@ def load_file_content_enhanced(uploaded_file):
                     encoding_used = encoding
                     logger.info(f"Successfully decoded file with {encoding}")
                     break
-                except UnicodeDecodeError as e:
-                    decode_errors.append(f"{encoding}: {str(e)}")
-                    continue
-                except Exception as e:
-                    decode_errors.append(f"{encoding}: {str(e)}")
+                except UnicodeDecodeError:
                     continue
             
             if content is None:
-                # Last resort: decode with 'replace' error handling
                 try:
                     content = raw_data.decode('utf-8', errors='replace')
                     encoding_used = 'utf-8 (with replacements)'
-                    logger.warning("Using UTF-8 with character replacements - some characters may be corrupted")
                 except Exception as e:
-                    error_msg = f"Could not decode file with any encoding. Tried: {', '.join([enc.split(':')[0] for enc in decode_errors])}"
-                    logger.error(error_msg)
-                    return False, "", error_msg, None
+                    return False, "", f"Could not decode file: {str(e)}", None
             
-            # Validate content
             if not content or len(content.strip()) == 0:
-                return False, "", "File appears to be empty after decoding", encoding_used
+                return False, "", "File appears to be empty", encoding_used
             
-            # Check for binary content indicators
-            binary_indicators = ['\x00', '\x01', '\x02', '\x03', '\x04', '\x05']
-            if any(indicator in content for indicator in binary_indicators):
-                logger.warning("File may contain binary data - proceeding with caution")
-            
-            logger.info(f"File loaded successfully: {len(content)} characters, encoding: {encoding_used}")
             return True, content, "", encoding_used
             
         else:
-            # Unknown file type - try to treat as text with permissive decoding
             try:
                 raw_data = uploaded_file.getvalue()
                 content = raw_data.decode('utf-8', errors='replace')
-                logger.warning(f"Unknown file type '{uploaded_file.type}'. Treating as text with UTF-8 replacement.")
-                return True, content, f"Warning: Unknown file type '{uploaded_file.type}'. Some characters may be corrupted.", "utf-8 (permissive)"
+                return True, content, f"Warning: Unknown file type '{uploaded_file.type}'", "utf-8 (permissive)"
             except Exception as e:
-                return False, "", f"Unsupported file type: {uploaded_file.type}. Error: {str(e)}", None
+                return False, "", f"Unsupported file type: {uploaded_file.type}", None
     
     except Exception as e:
-        error_msg = f"Error reading file: {str(e)}"
-        logger.error(error_msg)
-        return False, "", error_msg, None
+        return False, "", f"Error reading file: {str(e)}", None
 
-def get_unique_values_from_session_state(table_name, field_name):
-    """Get unique values for a field from session state data"""
-    try:
-        values = set()
-        
-        if table_name == 'people' and 'people' in st.session_state:
-            for item in st.session_state.people:
-                value = safe_get(item, field_name)
-                if value and value != 'Unknown':
-                    values.add(value)
-        
-        elif table_name == 'firms' and 'firms' in st.session_state:
-            for item in st.session_state.firms:
-                value = safe_get(item, field_name)
-                if value and value != 'Unknown':
-                    values.add(value)
-        
-        return list(values)
-    except Exception as e:
-        logger.warning(f"Error getting unique values for {table_name}.{field_name}: {e}")
-        return []
-
+# --- Search function ---
 def enhanced_global_search(query):
-    """Enhanced global search function with better matching and debugging"""
+    """Enhanced global search function"""
     try:
         query_lower = query.lower().strip()
         
@@ -397,33 +237,28 @@ def enhanced_global_search(query):
         matching_firms = []
         matching_metrics = []
         
-        # Search people with enhanced matching
+        # Search people
         for person in st.session_state.people:
             try:
-                # Create comprehensive searchable text
                 searchable_fields = [
                     safe_get(person, 'name', ''),
                     safe_get(person, 'current_title', ''),
                     safe_get(person, 'current_company_name', ''),
                     safe_get(person, 'location', ''),
                     safe_get(person, 'expertise', ''),
-                    safe_get(person, 'strategy', ''),
                     safe_get(person, 'education', ''),
-                    safe_get(person, 'email', ''),
-                    safe_get(person, 'aum_managed', '')
+                    safe_get(person, 'email', '')
                 ]
                 
                 searchable_text = " ".join([field for field in searchable_fields if field and field != 'Unknown']).lower()
                 
-                # Multiple search methods
-                if (query_lower in searchable_text or 
-                    any(query_lower in field.lower() for field in searchable_fields if field and field != 'Unknown')):
+                if query_lower in searchable_text:
                     matching_people.append(person)
             except Exception as e:
-                logger.warning(f"Error searching person {person.get('id', 'unknown')}: {e}")
+                logger.warning(f"Error searching person: {e}")
                 continue
         
-        # Search firms with enhanced matching  
+        # Search firms
         for firm in st.session_state.firms:
             try:
                 searchable_fields = [
@@ -431,45 +266,15 @@ def enhanced_global_search(query):
                     safe_get(firm, 'location', ''),
                     safe_get(firm, 'strategy', ''),
                     safe_get(firm, 'description', ''),
-                    safe_get(firm, 'headquarters', ''),
-                    safe_get(firm, 'aum', ''),
-                    safe_get(firm, 'website', ''),
                     safe_get(firm, 'firm_type', '')
                 ]
                 
                 searchable_text = " ".join([field for field in searchable_fields if field and field != 'Unknown']).lower()
                 
-                if (query_lower in searchable_text or 
-                    any(query_lower in field.lower() for field in searchable_fields if field and field != 'Unknown')):
+                if query_lower in searchable_text:
                     matching_firms.append(firm)
             except Exception as e:
-                logger.warning(f"Error searching firm {firm.get('id', 'unknown')}: {e}")
-                continue
-        
-        # Search performance metrics in firms
-        for firm in st.session_state.firms:
-            try:
-                if firm.get('performance_metrics'):
-                    for metric in firm['performance_metrics']:
-                        try:
-                            searchable_fields = [
-                                safe_get(metric, 'metric_type', ''),
-                                safe_get(metric, 'period', ''),
-                                safe_get(metric, 'additional_info', ''),
-                                safe_get(metric, 'value', ''),
-                                safe_get(firm, 'name', '')
-                            ]
-                            
-                            searchable_text = " ".join([field for field in searchable_fields if field and field != 'Unknown']).lower()
-                            
-                            if (query_lower in searchable_text or 
-                                any(query_lower in field.lower() for field in searchable_fields if field and field != 'Unknown')):
-                                matching_metrics.append({**metric, 'fund_name': firm['name']})
-                        except Exception as e:
-                            logger.warning(f"Error searching metric in firm {firm.get('name', 'unknown')}: {e}")
-                            continue
-            except Exception as e:
-                logger.warning(f"Error searching metrics in firm {firm.get('id', 'unknown')}: {e}")
+                logger.warning(f"Error searching firm: {e}")
                 continue
         
         return matching_people, matching_firms, matching_metrics
@@ -485,30 +290,20 @@ DATA_DIR.mkdir(exist_ok=True)
 PEOPLE_FILE = DATA_DIR / "people.json"
 FIRMS_FILE = DATA_DIR / "firms.json"
 EMPLOYMENTS_FILE = DATA_DIR / "employments.json"
-EXTRACTIONS_FILE = DATA_DIR / "extractions.json"
 
 def save_data():
-    """Save all data to JSON files with better error handling"""
+    """Save all data to JSON files"""
     try:
-        # Ensure directory exists
         DATA_DIR.mkdir(exist_ok=True)
         
-        # Save people
         with open(PEOPLE_FILE, 'w', encoding='utf-8') as f:
             json.dump(st.session_state.people, f, indent=2, default=str)
         
-        # Save firms (now includes performance metrics)
         with open(FIRMS_FILE, 'w', encoding='utf-8') as f:
             json.dump(st.session_state.firms, f, indent=2, default=str)
         
-        # Save employments
         with open(EMPLOYMENTS_FILE, 'w', encoding='utf-8') as f:
             json.dump(st.session_state.employments, f, indent=2, default=str)
-        
-        # Save extractions
-        if 'all_extractions' in st.session_state:
-            with open(EXTRACTIONS_FILE, 'w', encoding='utf-8') as f:
-                json.dump(st.session_state.all_extractions, f, indent=2, default=str)
         
         return True
         
@@ -517,26 +312,20 @@ def save_data():
         return False
 
 def load_data():
-    """Load data from JSON files with detailed logging"""
+    """Load data from JSON files"""
     try:
         people = []
         firms = []
         employments = []
-        extractions = []
         
-        # Load people
         if PEOPLE_FILE.exists():
             with open(PEOPLE_FILE, 'r', encoding='utf-8') as f:
                 people = json.load(f)
-            logger.info(f"Loaded {len(people)} people from {PEOPLE_FILE}")
         
-        # Load firms
         if FIRMS_FILE.exists():
             with open(FIRMS_FILE, 'r', encoding='utf-8') as f:
                 firms = json.load(f)
-            logger.info(f"Loaded {len(firms)} firms from {FIRMS_FILE}")
         
-        # Load employments
         if EMPLOYMENTS_FILE.exists():
             with open(EMPLOYMENTS_FILE, 'r', encoding='utf-8') as f:
                 employments = json.load(f)
@@ -546,25 +335,17 @@ def load_data():
                         emp['start_date'] = datetime.strptime(emp['start_date'], '%Y-%m-%d').date()
                     if emp.get('end_date'):
                         emp['end_date'] = datetime.strptime(emp['end_date'], '%Y-%m-%d').date()
-            logger.info(f"Loaded {len(employments)} employments from {EMPLOYMENTS_FILE}")
         
-        # Load extractions
-        if EXTRACTIONS_FILE.exists():
-            with open(EXTRACTIONS_FILE, 'r', encoding='utf-8') as f:
-                extractions = json.load(f)
-            logger.info(f"Loaded {len(extractions)} extractions from {EXTRACTIONS_FILE}")
-        
-        return people, firms, employments, extractions
+        return people, firms, employments
         
     except Exception as e:
         logger.error(f"Error loading data: {e}")
-        return [], [], [], []
+        return [], [], []
 
-# --- Initialize Session State with Rich Dummy Data ---
-def init_dummy_data():
-    """Initialize with comprehensive dummy data if no saved data exists"""
+# --- Initialize Session State with Sample Data ---
+def init_sample_data():
+    """Initialize with sample data if no saved data exists"""
     
-    # Sample people with detailed backgrounds
     sample_people = [
         {
             "id": str(uuid.uuid4()),
@@ -573,7 +354,6 @@ def init_dummy_data():
             "current_company_name": "Hillhouse Capital",
             "location": "Hong Kong",
             "email": "li.chen@hillhouse.com",
-            "linkedin_profile_url": "https://linkedin.com/in/liweichen",
             "phone": "+852-1234-5678",
             "education": "Harvard Business School, Tsinghua University",
             "expertise": "Technology, Healthcare",
@@ -581,12 +361,7 @@ def init_dummy_data():
             "strategy": "Long-only Growth Equity",
             "created_date": (datetime.now() - timedelta(days=30)).isoformat(),
             "last_updated": (datetime.now() - timedelta(days=5)).isoformat(),
-            "context_mentions": [],
-            "extraction_history": [{
-                "extraction_date": (datetime.now() - timedelta(days=30)).isoformat(),
-                "source_type": "sample_data",
-                "context_preview": "Sample data for demo purposes"
-            }]
+            "context_mentions": []
         },
         {
             "id": str(uuid.uuid4()),
@@ -595,7 +370,6 @@ def init_dummy_data():
             "current_company_name": "Millennium Partners Asia",
             "location": "Singapore",
             "email": "a.tanaka@millennium.com",
-            "linkedin_profile_url": "https://linkedin.com/in/akiratanaka",
             "phone": "+65-9876-5432",
             "education": "Tokyo University, Wharton",
             "expertise": "Quantitative Trading, Fixed Income",
@@ -603,16 +377,10 @@ def init_dummy_data():
             "strategy": "Multi-Strategy Quantitative",
             "created_date": (datetime.now() - timedelta(days=15)).isoformat(),
             "last_updated": (datetime.now() - timedelta(days=2)).isoformat(),
-            "context_mentions": [],
-            "extraction_history": [{
-                "extraction_date": (datetime.now() - timedelta(days=15)).isoformat(),
-                "source_type": "sample_data",
-                "context_preview": "Sample data for demo purposes"
-            }]
+            "context_mentions": []
         }
     ]
     
-    # Sample firms with detailed information and performance metrics
     sample_firms = [
         {
             "id": str(uuid.uuid4()),
@@ -628,30 +396,29 @@ def init_dummy_data():
             "created_date": (datetime.now() - timedelta(days=45)).isoformat(),
             "last_updated": (datetime.now() - timedelta(days=10)).isoformat(),
             "context_mentions": [],
-            "extraction_history": [{
-                "extraction_date": (datetime.now() - timedelta(days=45)).isoformat(),
-                "source_type": "sample_data",
-                "context_preview": "Sample firm data for demo purposes"
-            }],
-            "performance_metrics": [
-                {
-                    "id": str(uuid.uuid4()),
-                    "metric_type": "return",
-                    "value": "12.5",
-                    "period": "YTD",
-                    "date": "2025",
-                    "additional_info": "Net return",
-                    "recorded_date": (datetime.now() - timedelta(days=10)).isoformat(),
-                    "source_reliability": "sample_data"
-                }
-            ]
+            "performance_metrics": []
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "name": "Millennium Partners Asia",
+            "firm_type": "Hedge Fund",
+            "location": "Singapore",
+            "headquarters": "New York, USA",
+            "aum": "35B USD",
+            "founded": 1989,
+            "strategy": "Multi-strategy, Quantitative",
+            "website": "https://millennium.com",
+            "description": "Global hedge fund with significant Asian operations",
+            "created_date": (datetime.now() - timedelta(days=20)).isoformat(),
+            "last_updated": (datetime.now() - timedelta(days=3)).isoformat(),
+            "context_mentions": [],
+            "performance_metrics": []
         }
     ]
     
-    # Create employment history with proper dates
+    # Create employment history
     sample_employments = []
     
-    # Li Wei Chen's history
     li_id = sample_people[0]['id']
     sample_employments.extend([
         {
@@ -663,11 +430,7 @@ def init_dummy_data():
             "end_date": date(2021, 8, 15),
             "location": "Hong Kong",
             "strategy": "Investment Banking",
-            "created_date": (datetime.now() - timedelta(days=30)).isoformat(),
-            "extraction_context": {
-                "extraction_date": (datetime.now() - timedelta(days=30)).isoformat(),
-                "source_type": "sample_data"
-            }
+            "created_date": (datetime.now() - timedelta(days=30)).isoformat()
         },
         {
             "id": str(uuid.uuid4()),
@@ -675,26 +438,48 @@ def init_dummy_data():
             "company_name": "Hillhouse Capital",
             "title": "Portfolio Manager",
             "start_date": date(2021, 9, 1),
-            "end_date": None,  # Current position
+            "end_date": None,
             "location": "Hong Kong",
             "strategy": "Growth Equity",
-            "created_date": (datetime.now() - timedelta(days=30)).isoformat(),
-            "extraction_context": {
-                "extraction_date": (datetime.now() - timedelta(days=30)).isoformat(),
-                "source_type": "sample_data"
-            }
+            "created_date": (datetime.now() - timedelta(days=30)).isoformat()
+        }
+    ])
+    
+    akira_id = sample_people[1]['id']
+    sample_employments.extend([
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": akira_id,
+            "company_name": "Goldman Sachs Asia",
+            "title": "Associate",
+            "start_date": date(2017, 6, 1),
+            "end_date": date(2020, 12, 31),
+            "location": "Singapore",
+            "strategy": "Fixed Income Trading",
+            "created_date": (datetime.now() - timedelta(days=15)).isoformat()
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "person_id": akira_id,
+            "company_name": "Millennium Partners Asia",
+            "title": "Chief Investment Officer",
+            "start_date": date(2021, 1, 15),
+            "end_date": None,
+            "location": "Singapore",
+            "strategy": "Multi-Strategy Quantitative",
+            "created_date": (datetime.now() - timedelta(days=15)).isoformat()
         }
     ])
     
     return sample_people, sample_firms, sample_employments
 
 def initialize_session_state():
-    """Initialize session state with saved or dummy data"""
-    people, firms, employments, extractions = load_data()
+    """Initialize session state with saved or sample data"""
+    people, firms, employments = load_data()
     
-    # If no saved data, use dummy data
+    # If no saved data, use sample data
     if not people and not firms:
-        people, firms, employments = init_dummy_data()
+        people, firms, employments = init_sample_data()
     
     if 'people' not in st.session_state:
         st.session_state.people = people
@@ -702,8 +487,6 @@ def initialize_session_state():
         st.session_state.firms = firms
     if 'employments' not in st.session_state:
         st.session_state.employments = employments
-    if 'all_extractions' not in st.session_state:
-        st.session_state.all_extractions = extractions
     if 'current_view' not in st.session_state:
         st.session_state.current_view = 'people'
     if 'selected_person_id' not in st.session_state:
@@ -727,17 +510,7 @@ def initialize_session_state():
     if 'global_search' not in st.session_state:
         st.session_state.global_search = ""
     
-    # Pagination state
-    if 'people_page' not in st.session_state:
-        st.session_state.people_page = 0
-    if 'firms_page' not in st.session_state:
-        st.session_state.firms_page = 0
-    
-    # Review system - MOVED TO SIDEBAR ONLY
-    if 'pending_review_data' not in st.session_state:
-        st.session_state.pending_review_data = []
-    
-    # Background processing
+    # Background processing for extraction
     if 'background_processing' not in st.session_state:
         st.session_state.background_processing = {
             'is_running': False,
@@ -746,20 +519,177 @@ def initialize_session_state():
             'progress': 0
         }
 
-# --- Core Setup Functions ---
+# --- Gemini API Setup with Paid Tier Limits ---
 @st.cache_resource
-def setup_gemini(api_key, model_id="gemini-1.5-flash"):
-    """Setup Gemini model safely with model selection"""
+def setup_gemini(api_key):
+    """Setup Gemini with optimized settings for paid tier"""
     if not GENAI_AVAILABLE:
         return None
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_id)
-        model.model_id = model_id
+        # Use Flash model for optimal speed/cost ratio on paid tier
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        model.model_id = "gemini-1.5-flash"
         return model
     except Exception as e:
-        logger.error(f"Setup failed: {e}")
+        logger.error(f"Gemini setup failed: {e}")
         return None
+
+def extract_data_from_text(text, model):
+    """Extract people and performance data from text using Gemini with paid tier optimizations"""
+    try:
+        # Paid tier optimized prompt
+        prompt = f"""
+Extract financial professionals and performance data from this text.
+
+TEXT: {text}
+
+Return ONLY valid JSON with this structure:
+{{
+  "people": [
+    {{
+      "name": "Full Name",
+      "current_company": "Company Name",
+      "current_title": "Job Title",
+      "location": "City, Country",
+      "expertise": "Area of expertise",
+      "movement_type": "hire|promotion|departure|appointment"
+    }}
+  ],
+  "performance": [
+    {{
+      "fund_name": "Fund/Firm Name",
+      "metric_type": "return|sharpe|aum|alpha|beta",
+      "value": "numeric_value_only",
+      "period": "YTD|Q1|Q2|Q3|Q4|1Y|3Y|5Y",
+      "date": "YYYY"
+    }}
+  ]
+}}
+"""
+        
+        # Optimized generation config for paid tier
+        generation_config = {
+            'temperature': 0.1,
+            'top_p': 0.8,
+            'max_output_tokens': 4096,
+        }
+        
+        response = model.generate_content(prompt, generation_config=generation_config)
+        
+        if not response or not response.text:
+            return [], []
+        
+        response_text = response.text.strip()
+        
+        # Extract JSON
+        json_start = response_text.find('{')
+        json_end = response_text.rfind('}') + 1
+        
+        if json_start == -1 or json_end <= json_start:
+            return [], []
+        
+        json_text = response_text[json_start:json_end]
+        
+        # Try parsing, with repair if needed
+        try:
+            result = json.loads(json_text)
+        except json.JSONDecodeError:
+            repaired_json = repair_json_response(json_text)
+            try:
+                result = json.loads(repaired_json)
+            except json.JSONDecodeError:
+                return [], []
+        
+        people = result.get('people', [])
+        performance = result.get('performance', [])
+        
+        # Validate extracted data
+        valid_people = []
+        for p in people:
+            name = safe_get(p, 'name', '').strip()
+            company = safe_get(p, 'current_company', '').strip()
+            
+            if (name and company and 
+                len(name) > 2 and len(company) > 2 and
+                name.lower() not in ['name', 'full name', 'unknown'] and
+                company.lower() not in ['company', 'company name', 'unknown']):
+                valid_people.append(p)
+        
+        valid_performance = []
+        for perf in performance:
+            fund_name = safe_get(perf, 'fund_name', '').strip()
+            metric_type = safe_get(perf, 'metric_type', '').strip()
+            value = safe_get(perf, 'value', '').strip()
+            
+            if (fund_name and metric_type and value and
+                len(fund_name) > 2 and
+                fund_name.lower() not in ['fund name', 'unknown'] and
+                metric_type.lower() not in ['metric type', 'unknown']):
+                valid_performance.append(perf)
+        
+        return valid_people, valid_performance
+        
+    except Exception as e:
+        logger.error(f"Extraction failed: {e}")
+        return [], []
+
+def process_extraction_with_rate_limiting(text, model):
+    """Process extraction with automatic rate limiting for paid tier"""
+    try:
+        # Split into chunks if text is too long (paid tier can handle larger chunks)
+        max_chunk_size = 100000  # 100K chars for paid tier
+        chunks = []
+        
+        if len(text) <= max_chunk_size:
+            chunks = [text]
+        else:
+            current_pos = 0
+            while current_pos < len(text):
+                end_pos = min(current_pos + max_chunk_size, len(text))
+                
+                # Find paragraph break for better chunking
+                if end_pos < len(text):
+                    break_pos = text.rfind('\n\n', current_pos, end_pos)
+                    if break_pos > current_pos:
+                        end_pos = break_pos + 2
+                
+                chunk = text[current_pos:end_pos].strip()
+                if len(chunk) > 500:  # Minimum chunk size
+                    chunks.append(chunk)
+                current_pos = end_pos
+        
+        all_people = []
+        all_performance = []
+        
+        # Process chunks with paid tier rate limiting (2000 RPM = ~33 per second)
+        delay_between_requests = 0.03  # 30ms delay for paid tier
+        
+        for i, chunk in enumerate(chunks):
+            try:
+                st.session_state.background_processing.update({
+                    'progress': int((i / len(chunks)) * 100),
+                    'status_message': f'Processing chunk {i+1}/{len(chunks)}...'
+                })
+                
+                people, performance = extract_data_from_text(chunk, model)
+                
+                all_people.extend(people)
+                all_performance.extend(performance)
+                
+                # Rate limiting delay (except for last chunk)
+                if i < len(chunks) - 1:
+                    time.sleep(delay_between_requests)
+                    
+            except Exception as e:
+                logger.error(f"Error processing chunk {i+1}: {e}")
+                continue
+        
+        return all_people, all_performance
+        
+    except Exception as e:
+        logger.error(f"Processing failed: {e}")
+        return [], []
 
 # --- Helper Functions ---
 def get_person_by_id(person_id):
@@ -785,11 +715,11 @@ def get_shared_work_history(person_id):
     # Get all companies this person has worked at with their periods
     person_company_periods = []
     for emp in person_employments:
-        if emp.get('start_date'):  # Only include employments with start dates
+        if emp.get('start_date'):
             person_company_periods.append({
                 'company': emp['company_name'],
                 'start_date': emp['start_date'],
-                'end_date': emp.get('end_date'),  # Can be None for current positions
+                'end_date': emp.get('end_date'),
                 'title': emp['title'],
                 'location': emp.get('location', 'Unknown')
             })
@@ -803,11 +733,11 @@ def get_shared_work_history(person_id):
         other_company_periods = []
         
         for emp in other_employments:
-            if emp.get('start_date'):  # Only include employments with start dates
+            if emp.get('start_date'):
                 other_company_periods.append({
                     'company': emp['company_name'],
                     'start_date': emp['start_date'],
-                    'end_date': emp.get('end_date'),  # Can be None for current positions
+                    'end_date': emp.get('end_date'),
                     'title': emp['title'],
                     'location': emp.get('location', 'Unknown')
                 })
@@ -825,15 +755,14 @@ def get_shared_work_history(person_id):
                     if overlap:
                         overlap_start, overlap_end, overlap_days = overlap
                         
-                        # Calculate overlap duration in human-readable format
+                        # Calculate overlap duration
                         if overlap_days >= 365:
-                            duration_str = f"{overlap_days // 365} year(s), {(overlap_days % 365) // 30} month(s)"
+                            duration_str = f"{overlap_days // 365} year(s)"
                         elif overlap_days >= 30:
                             duration_str = f"{overlap_days // 30} month(s)"
                         else:
                             duration_str = f"{overlap_days} day(s)"
                         
-                        # Format overlap period
                         overlap_period = f"{overlap_start.strftime('%b %Y')} - {overlap_end.strftime('%b %Y')}"
                         
                         shared_history.append({
@@ -855,12 +784,11 @@ def get_shared_work_history(person_id):
         if key not in unique_shared:
             unique_shared[key] = item
         else:
-            # Keep the longer overlap
             existing = unique_shared[key]
             if item['overlap_days'] > existing['overlap_days']:
                 unique_shared[key] = item
     
-    # Sort by connection strength and overlap duration
+    # Sort by connection strength
     def sort_key(conn):
         strength_order = {"Strong": 0, "Medium": 1, "Brief": 2}
         return (
@@ -874,7 +802,6 @@ def get_shared_work_history(person_id):
 def add_employment_with_dates(person_id, company_name, title, start_date, end_date=None, location="Unknown", strategy="Unknown"):
     """Add employment record with proper date validation"""
     try:
-        # Validate dates
         if end_date and start_date and end_date <= start_date:
             raise ValueError("End date must be after start date")
         
@@ -887,12 +814,7 @@ def add_employment_with_dates(person_id, company_name, title, start_date, end_da
             "end_date": end_date,
             "location": location,
             "strategy": strategy,
-            "created_date": datetime.now().isoformat(),
-            "extraction_context": {
-                "extraction_date": datetime.now().isoformat(),
-                "source_type": "manual_entry",
-                "entry_method": "employment_form"
-            }
+            "created_date": datetime.now().isoformat()
         }
         
         st.session_state.employments.append(new_employment)
@@ -922,7 +844,7 @@ def go_to_firm_details(firm_id):
 
 # --- Export Functions ---
 def export_to_csv():
-    """Quick CSV export of all data"""
+    """Export all data to CSV"""
     try:
         all_data = []
         
@@ -964,69 +886,60 @@ def export_to_csv():
 # Initialize session state
 try:
     initialize_session_state()
-    
-    # Clean duplicates on startup
-    duplicates_removed = clean_existing_duplicates()
-    if duplicates_removed > 0:
-        logger.info(f"Removed {duplicates_removed} duplicate records on startup")
-        save_data()
-        
 except Exception as init_error:
     st.error(f"Initialization error: {init_error}")
     st.stop()
 
-# --- SIMPLIFIED HEADER ---
-st.title("Asian Hedge Fund Talent Network")
-st.markdown("**Professional intelligence platform for Asia's financial industry**")
+# --- HEADER ---
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.title("Asian Hedge Fund Talent Network")
+    st.markdown("**Professional intelligence platform for Asia's financial industry**")
 
-# --- SIDEBAR: Content Extraction & Review ---
+with col2:
+    # CSV Export
+    csv_data, filename = export_to_csv()
+    if csv_data:
+        st.download_button(
+            "Export CSV",
+            csv_data,
+            filename,
+            "text/csv",
+            use_container_width=True
+        )
+
+# --- SIDEBAR: Data Extraction ---
 with st.sidebar:
-    st.title("Content Extraction")
+    st.title("Data Extraction")
     
     # API Key Setup
     api_key = None
     try:
         api_key = st.secrets.get("GEMINI_API_KEY")
         if api_key:
-            st.success("API key loaded from secrets")
+            st.success("API key loaded")
     except:
         pass
     
     if not api_key:
-        api_key = st.text_input("Gemini API Key", type="password", 
-                              help="Get from: https://makersuite.google.com/app/apikey")
-    
-    # Model Selection
-    model_options = {
-        "Gemini 1.5 Flash (Recommended)": "gemini-1.5-flash",
-        "Gemini 1.5 Flash Latest": "gemini-1.5-flash-latest",
-        "Gemini 1.5 Pro": "gemini-1.5-pro"
-    }
-    
-    selected_model_name = st.selectbox(
-        "Choose model:",
-        options=list(model_options.keys()),
-        index=0
-    )
-    
-    selected_model_id = model_options[selected_model_name]
+        api_key = st.text_input("Gemini API Key", type="password")
     
     # Setup model
     model = None
     if api_key and GENAI_AVAILABLE:
-        model = setup_gemini(api_key, selected_model_id)
+        model = setup_gemini(api_key)
         
         st.markdown("---")
-        st.subheader("Extract from Newsletter")
+        st.subheader("Extract from Content")
         
         input_method = st.radio("Input method:", ["Text", "File"])
         
         newsletter_text = ""
         if input_method == "Text":
-            newsletter_text = st.text_area("Newsletter content:", height=150, 
-                                         placeholder="Paste newsletter content here...")
+            newsletter_text = st.text_area("Content:", height=150, 
+                                         placeholder="Paste content here...")
         else:
-            uploaded_file = st.file_uploader("Upload newsletter:", type=['txt'])
+            uploaded_file = st.file_uploader("Upload file:", type=['txt'])
             if uploaded_file:
                 try:
                     success, content, error_msg, encoding_used = load_file_content_enhanced(uploaded_file)
@@ -1037,10 +950,6 @@ with st.sidebar:
                         
                         if error_msg:
                             st.warning(error_msg)
-                        
-                        with st.expander("Content Preview", expanded=False):
-                            preview_text = newsletter_text[:500] + "..." if len(newsletter_text) > 500 else newsletter_text
-                            st.text_area("Preview:", value=preview_text, height=100, disabled=True)
                     else:
                         st.error(error_msg)
                         
@@ -1050,44 +959,129 @@ with st.sidebar:
         # Extract button
         if st.button("Start Extraction", use_container_width=True):
             if not newsletter_text.strip():
-                st.error("Please provide newsletter content")
+                st.error("Please provide content")
             elif not model:
                 st.error("Please provide API key")
             else:
-                # Simple extraction process (simplified from original)
-                with st.spinner("Extracting..."):
+                # Start background processing
+                st.session_state.background_processing = {
+                    'is_running': True,
+                    'progress': 0,
+                    'status_message': 'Starting extraction...',
+                    'results': {'people': [], 'performance': []}
+                }
+                
+                with st.spinner("Extracting data..."):
                     try:
-                        # Basic extraction logic would go here
-                        # For now, show placeholder
-                        st.success("Extraction complete!")
-                        st.info("Results ready for review")
+                        people, performance = process_extraction_with_rate_limiting(newsletter_text, model)
+                        
+                        st.session_state.background_processing = {
+                            'is_running': False,
+                            'progress': 100,
+                            'status_message': f'Complete: {len(people)} people, {len(performance)} metrics',
+                            'results': {'people': people, 'performance': performance}
+                        }
+                        
+                        st.success(f"Extraction complete! Found {len(people)} people and {len(performance)} metrics")
+                        
                     except Exception as e:
                         st.error(f"Extraction failed: {e}")
+                        st.session_state.background_processing['is_running'] = False
 
     elif not GENAI_AVAILABLE:
         st.error("Please install: pip install google-generativeai")
     
-    # SIMPLIFIED REVIEW INTERFACE IN SIDEBAR
-    if st.session_state.pending_review_data:
+    # Show extraction results for review
+    if st.session_state.background_processing.get('results', {}).get('people') or st.session_state.background_processing.get('results', {}).get('performance'):
         st.markdown("---")
-        st.subheader("Review Queue")
+        st.subheader("Review Results")
         
-        for i, review_item in enumerate(st.session_state.pending_review_data):
-            with st.container(border=True):
-                st.markdown(f"**Batch {i+1}**")
-                st.caption(f"People: {len(review_item.get('people', []))}")
-                st.caption(f"Metrics: {len(review_item.get('performance', []))}")
+        results = st.session_state.background_processing['results']
+        people_results = results.get('people', [])
+        performance_results = results.get('performance', [])
+        
+        if people_results:
+            st.markdown(f"**People ({len(people_results)})**")
+            for i, person in enumerate(people_results[:3]):  # Show first 3
+                with st.container(border=True):
+                    st.caption(f"**{safe_get(person, 'name')}**")
+                    st.caption(f"{safe_get(person, 'current_title')}")
+                    st.caption(f"{safe_get(person, 'current_company')}")
+        
+        if performance_results:
+            st.markdown(f"**Metrics ({len(performance_results)})**")
+            for i, metric in enumerate(performance_results[:2]):  # Show first 2
+                with st.container(border=True):
+                    st.caption(f"**{safe_get(metric, 'fund_name')}**")
+                    st.caption(f"{safe_get(metric, 'metric_type')}: {safe_get(metric, 'value')}")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Save All", use_container_width=True):
+                # Save extracted data
+                for person_data in people_results:
+                    new_person_id = str(uuid.uuid4())
+                    company_name = person_data.get('current_company', 'Unknown')
+                    
+                    new_person = {
+                        "id": new_person_id,
+                        "name": safe_get(person_data, 'name'),
+                        "current_title": safe_get(person_data, 'current_title'),
+                        "current_company_name": company_name,
+                        "location": safe_get(person_data, 'location'),
+                        "email": "",
+                        "phone": "",
+                        "education": "",
+                        "expertise": safe_get(person_data, 'expertise'),
+                        "aum_managed": "",
+                        "strategy": "",
+                        "created_date": datetime.now().isoformat(),
+                        "last_updated": datetime.now().isoformat(),
+                        "context_mentions": []
+                    }
+                    
+                    st.session_state.people.append(new_person)
+                    
+                    # Add firm if doesn't exist
+                    if not get_firm_by_name(company_name):
+                        new_firm = {
+                            "id": str(uuid.uuid4()),
+                            "name": company_name,
+                            "firm_type": "Unknown",
+                            "location": safe_get(person_data, 'location'),
+                            "headquarters": "Unknown",
+                            "aum": "Unknown",
+                            "founded": None,
+                            "strategy": "Unknown",
+                            "website": "",
+                            "description": "",
+                            "performance_metrics": [],
+                            "created_date": datetime.now().isoformat(),
+                            "last_updated": datetime.now().isoformat(),
+                            "context_mentions": []
+                        }
+                        st.session_state.firms.append(new_firm)
+                    
+                    # Add employment record
+                    add_employment_with_dates(
+                        new_person_id, company_name, 
+                        safe_get(person_data, 'current_title'), 
+                        date.today(), None,
+                        safe_get(person_data, 'location'), 
+                        safe_get(person_data, 'expertise')
+                    )
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("Approve", key=f"approve_{i}", use_container_width=True):
-                        # Approve logic would go here
-                        st.session_state.pending_review_data.pop(i)
-                        st.rerun()
-                with col2:
-                    if st.button("Reject", key=f"reject_{i}", use_container_width=True):
-                        st.session_state.pending_review_data.pop(i)
-                        st.rerun()
+                save_data()
+                st.success("All data saved!")
+                
+                # Clear results
+                st.session_state.background_processing['results'] = {'people': [], 'performance': []}
+                st.rerun()
+        
+        with col2:
+            if st.button("Discard", use_container_width=True):
+                st.session_state.background_processing['results'] = {'people': [], 'performance': []}
+                st.rerun()
 
 # --- MAIN CONTENT AREA ---
 
@@ -1096,14 +1090,14 @@ col1, col2 = st.columns([4, 1])
 
 with col1:
     search_query = st.text_input(
-        "Search people, firms, or performance...", 
+        "Search people, firms...", 
         value=st.session_state.global_search,
-        placeholder="Try: 'Goldman Sachs', 'Portfolio Manager', 'Citadel'...",
+        placeholder="Search by name, company, title...",
         key="main_search_input"
     )
 
 with col2:
-    if st.button("Search", use_container_width=True, key="main_search_button") or search_query != st.session_state.global_search:
+    if st.button("Search", use_container_width=True) or search_query != st.session_state.global_search:
         st.session_state.global_search = search_query
         if search_query and len(search_query.strip()) >= 2:
             st.rerun()
@@ -1113,57 +1107,49 @@ if st.session_state.global_search and len(st.session_state.global_search.strip()
     search_query = st.session_state.global_search
     matching_people, matching_firms, matching_metrics = enhanced_global_search(search_query)
     
-    if matching_people or matching_firms or matching_metrics:
+    if matching_people or matching_firms:
         st.markdown("### Search Results")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
             st.metric("People", len(matching_people))
         with col2:
             st.metric("Firms", len(matching_firms))
         with col3:
-            st.metric("Metrics", len(matching_metrics))
+            if st.button("Clear Search"):
+                st.session_state.global_search = ""
+                st.rerun()
         
-        # Show search results
+        # Show search results in tiles
         if matching_people:
-            st.markdown("**People**")
-            for person in matching_people[:3]:
-                col1, col2, col3 = st.columns([3, 2, 1])
-                with col1:
-                    st.markdown(f"**{safe_get(person, 'name')}**")
-                    st.caption(f"{safe_get(person, 'current_title')} at {safe_get(person, 'current_company_name')}")
-                with col2:
-                    st.caption(f"Location: {safe_get(person, 'location')}")
-                with col3:
-                    if st.button("View", key=f"search_person_{person['id']}", use_container_width=True):
-                        go_to_person_details(person['id'])
-                        st.rerun()
+            st.markdown("**People Found**")
+            cols = st.columns(3)
+            for i, person in enumerate(matching_people):
+                with cols[i % 3]:
+                    with st.container(border=True):
+                        st.markdown(f"**{safe_get(person, 'name')}**")
+                        st.caption(f"{safe_get(person, 'current_title')}")
+                        st.caption(f"{safe_get(person, 'current_company_name')}")
+                        st.caption(f"📍 {safe_get(person, 'location')}")
+                        
+                        if st.button("View", key=f"search_person_{person['id']}", use_container_width=True):
+                            go_to_person_details(person['id'])
+                            st.rerun()
         
         if matching_firms:
-            st.markdown("**Firms**")
-            for firm in matching_firms[:3]:
-                col1, col2, col3 = st.columns([3, 2, 1])
-                with col1:
-                    st.markdown(f"**{safe_get(firm, 'name')}**")
-                    st.caption(f"{safe_get(firm, 'firm_type')} • {safe_get(firm, 'location')}")
-                with col2:
-                    st.caption(f"AUM: {safe_get(firm, 'aum')}")
-                with col3:
-                    if st.button("View", key=f"search_firm_{firm['id']}", use_container_width=True):
-                        go_to_firm_details(firm['id'])
-                        st.rerun()
+            st.markdown("**Firms Found**")
+            cols = st.columns(3)
+            for i, firm in enumerate(matching_firms):
+                with cols[i % 3]:
+                    with st.container(border=True):
+                        st.markdown(f"**{safe_get(firm, 'name')}**")
+                        st.caption(f"{safe_get(firm, 'firm_type')}")
+                        st.caption(f"📍 {safe_get(firm, 'location')}")
+                        
+                        if st.button("View", key=f"search_firm_{firm['id']}", use_container_width=True):
+                            go_to_firm_details(firm['id'])
+                            st.rerun()
         
-        if st.button("Clear Search", key="main_clear_search"):
-            st.session_state.global_search = ""
-            st.rerun()
-        
-        st.markdown("---")
-    
-    else:
-        st.info(f"No results found for '{search_query}'. Try different keywords.")
-        if st.button("Clear Search", key="no_results_clear_search"):
-            st.session_state.global_search = ""
-            st.rerun()
         st.markdown("---")
 
 # Top Navigation
@@ -1193,14 +1179,11 @@ with col4:
 
 with col5:
     # Quick stats
-    col5a, col5b, col5c = st.columns(3)
+    col5a, col5b = st.columns(2)
     with col5a:
         st.metric("People", len(st.session_state.people))
     with col5b:
         st.metric("Firms", len(st.session_state.firms))
-    with col5c:
-        total_metrics = sum(len(firm.get('performance_metrics', [])) for firm in st.session_state.firms)
-        st.metric("Metrics", total_metrics)
 
 # --- MAIN VIEWS ---
 
@@ -1209,28 +1192,45 @@ if st.session_state.current_view == 'people':
     st.header("Financial Professionals")
     
     if not st.session_state.people:
-        st.info("No people added yet. Use 'Add Person' button above or extract from newsletters.")
+        st.info("No people added yet. Use 'Add Person' button above or extract from content.")
     else:
-        # Simple display of people
-        for person in st.session_state.people:
-            with st.container(border=True):
-                col1, col2, col3 = st.columns([3, 2, 1])
-                
-                with col1:
-                    st.markdown(f"**{safe_get(person, 'name')}**")
-                    st.caption(f"{safe_get(person, 'current_title')}")
-                    st.caption(f"Company: {safe_get(person, 'current_company_name')}")
-                
-                with col2:
-                    st.caption(f"Location: {safe_get(person, 'location')}")
-                    expertise = safe_get(person, 'expertise')
-                    if expertise != 'Unknown':
-                        st.caption(f"Expertise: {expertise}")
-                
-                with col3:
-                    if st.button("View Details", key=f"view_person_{person['id']}", use_container_width=True):
-                        go_to_person_details(person['id'])
-                        st.rerun()
+        # Display people in square tile grid (3 columns)
+        people_list = st.session_state.people
+        for i in range(0, len(people_list), 3):
+            cols = st.columns(3)
+            for j, col in enumerate(cols):
+                if i + j < len(people_list):
+                    person = people_list[i + j]
+                    
+                    with col:
+                        # Square-like tile container
+                        with st.container(border=True):
+                            st.markdown(f"**{safe_get(person, 'name')}**")
+                            st.caption(f"{safe_get(person, 'current_title')}")
+                            st.caption(f"Company: {safe_get(person, 'current_company_name')}")
+                            st.caption(f"📍 {safe_get(person, 'location')}")
+                            
+                            expertise = safe_get(person, 'expertise')
+                            if expertise != 'Unknown':
+                                st.caption(f"🎯 {expertise}")
+                            
+                            # Shared work connections
+                            shared_history = get_shared_work_history(person['id'])
+                            if shared_history:
+                                strong_connections = len([c for c in shared_history if c.get('connection_strength') == 'Strong'])
+                                st.caption(f"🔗 {len(shared_history)} connections ({strong_connections} strong)")
+                            
+                            # Action buttons
+                            col_view, col_edit = st.columns(2)
+                            with col_view:
+                                if st.button("View", key=f"view_person_{person['id']}", use_container_width=True):
+                                    go_to_person_details(person['id'])
+                                    st.rerun()
+                            with col_edit:
+                                if st.button("Edit", key=f"edit_person_{person['id']}", use_container_width=True):
+                                    st.session_state.edit_person_data = person
+                                    st.session_state.show_edit_person_modal = True
+                                    st.rerun()
 
 elif st.session_state.current_view == 'firms':
     st.markdown("---")
@@ -1239,27 +1239,39 @@ elif st.session_state.current_view == 'firms':
     if not st.session_state.firms:
         st.info("No firms added yet. Use 'Add Firm' button above.")
     else:
-        # Simple display of firms
-        for firm in st.session_state.firms:
-            people_count = len(get_people_by_firm(safe_get(firm, 'name')))
-            metrics_count = len(firm.get('performance_metrics', []))
-            
-            with st.container(border=True):
-                col1, col2, col3 = st.columns([3, 2, 1])
-                
-                with col1:
-                    st.markdown(f"**{safe_get(firm, 'name')}**")
-                    st.caption(f"{safe_get(firm, 'firm_type')}")
-                    st.caption(f"Location: {safe_get(firm, 'location')}")
-                
-                with col2:
-                    st.caption(f"AUM: {safe_get(firm, 'aum')}")
-                    st.caption(f"People: {people_count} | Metrics: {metrics_count}")
-                
-                with col3:
-                    if st.button("View Details", key=f"view_firm_{firm['id']}", use_container_width=True):
-                        go_to_firm_details(firm['id'])
-                        st.rerun()
+        # Display firms in square tile grid (3 columns)
+        firms_list = st.session_state.firms
+        for i in range(0, len(firms_list), 3):
+            cols = st.columns(3)
+            for j, col in enumerate(cols):
+                if i + j < len(firms_list):
+                    firm = firms_list[i + j]
+                    people_count = len(get_people_by_firm(safe_get(firm, 'name')))
+                    
+                    with col:
+                        # Square-like tile container
+                        with st.container(border=True):
+                            st.markdown(f"**{safe_get(firm, 'name')}**")
+                            st.caption(f"{safe_get(firm, 'firm_type')}")
+                            st.caption(f"📍 {safe_get(firm, 'location')}")
+                            
+                            aum = safe_get(firm, 'aum')
+                            if aum != 'Unknown':
+                                st.caption(f"💰 {aum}")
+                            
+                            st.caption(f"👥 {people_count} people")
+                            
+                            # Action buttons
+                            col_view, col_edit = st.columns(2)
+                            with col_view:
+                                if st.button("View", key=f"view_firm_{firm['id']}", use_container_width=True):
+                                    go_to_firm_details(firm['id'])
+                                    st.rerun()
+                            with col_edit:
+                                if st.button("Edit", key=f"edit_firm_{firm['id']}", use_container_width=True):
+                                    st.session_state.edit_firm_data = firm
+                                    st.session_state.show_edit_firm_modal = True
+                                    st.rerun()
 
 elif st.session_state.current_view == 'person_details' and st.session_state.selected_person_id:
     person = get_person_by_id(st.session_state.selected_person_id)
@@ -1276,7 +1288,7 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     with col2:
         col2a, col2b, col2c = st.columns(3)
         with col2a:
-            if st.button("Back"):
+            if st.button("← Back"):
                 go_to_people()
                 st.rerun()
         with col2b:
@@ -1285,7 +1297,7 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
                 st.session_state.show_edit_person_modal = True
                 st.rerun()
         with col2c:
-            if st.button("Add Employment"):
+            if st.button("+ Employment"):
                 st.session_state.show_add_employment_modal = True
                 st.rerun()
     
@@ -1294,24 +1306,24 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     with col1:
         st.markdown(f"**Location:** {safe_get(person, 'location')}")
         email = safe_get(person, 'email')
-        if email != 'Unknown':
+        if email != 'Unknown' and email:
             st.markdown(f"**Email:** {email}")
         phone = safe_get(person, 'phone')
-        if phone != 'Unknown':
+        if phone != 'Unknown' and phone:
             st.markdown(f"**Phone:** {phone}")
     
     with col2:
         education = safe_get(person, 'education')
-        if education != 'Unknown':
+        if education != 'Unknown' and education:
             st.markdown(f"**Education:** {education}")
         expertise = safe_get(person, 'expertise')
-        if expertise != 'Unknown':
+        if expertise != 'Unknown' and expertise:
             st.markdown(f"**Expertise:** {expertise}")
         aum = safe_get(person, 'aum_managed')
-        if aum != 'Unknown':
+        if aum != 'Unknown' and aum:
             st.markdown(f"**AUM Managed:** {aum}")
     
-    # Employment History with dates
+    # Employment History
     st.markdown("---")
     st.subheader("Employment History")
     
@@ -1341,15 +1353,9 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
                 duration_str = "Unknown duration"
             
             with st.container(border=True):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.markdown(f"**{safe_get(emp, 'title')}** at **{safe_get(emp, 'company_name')}**")
-                    st.caption(f"Duration: {start_date_str} → {end_date_str} ({duration_str})")
-                    st.caption(f"Location: {safe_get(emp, 'location')} • Strategy: {safe_get(emp, 'strategy')}")
-                with col2:
-                    if st.button("Edit", key=f"edit_emp_{emp['id']}", use_container_width=True):
-                        # Edit employment logic would go here
-                        st.info("Edit employment functionality")
+                st.markdown(f"**{safe_get(emp, 'title')}** at **{safe_get(emp, 'company_name')}**")
+                st.caption(f"Duration: {start_date_str} → {end_date_str} ({duration_str})")
+                st.caption(f"Location: {safe_get(emp, 'location')} • Strategy: {safe_get(emp, 'strategy')}")
     else:
         st.info("No employment history available.")
     
@@ -1362,6 +1368,20 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
     if shared_history:
         st.write(f"**Found {len(shared_history)} colleagues who worked at the same companies:**")
         
+        # Summary stats
+        strong_connections = len([c for c in shared_history if c.get('connection_strength') == 'Strong'])
+        medium_connections = len([c for c in shared_history if c.get('connection_strength') == 'Medium'])
+        brief_connections = len([c for c in shared_history if c.get('connection_strength') == 'Brief'])
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Strong (1+ years)", strong_connections)
+        with col2:
+            st.metric("Medium (3+ months)", medium_connections)
+        with col3:
+            st.metric("Brief (<3 months)", brief_connections)
+        
+        # Show connections
         for connection in shared_history[:5]:  # Show first 5
             with st.container(border=True):
                 col1, col2, col3 = st.columns([2, 2, 1])
@@ -1387,6 +1407,9 @@ elif st.session_state.current_view == 'person_details' and st.session_state.sele
                     if st.button("View", key=f"view_colleague_{connection['colleague_id']}", use_container_width=True):
                         go_to_person_details(connection['colleague_id'])
                         st.rerun()
+        
+        if len(shared_history) > 5:
+            st.info(f"Showing top 5 of {len(shared_history)} total connections")
     else:
         st.info("No shared work history found with other people in the database.")
     
@@ -1433,7 +1456,7 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
     with col2:
         col2a, col2b = st.columns(2)
         with col2a:
-            if st.button("Back"):
+            if st.button("← Back"):
                 go_to_firms()
                 st.rerun()
         with col2b:
@@ -1453,45 +1476,13 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
         st.metric("Total People", people_count)
     
     # Firm details
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(f"**Type:** {safe_get(firm, 'firm_type')}")
-        st.markdown(f"**Location:** {safe_get(firm, 'location')}")
-        st.markdown(f"**Headquarters:** {safe_get(firm, 'headquarters')}")
-    with col2:
-        st.markdown(f"**Strategy:** {safe_get(firm, 'strategy')}")
-        website = safe_get(firm, 'website')
-        if website != 'Unknown':
-            st.markdown(f"**Website:** [{website}]({website})")
-    
     description = safe_get(firm, 'description')
-    if description != 'Unknown':
+    if description != 'Unknown' and description:
         st.markdown(f"**About:** {description}")
     
-    # Performance Metrics
-    st.markdown("---")
-    st.subheader("Performance Metrics")
-    
-    firm_metrics = firm.get('performance_metrics', [])
-    if firm_metrics:
-        st.write(f"**Found {len(firm_metrics)} performance metrics:**")
-        
-        # Create performance dataframe for better display
-        metrics_data = []
-        for metric in firm_metrics:
-            metrics_data.append({
-                "Metric": safe_get(metric, 'metric_type').title(),
-                "Value": safe_get(metric, 'value'),
-                "Period": safe_get(metric, 'period'),
-                "Date": safe_get(metric, 'date'),
-                "Details": safe_get(metric, 'additional_info')
-            })
-        
-        df_metrics = pd.DataFrame(metrics_data)
-        st.dataframe(df_metrics, use_container_width=True)
-        
-    else:
-        st.info("No performance metrics found for this firm.")
+    website = safe_get(firm, 'website')
+    if website != 'Unknown' and website:
+        st.markdown(f"**Website:** [{website}]({website})")
     
     # People at this firm
     st.markdown("---")
@@ -1510,9 +1501,9 @@ elif st.session_state.current_view == 'firm_details' and st.session_state.select
                 with col2:
                     email = safe_get(person, 'email')
                     expertise = safe_get(person, 'expertise')
-                    if email != 'Unknown':
+                    if email != 'Unknown' and email:
                         st.caption(f"Email: {email}")
-                    if expertise != 'Unknown':
+                    if expertise != 'Unknown' and expertise:
                         st.caption(f"Expertise: {expertise}")
                 
                 with col3:
@@ -1585,50 +1576,38 @@ if st.session_state.show_add_person_modal:
         
         if submitted:
             if name and title and company:
-                # Check for duplicates
-                existing_person = find_duplicate_person(name, company)
+                new_person_id = str(uuid.uuid4())
+                new_person = {
+                    "id": new_person_id,
+                    "name": name,
+                    "current_title": title,
+                    "current_company_name": company,
+                    "location": location or "Unknown",
+                    "email": email or "",
+                    "phone": phone or "",
+                    "education": education or "",
+                    "expertise": expertise or "",
+                    "aum_managed": aum_managed or "",
+                    "strategy": strategy or "",
+                    "created_date": datetime.now().isoformat(),
+                    "last_updated": datetime.now().isoformat(),
+                    "context_mentions": []
+                }
                 
-                if existing_person:
-                    st.error(f"Person '{name}' already exists at '{company}'. Use the edit function to update information.")
+                st.session_state.people.append(new_person)
+                
+                # Add employment record
+                success = add_employment_with_dates(
+                    new_person_id, company, title, start_date, end_date, location or "Unknown", strategy or "Unknown"
+                )
+                
+                if success:
+                    save_data()
+                    st.success(f"Added {name}!")
+                    st.session_state.show_add_person_modal = False
+                    st.rerun()
                 else:
-                    new_person_id = str(uuid.uuid4())
-                    new_person = {
-                        "id": new_person_id,
-                        "name": name,
-                        "current_title": title,
-                        "current_company_name": company,
-                        "location": location or "Unknown",
-                        "email": email or "",
-                        "linkedin_profile_url": "",
-                        "phone": phone or "",
-                        "education": education or "",
-                        "expertise": expertise or "",
-                        "aum_managed": aum_managed or "",
-                        "strategy": strategy or "",
-                        "created_date": datetime.now().isoformat(),
-                        "last_updated": datetime.now().isoformat(),
-                        "context_mentions": [],
-                        "extraction_history": [{
-                            "extraction_date": datetime.now().isoformat(),
-                            "source_type": "manual_entry",
-                            "context_preview": f"Manually added person: {name} at {company}"
-                        }]
-                    }
-                    
-                    st.session_state.people.append(new_person)
-                    
-                    # Add employment record
-                    success = add_employment_with_dates(
-                        new_person_id, company, title, start_date, end_date, location or "Unknown", strategy or "Unknown"
-                    )
-                    
-                    if success:
-                        save_data()
-                        st.success(f"Added {name}!")
-                        st.session_state.show_add_person_modal = False
-                        st.rerun()
-                    else:
-                        st.error("Failed to add employment record")
+                    st.error("Failed to add employment record")
             else:
                 st.error("Please fill required fields (*)")
     
