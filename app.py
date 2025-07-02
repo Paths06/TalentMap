@@ -56,11 +56,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Essential-only loggers
-extraction_logger = logging.getLogger('extraction')
-extraction_handler = RotatingFileHandler(LOGS_DIR / 'extraction.log', maxBytes=2*1024*1024, backupCount=1)
-extraction_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-extraction_logger.addHandler(extraction_handler)
-extraction_logger.setLevel(logging.INFO)
+# logger = logging.getLogger('extraction')
+# extraction_handler = RotatingFileHandler(LOGS_DIR / 'extraction.log', maxBytes=2*1024*1024, backupCount=1)
+# extraction_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+# logger.addHandler(extraction_handler)
+# logger.setLevel(logging.INFO)
 
 # Session tracking (minimal)
 if 'session_id' not in st.session_state:
@@ -70,29 +70,29 @@ SESSION_ID = st.session_state.session_id
 
 def log_essential(message):
     """Log only essential events"""
-    extraction_logger.info(f"[{SESSION_ID}] {message}")
+    logger.info(f"[{SESSION_ID}] {message}")
 
 def log_extraction_progress(step, details=""):
     """Log extraction progress only"""
-    extraction_logger.info(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
+    logger.info(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
 
 def log_extraction_step(step, details="", level="INFO"):
     """Log extraction step with level"""
     if level == "ERROR":
-        extraction_logger.error(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
+        logger.error(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
     elif level == "WARNING":
-        extraction_logger.warning(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
+        logger.warning(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
     else:
-        extraction_logger.info(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
+        logger.info(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
 
 def log_profile_saved(profile_type, name, company=""):
     """Log when profiles are saved"""
     company_str = f" at {company}" if company else ""
-    extraction_logger.info(f"[{SESSION_ID}] SAVED: {profile_type} - {name}{company_str}")
+    logger.info(f"[{SESSION_ID}] SAVED: {profile_type} - {name}{company_str}")
 
 def log_user_action(action, details=""):
     """Log user actions"""
-    extraction_logger.info(f"[{SESSION_ID}] USER: {action} - {details}")
+    logger.info(f"[{SESSION_ID}] USER: {action} - {details}")
 
 # Minimal session start log
 log_essential(f"Session started")
