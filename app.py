@@ -1404,16 +1404,21 @@ def export_asia_csv():
 
 # Initialize session state
 try:
+    log_user_action("APP_INIT_START", "Initializing application")
     initialize_session_state()
     
     # Tag all existing profiles for Asia classification
     if 'asia_tagged' not in st.session_state:
+        log_user_action("ASIA_TAGGING_START", "Starting Asia classification for existing profiles")
         asia_people_count, asia_firms_count = tag_all_existing_profiles()
         save_data()  # Save the Asia tags
         st.session_state.asia_tagged = True
-        logger.info(f"Tagged {asia_people_count} Asia people and {asia_firms_count} Asia firms")
+        log_user_action("ASIA_TAGGING_COMPLETE", f"Tagged {asia_people_count} Asia people and {asia_firms_count} Asia firms")
+        
+    log_user_action("APP_INIT_COMPLETE", f"Application initialized successfully with {len(st.session_state.people)} people, {len(st.session_state.firms)} firms")
         
 except Exception as init_error:
+    log_user_action("APP_INIT_ERROR", f"Initialization failed: {init_error}")
     st.error(f"Initialization error: {init_error}")
     st.stop()
 
@@ -1495,11 +1500,15 @@ with st.sidebar:
         # Extract button
         if st.button("Start Extraction", use_container_width=True):
             if not newsletter_text.strip():
+                log_user_action("EXTRACTION_ERROR", "Attempted extraction with empty content")
                 st.error("Please provide content")
             elif not model:
+                log_user_action("EXTRACTION_ERROR", "Attempted extraction without API key")
                 st.error("Please provide API key")
             else:
                 # Start background processing
+                log_user_action("EXTRACTION_START", f"Starting extraction with {len(newsletter_text)} characters using model {model.model_id}")
+                
                 st.session_state.background_processing = {
                     'is_running': True,
                     'progress': 0,
@@ -1518,9 +1527,11 @@ with st.sidebar:
                             'results': {'people': people, 'performance': performance}
                         }
                         
+                        log_user_action("EXTRACTION_SUCCESS", f"Extraction complete: {len(people)} people, {len(performance)} metrics found")
                         st.success(f"Extraction complete! Found {len(people)} people and {len(performance)} metrics")
                         
                     except Exception as e:
+                        log_user_action("EXTRACTION_ERROR", f"Extraction failed: {e}")
                         st.error(f"Extraction failed: {e}")
                         st.session_state.background_processing['is_running'] = False
 
@@ -1802,6 +1813,10 @@ with col2:
     if st.button("Search", use_container_width=True) or search_query != st.session_state.global_search:
         st.session_state.global_search = search_query
         if search_query and len(search_query.strip()) >= 2:
+            log_user_action("SEARCH", f"User searched for: '{search_query}'")
+            st.rerun()
+        elif search_query != st.session_state.global_search:
+            log_user_action("SEARCH_CLEAR", "User cleared search")
             st.rerun()
 
 # Handle global search results
@@ -2546,10 +2561,55 @@ with col2:
         st.info("🌏 No Asia-based profiles found yet")
         st.caption("Asia-based profiles will appear here automatically when detected")
 
+# --- LOG FILE ACCESS FUNCTIONS ---
+def get_recent_logs(log_type="main", lines=50):
+    """Get recent log entries for monitoring"""
+    try:
+        if log_type == "main":
+            log_file = LOGS_DIR / 'hedge_fund_app.log'
+        elif log_type == "extraction":
+            log_file = LOGS_DIR / 'extraction.log'
+        elif log_type == "database":
+            log_file = LOGS_DIR / 'database.log'
+        elif log_type == "api":
+            log_file = LOGS_DIR / 'api.log'
+        elif log_type == "user_actions":
+            log_file = LOGS_DIR / 'user_actions.log'
+        else:
+            return []
+        
+        if not log_file.exists():
+            return []
+        
+        with open(log_file, 'r', encoding='utf-8') as f:
+            all_lines = f.readlines()
+            return all_lines[-lines:] if len(all_lines) > lines else all_lines
+    
+    except Exception as e:
+        logger.error(f"Error reading log file {log_type}: {e}")
+        return []
+
+def log_session_summary():
+    """Log session summary statistics"""
+    try:
+        people_count = len(st.session_state.people)
+        firms_count = len(st.session_state.firms)
+        asia_people = len(get_asia_people())
+        asia_firms = len(get_asia_firms())
+        
+        log_user_action("SESSION_SUMMARY", 
+            f"Session {SESSION_ID} stats: {people_count} people ({asia_people} Asia), {firms_count} firms ({asia_firms} Asia)")
+    
+    except Exception as e:
+        logger.error(f"Error logging session summary: {e}")
+
 # --- COMPREHENSIVE DEBUGGING SECTION ---
 if st.checkbox("🔧 Debug Mode - Show Database Details", help="Show detailed database information for debugging"):
     st.markdown("---")
     st.subheader("🔧 Database Debug Information")
+    
+    # Log debug mode access
+    log_user_action("DEBUG_MODE", "User entered debug mode")
     
     # Show all current person keys
     st.markdown("**Current People in Database:**")
@@ -2580,6 +2640,8 @@ if st.checkbox("🔧 Debug Mode - Show Database Details", help="Show detailed da
     with col3:
         if st.button("🔍 Check Duplicate", key="debug_check"):
             if test_name and test_company:
+                log_user_action("DEBUG_DUPLICATE_TEST", f"Testing duplicate for: '{test_name}' at '{test_company}'")
+                
                 existing = find_existing_person_strict(test_name, test_company)
                 test_key = create_person_key(test_name, test_company)
                 
@@ -2605,3 +2667,25 @@ if st.checkbox("🔧 Debug Mode - Show Database Details", help="Show detailed da
     for name, company in examples:
         key = create_person_key(name, company)
         st.write(f"• `{name}` + `{company}` → `{key}`")
+    
+    # Show recent logs
+    st.markdown("---")
+    st.subheader("📋 Recent Log Entries")
+    
+    log_type = st.selectbox("Select Log Type:", 
+        ["user_actions", "extraction", "database", "api", "main"])
+    
+    if st.button("Refresh Logs"):
+        log_user_action("DEBUG_LOG_VIEW", f"User viewed {log_type} logs")
+    
+    recent_logs = get_recent_logs(log_type, 20)
+    if recent_logs:
+        st.text_area("Recent Log Entries:", 
+            value="".join(recent_logs), 
+            height=300,
+            disabled=True)
+    else:
+        st.info(f"No {log_type} logs found")
+
+# Log session summary before exit (this runs every time)
+log_session_summary()
