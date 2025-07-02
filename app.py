@@ -76,10 +76,23 @@ def log_extraction_progress(step, details=""):
     """Log extraction progress only"""
     extraction_logger.info(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
 
+def log_extraction_step(step, details="", level="INFO"):
+    """Log extraction step with level"""
+    if level == "ERROR":
+        extraction_logger.error(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
+    elif level == "WARNING":
+        extraction_logger.warning(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
+    else:
+        extraction_logger.info(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
+
 def log_profile_saved(profile_type, name, company=""):
     """Log when profiles are saved"""
     company_str = f" at {company}" if company else ""
     extraction_logger.info(f"[{SESSION_ID}] SAVED: {profile_type} - {name}{company_str}")
+
+def log_user_action(action, details=""):
+    """Log user actions"""
+    extraction_logger.info(f"[{SESSION_ID}] USER: {action} - {details}")
 
 # Minimal session start log
 log_essential(f"Session started")
@@ -1647,13 +1660,6 @@ with st.sidebar:
                         blocked_count += 1
                         continue
                     
-                    # FINAL SAFETY CHECK before adding to database
-                    final_check = find_existing_person_strict(new_person['name'], new_person['current_company_name'])
-                    if final_check:
-                        st.error(f"🚫 **FINAL SAFETY CHECK BLOCKED**: Duplicate detected just before save!")
-                        st.error(f"Matches: {safe_get(final_check, 'name')} at {safe_get(final_check, 'current_company_name')}")
-                        return
-                    
                     st.session_state.people.append(new_person)
                     st.write(f"  ✅ **ADDED TO DATABASE**: Successfully created")
                     
@@ -2383,23 +2389,31 @@ if st.session_state.show_add_person_modal:
                         }]
                     }
                     
-                    st.session_state.people.append(new_person)
-                    
-                    # Tag as Asia-based
-                    tag_profile_as_asia(new_person, 'person')
-                    
-                    # Add employment record
-                    success = add_employment_with_dates(
-                        new_person_id, company, title, start_date, end_date, location or "Unknown", strategy or "Unknown"
-                    )
-                    
-                    if success:
-                        save_data()
-                        st.success(f"✅ Successfully added {name}!")
-                        st.session_state.show_add_person_modal = False
-                        st.rerun()
+                    # FINAL SAFETY CHECK before adding to database
+                    final_check = find_existing_person_strict(new_person['name'], new_person['current_company_name'])
+                    if final_check:
+                        st.error(f"🚫 **FINAL SAFETY CHECK BLOCKED**: Duplicate detected just before save!")
+                        st.error(f"Matches: {safe_get(final_check, 'name')} at {safe_get(final_check, 'current_company_name')}")
+                        # Don't use return here - just skip the rest with continue logic
                     else:
-                        st.error("❌ Failed to add employment record")
+                        # Only add if final check passes
+                        st.session_state.people.append(new_person)
+                        
+                        # Tag as Asia-based
+                        tag_profile_as_asia(new_person, 'person')
+                        
+                        # Add employment record
+                        success = add_employment_with_dates(
+                            new_person_id, company, title, start_date, end_date, location or "Unknown", strategy or "Unknown"
+                        )
+                        
+                        if success:
+                            save_data()
+                            st.success(f"✅ Successfully added {name}!")
+                            st.session_state.show_add_person_modal = False
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to add employment record")
             else:
                 st.error("❌ Please fill required fields (*)")
     
