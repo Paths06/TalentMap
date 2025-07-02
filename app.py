@@ -31,7 +31,7 @@ try:
 except ImportError:
     GENAI_AVAILABLE = False
 
-# Configure comprehensive logging
+# Configure minimal logging - only essential events
 import logging
 from logging.handlers import RotatingFileHandler
 import os
@@ -40,79 +40,49 @@ import os
 LOGS_DIR = Path("logs")
 LOGS_DIR.mkdir(exist_ok=True)
 
-# Configure main logger
+# Configure main logger - minimal logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    level=logging.WARNING,  # Only warnings and errors
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         RotatingFileHandler(
             LOGS_DIR / 'hedge_fund_app.log',
-            maxBytes=10*1024*1024,  # 10MB
-            backupCount=5
-        ),
-        logging.StreamHandler()  # Also log to console for development
+            maxBytes=5*1024*1024,  # 5MB
+            backupCount=2
+        )
     ]
 )
 
 logger = logging.getLogger(__name__)
 
-# Create specialized loggers for different components
+# Essential-only loggers
 extraction_logger = logging.getLogger('extraction')
-extraction_handler = RotatingFileHandler(LOGS_DIR / 'extraction.log', maxBytes=5*1024*1024, backupCount=3)
-extraction_handler.setFormatter(logging.Formatter('%(asctime)s - EXTRACTION - %(levelname)s - %(message)s'))
+extraction_handler = RotatingFileHandler(LOGS_DIR / 'extraction.log', maxBytes=2*1024*1024, backupCount=1)
+extraction_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
 extraction_logger.addHandler(extraction_handler)
 extraction_logger.setLevel(logging.INFO)
 
-database_logger = logging.getLogger('database')
-db_handler = RotatingFileHandler(LOGS_DIR / 'database.log', maxBytes=5*1024*1024, backupCount=3)
-db_handler.setFormatter(logging.Formatter('%(asctime)s - DATABASE - %(levelname)s - %(message)s'))
-database_logger.addHandler(db_handler)
-database_logger.setLevel(logging.INFO)
-
-api_logger = logging.getLogger('api')
-api_handler = RotatingFileHandler(LOGS_DIR / 'api.log', maxBytes=5*1024*1024, backupCount=3)
-api_handler.setFormatter(logging.Formatter('%(asctime)s - API - %(levelname)s - %(message)s'))
-api_logger.addHandler(api_handler)
-api_logger.setLevel(logging.INFO)
-
-user_action_logger = logging.getLogger('user_actions')
-user_handler = RotatingFileHandler(LOGS_DIR / 'user_actions.log', maxBytes=5*1024*1024, backupCount=3)
-user_handler.setFormatter(logging.Formatter('%(asctime)s - USER - %(levelname)s - %(message)s'))
-user_action_logger.addHandler(user_handler)
-user_action_logger.setLevel(logging.INFO)
-
-# Session tracking
+# Session tracking (minimal)
 if 'session_id' not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:8]
 
 SESSION_ID = st.session_state.session_id
 
-def log_user_action(action, details=""):
-    """Log user actions with session tracking"""
-    user_action_logger.info(f"[{SESSION_ID}] {action} - {details}")
+def log_essential(message):
+    """Log only essential events"""
+    extraction_logger.info(f"[{SESSION_ID}] {message}")
 
-def log_extraction_step(step, details="", level="INFO"):
-    """Log extraction process steps"""
-    if level == "ERROR":
-        extraction_logger.error(f"[{SESSION_ID}] {step} - {details}")
-    elif level == "WARNING":
-        extraction_logger.warning(f"[{SESSION_ID}] {step} - {details}")
-    else:
-        extraction_logger.info(f"[{SESSION_ID}] {step} - {details}")
+def log_extraction_progress(step, details=""):
+    """Log extraction progress only"""
+    extraction_logger.info(f"[{SESSION_ID}] EXTRACTION: {step} - {details}")
 
-def log_database_operation(operation, details="", count=None):
-    """Log database operations"""
-    count_str = f" (count: {count})" if count is not None else ""
-    database_logger.info(f"[{SESSION_ID}] {operation}{count_str} - {details}")
+def log_profile_saved(profile_type, name, company=""):
+    """Log when profiles are saved"""
+    company_str = f" at {company}" if company else ""
+    extraction_logger.info(f"[{SESSION_ID}] SAVED: {profile_type} - {name}{company_str}")
 
-def log_api_call(endpoint, details="", duration=None):
-    """Log API calls with timing"""
-    duration_str = f" (duration: {duration:.2f}s)" if duration is not None else ""
-    api_logger.info(f"[{SESSION_ID}] {endpoint}{duration_str} - {details}")
-
-# Log session start
-logger.info(f"Session started: {SESSION_ID}")
-log_user_action("SESSION_START", f"New session initialized")
+# Minimal session start log
+log_essential(f"Session started")
 
 # Configure page
 st.set_page_config(
@@ -219,46 +189,30 @@ def create_person_key(name, company):
         return None
 
 def find_existing_person_strict(name, company):
-    """Find existing person with STRICT duplicate checking and extensive logging"""
-    start_time = time.time()
-    
+    """Find existing person with STRICT duplicate checking"""
     try:
         person_key = create_person_key(name, company)
         
         if not person_key:
-            log_extraction_step("DUPLICATE_CHECK", f"No valid key generated for '{name}' at '{company}'")
             return None
         
-        log_extraction_step("DUPLICATE_CHECK_START", f"Searching for: '{name}' at '{company}' → Key: '{person_key}'")
-        
         # Check against all existing people
-        total_people = len(st.session_state.people)
-        log_extraction_step("DUPLICATE_SCAN", f"Scanning {total_people} existing people for duplicates")
-        
-        for i, person in enumerate(st.session_state.people):
+        for person in st.session_state.people:
             try:
                 existing_name = safe_get(person, 'name')
                 existing_company = safe_get(person, 'current_company_name')
                 existing_key = create_person_key(existing_name, existing_company)
                 
                 if existing_key and existing_key == person_key:
-                    duration = time.time() - start_time
-                    log_extraction_step("DUPLICATE_FOUND", 
-                        f"MATCH at index {i+1}/{total_people}: '{name}' at '{company}' matches existing '{existing_name}' at '{existing_company}' (duration: {duration:.3f}s)")
-                    logger.warning(f"[{SESSION_ID}] DUPLICATE BLOCKED: {name} at {company} → matches existing {existing_name} at {existing_company}")
                     return person
                     
             except Exception as e:
-                log_extraction_step("DUPLICATE_CHECK_ERROR", f"Error checking person #{i+1}: {e}", "ERROR")
                 continue
         
-        duration = time.time() - start_time
-        log_extraction_step("DUPLICATE_CHECK_COMPLETE", f"No duplicate found for '{name}' at '{company}' after scanning {total_people} people (duration: {duration:.3f}s)")
         return None
         
     except Exception as e:
-        duration = time.time() - start_time
-        log_extraction_step("DUPLICATE_CHECK_ERROR", f"Error in duplicate check for '{name}' at '{company}': {e} (duration: {duration:.3f}s)", "ERROR")
+        logger.error(f"Error in duplicate check: {e}")
         return None
 
 def check_for_duplicates_in_extraction(people_data):
@@ -911,12 +865,9 @@ def setup_gemini(api_key):
         return None
 
 def extract_data_from_text(text, model):
-    """Extract people and performance data from text using Gemini with paid tier optimizations"""
-    start_time = time.time()
-    
+    """Extract people and performance data from text using Gemini"""
     try:
-        text_length = len(text)
-        log_api_call("GEMINI_EXTRACT_START", f"Model: {model.model_id}, Text length: {text_length} chars")
+        log_extraction_progress("GEMINI_REQUEST", f"Sending to {model.model_id}")
         
         # Paid tier optimized prompt
         prompt = f"""
@@ -955,28 +906,18 @@ Return ONLY valid JSON with this structure:
             'max_output_tokens': 4096,
         }
         
-        log_api_call("GEMINI_REQUEST", f"Sending request to {model.model_id}")
-        api_start_time = time.time()
-        
         response = model.generate_content(prompt, generation_config=generation_config)
         
-        api_duration = time.time() - api_start_time
-        log_api_call("GEMINI_RESPONSE", f"Response received", api_duration)
-        
         if not response or not response.text:
-            log_api_call("GEMINI_EMPTY_RESPONSE", "Empty response from API", api_duration)
             return [], []
         
         response_text = response.text.strip()
-        response_length = len(response_text)
-        log_extraction_step("JSON_PARSE_START", f"Parsing response: {response_length} chars")
         
         # Extract JSON
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1
         
         if json_start == -1 or json_end <= json_start:
-            log_extraction_step("JSON_PARSE_ERROR", "No valid JSON boundaries found", "ERROR")
             return [], []
         
         json_text = response_text[json_start:json_end]
@@ -984,25 +925,19 @@ Return ONLY valid JSON with this structure:
         # Try parsing, with repair if needed
         try:
             result = json.loads(json_text)
-            log_extraction_step("JSON_PARSE_SUCCESS", "JSON parsed successfully on first attempt")
-        except json.JSONDecodeError as e:
-            log_extraction_step("JSON_PARSE_REPAIR", f"Initial parse failed: {e}, attempting repair")
+        except json.JSONDecodeError:
             repaired_json = repair_json_response(json_text)
             try:
                 result = json.loads(repaired_json)
-                log_extraction_step("JSON_PARSE_SUCCESS", "JSON parsed successfully after repair")
-            except json.JSONDecodeError as repair_error:
-                log_extraction_step("JSON_PARSE_ERROR", f"Repair also failed: {repair_error}", "ERROR")
+            except json.JSONDecodeError:
                 return [], []
         
         people = result.get('people', [])
         performance = result.get('performance', [])
         
-        log_extraction_step("RAW_EXTRACT", f"Raw extraction: {len(people)} people, {len(performance)} performance metrics")
-        
         # Validate extracted data
         valid_people = []
-        for i, p in enumerate(people):
+        for p in people:
             name = safe_get(p, 'name', '').strip()
             company = safe_get(p, 'current_company', '').strip()
             
@@ -1011,12 +946,9 @@ Return ONLY valid JSON with this structure:
                 name.lower() not in ['name', 'full name', 'unknown'] and
                 company.lower() not in ['company', 'company name', 'unknown']):
                 valid_people.append(p)
-                log_extraction_step("PERSON_VALIDATED", f"Person {i+1}: '{name}' at '{company}' - VALID")
-            else:
-                log_extraction_step("PERSON_REJECTED", f"Person {i+1}: '{name}' at '{company}' - INVALID", "WARNING")
         
         valid_performance = []
-        for i, perf in enumerate(performance):
+        for perf in performance:
             fund_name = safe_get(perf, 'fund_name', '').strip()
             metric_type = safe_get(perf, 'metric_type', '').strip()
             value = safe_get(perf, 'value', '').strip()
@@ -1026,19 +958,12 @@ Return ONLY valid JSON with this structure:
                 fund_name.lower() not in ['fund name', 'unknown'] and
                 metric_type.lower() not in ['metric type', 'unknown']):
                 valid_performance.append(perf)
-                log_extraction_step("PERFORMANCE_VALIDATED", f"Metric {i+1}: {fund_name} - {metric_type}: {value} - VALID")
-            else:
-                log_extraction_step("PERFORMANCE_REJECTED", f"Metric {i+1}: {fund_name} - {metric_type}: {value} - INVALID", "WARNING")
         
-        total_duration = time.time() - start_time
-        log_extraction_step("EXTRACT_COMPLETE", 
-            f"Extraction complete: {len(valid_people)}/{len(people)} people validated, {len(valid_performance)}/{len(performance)} metrics validated (total duration: {total_duration:.2f}s)")
-        
+        log_extraction_progress("EXTRACTION_COMPLETE", f"Found {len(valid_people)} people, {len(valid_performance)} metrics")
         return valid_people, valid_performance
         
     except Exception as e:
-        total_duration = time.time() - start_time
-        log_extraction_step("EXTRACT_ERROR", f"Extraction failed: {e} (duration: {total_duration:.2f}s)", "ERROR")
+        logger.error(f"Extraction failed: {e}")
         return [], []
 
 def process_extraction_with_rate_limiting(text, model):
