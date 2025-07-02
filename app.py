@@ -55,66 +55,160 @@ def safe_get(data, key, default='Unknown'):
         logger.warning(f"Error in safe_get for key {key}: {e}")
         return default
 
-# --- Duplicate Detection Functions ---
+# --- BULLETPROOF Duplicate Detection Functions ---
 def normalize_name(name):
-    """Normalize name for comparison"""
-    if not name:
+    """Normalize name for comparison - very thorough"""
+    if not name or name == 'Unknown':
         return ""
-    return name.strip().lower().replace(".", "").replace(",", "")
+    
+    # Convert to lowercase and strip
+    normalized = name.strip().lower()
+    
+    # Remove common punctuation and spaces
+    normalized = re.sub(r'[.,\-_\'\"]', '', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized)  # Multiple spaces to single space
+    normalized = normalized.strip()
+    
+    # Handle common name variations
+    normalized = normalized.replace('jr.', 'jr').replace('sr.', 'sr')
+    normalized = normalized.replace('dr.', 'dr').replace('mr.', 'mr').replace('ms.', 'ms')
+    
+    return normalized
 
 def normalize_company(company):
-    """Normalize company name for comparison"""
-    if not company:
+    """Normalize company name for comparison - very thorough"""
+    if not company or company == 'Unknown':
         return ""
-    # Remove common company suffixes and normalize
-    company_lower = company.strip().lower()
-    suffixes = [' ltd', ' limited', ' inc', ' incorporated', ' llc', ' corp', ' corporation', ' co', ' company']
-    for suffix in suffixes:
-        if company_lower.endswith(suffix):
-            company_lower = company_lower[:-len(suffix)].strip()
-    return company_lower
-
-def find_existing_person(name, company):
-    """Find existing person with same name and company"""
-    if not name or not company:
-        return None
     
+    # Convert to lowercase and strip
+    normalized = company.strip().lower()
+    
+    # Remove common punctuation
+    normalized = re.sub(r'[.,\-_\'\"]', '', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized)  # Multiple spaces to single space
+    
+    # Remove common company suffixes (more comprehensive)
+    suffixes = [
+        ' ltd', ' limited', ' inc', ' incorporated', ' llc', ' pllc',
+        ' corp', ' corporation', ' co', ' company', ' group', ' holdings',
+        ' partners', ' partnership', ' lp', ' llp', ' pc', ' pllc',
+        ' capital', ' management', ' fund', ' funds', ' investments',
+        ' advisors', ' advisory', ' securities', ' asset management',
+        ' investment management', ' hedge fund'
+    ]
+    
+    for suffix in suffixes:
+        if normalized.endswith(suffix):
+            normalized = normalized[:-len(suffix)].strip()
+    
+    # Remove common prefixes
+    prefixes = ['the ', 'a ', 'an ']
+    for prefix in prefixes:
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):].strip()
+    
+    return normalized
+
+def create_person_key(name, company):
+    """Create a unique key for person identification"""
     norm_name = normalize_name(name)
     norm_company = normalize_company(company)
     
     if not norm_name or not norm_company:
         return None
     
+    return f"{norm_name}|{norm_company}"
+
+def find_existing_person_strict(name, company):
+    """Find existing person with STRICT duplicate checking"""
+    person_key = create_person_key(name, company)
+    
+    if not person_key:
+        return None
+    
+    # Check against all existing people
     for person in st.session_state.people:
-        existing_name = normalize_name(safe_get(person, 'name'))
-        existing_company = normalize_company(safe_get(person, 'current_company_name'))
+        existing_key = create_person_key(
+            safe_get(person, 'name'),
+            safe_get(person, 'current_company_name')
+        )
         
-        if existing_name == norm_name and existing_company == norm_company:
+        if existing_key and existing_key == person_key:
+            logger.info(f"DUPLICATE DETECTED: {name} at {company} already exists as {safe_get(person, 'name')} at {safe_get(person, 'current_company_name')}")
             return person
     
     return None
 
-def should_update_existing_person(existing_person, new_data):
-    """Check if existing person should be updated with new information"""
-    updates = {}
+def check_for_duplicates_in_extraction(people_data):
+    """Check for duplicates within the extraction data itself"""
+    seen_keys = set()
+    duplicates = []
+    unique_people = []
     
-    # Fields to potentially update (only if new data is more informative)
-    update_fields = [
-        'current_title', 'location', 'email', 'phone', 'education', 
-        'expertise', 'aum_managed', 'strategy'
+    for person in people_data:
+        person_key = create_person_key(
+            safe_get(person, 'name'),
+            person.get('current_company', person.get('company', ''))
+        )
+        
+        if person_key:
+            if person_key in seen_keys:
+                duplicates.append(person)
+                logger.warning(f"INTERNAL DUPLICATE: {safe_get(person, 'name')} at {person.get('current_company', person.get('company', ''))} appears multiple times in extraction")
+            else:
+                seen_keys.add(person_key)
+                unique_people.append(person)
+        else:
+            # Invalid data
+            duplicates.append(person)
+    
+    return unique_people, duplicates
+
+# --- TEST AND DEBUGGING FUNCTIONS ---
+def test_duplicate_detection():
+    """Test function to verify duplicate detection works correctly"""
+    test_cases = [
+        # Test case: [name1, company1, name2, company2, should_be_duplicate]
+        ["John Smith", "Goldman Sachs", "john smith", "goldman sachs", True],
+        ["John Smith", "Goldman Sachs Inc", "John Smith", "Goldman Sachs", True],
+        ["John Smith", "Goldman Sachs", "John Smith", "J.P. Morgan", False],
+        ["John Smith", "Goldman Sachs", "Jane Smith", "Goldman Sachs", False],
+        ["Li Wei Chen", "Hillhouse Capital Management", "Li Wei Chen", "Hillhouse Capital", True],
+        ["Dr. John Smith", "Goldman Sachs Ltd.", "John Smith", "Goldman Sachs", True],
+        ["John Smith Jr.", "Goldman Sachs Corp", "John Smith Jr", "Goldman Sachs Corporation", True],
     ]
     
-    for field in update_fields:
-        existing_value = safe_get(existing_person, field, '').strip()
-        new_value = safe_get(new_data, field, '').strip()
+    results = []
+    for name1, company1, name2, company2, expected in test_cases:
+        key1 = create_person_key(name1, company1)
+        key2 = create_person_key(name2, company2)
+        actual = (key1 == key2) if key1 and key2 else False
         
-        # Update if new value is more informative
-        if (new_value and new_value != 'Unknown' and 
-            (not existing_value or existing_value == 'Unknown' or 
-             len(new_value) > len(existing_value))):
-            updates[field] = new_value
+        results.append({
+            'test': f"{name1} @ {company1} vs {name2} @ {company2}",
+            'expected': expected,
+            'actual': actual,
+            'passed': expected == actual,
+            'key1': key1,
+            'key2': key2
+        })
     
-    return updates
+    return results
+
+def debug_person_keys():
+    """Debug function to show all person keys in database"""
+    keys = []
+    for person in st.session_state.people:
+        name = safe_get(person, 'name')
+        company = safe_get(person, 'current_company_name')
+        key = create_person_key(name, company)
+        keys.append({
+            'name': name,
+            'company': company,
+            'key': key,
+            'id': person['id']
+        })
+    return keys
 
 # --- Asia Detection and Tagging Functions ---
 def is_asia_based(location_text):
@@ -1216,6 +1310,54 @@ with st.sidebar:
     elif not GENAI_AVAILABLE:
         st.error("Please install: pip install google-generativeai")
     
+    # --- DUPLICATE DETECTION TESTING SECTION ---
+    if st.checkbox("🔍 Test Duplicate Detection", help="Debug and test duplicate detection logic"):
+        st.markdown("---")
+        st.subheader("🧪 Duplicate Detection Testing")
+        
+        # Run tests
+        if st.button("Run Duplicate Tests"):
+            test_results = test_duplicate_detection()
+            
+            passed_tests = [r for r in test_results if r['passed']]
+            failed_tests = [r for r in test_results if not r['passed']]
+            
+            if failed_tests:
+                st.error(f"❌ {len(failed_tests)} tests failed:")
+                for test in failed_tests:
+                    st.write(f"• {test['test']}")
+                    st.write(f"  Expected: {test['expected']}, Got: {test['actual']}")
+                    st.write(f"  Keys: {test['key1']} vs {test['key2']}")
+            else:
+                st.success(f"✅ All {len(test_results)} tests passed!")
+        
+        # Show current database keys
+        if st.button("Show Database Keys"):
+            keys = debug_person_keys()
+            if keys:
+                st.write("**Current person keys in database:**")
+                for key_info in keys:
+                    st.write(f"• `{key_info['key']}` - {key_info['name']} at {key_info['company']}")
+            else:
+                st.write("No people in database")
+        
+        # Manual duplicate test
+        st.markdown("**Manual Duplicate Test:**")
+        test_name = st.text_input("Test Name:", value="John Smith")
+        test_company = st.text_input("Test Company:", value="Goldman Sachs")
+        
+        if st.button("Check for Duplicate"):
+            if test_name and test_company:
+                existing = find_existing_person_strict(test_name, test_company)
+                test_key = create_person_key(test_name, test_company)
+                
+                if existing:
+                    st.error(f"🚫 DUPLICATE FOUND: {safe_get(existing, 'name')} at {safe_get(existing, 'current_company_name')}")
+                else:
+                    st.success(f"✅ NO DUPLICATE: Safe to add")
+                
+                st.info(f"Generated key: `{test_key}`")
+    
     # Show extraction results for review
     if st.session_state.background_processing.get('results', {}).get('people') or st.session_state.background_processing.get('results', {}).get('performance'):
         st.markdown("---")
@@ -1243,26 +1385,61 @@ with st.sidebar:
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Save All", use_container_width=True):
-                # Save extracted data
-                for person_data in people_results:
+                # First, remove internal duplicates from extraction data
+                unique_people, internal_duplicates = check_for_duplicates_in_extraction(people_results)
+                
+                if internal_duplicates:
+                    st.warning(f"⚠️ Removed {len(internal_duplicates)} internal duplicates from extraction")
+                
+                # Now process unique people with strict duplicate checking
+                saved_count = 0
+                blocked_count = 0
+                invalid_count = 0
+                blocked_details = []
+                
+                for person_data in unique_people:
+                    name = safe_get(person_data, 'name', '').strip()
+                    company_name = person_data.get('current_company', person_data.get('company', '')).strip()
+                    
+                    # Validate required fields
+                    if not name or not company_name or name == 'Unknown' or company_name == 'Unknown':
+                        invalid_count += 1
+                        continue
+                    
+                    # STRICT duplicate check - block if exists
+                    existing_person = find_existing_person_strict(name, company_name)
+                    
+                    if existing_person:
+                        blocked_count += 1
+                        blocked_details.append(f"• {name} at {company_name}")
+                        logger.warning(f"BLOCKED DUPLICATE: {name} at {company_name} - already exists")
+                        continue
+                    
+                    # Only create if no duplicate exists
                     new_person_id = str(uuid.uuid4())
-                    company_name = person_data.get('current_company', 'Unknown')
                     
                     new_person = {
                         "id": new_person_id,
-                        "name": safe_get(person_data, 'name'),
-                        "current_title": safe_get(person_data, 'current_title'),
+                        "name": name,
+                        "current_title": safe_get(person_data, 'current_title', 'Unknown'),
                         "current_company_name": company_name,
-                        "location": safe_get(person_data, 'location'),
+                        "location": safe_get(person_data, 'location', 'Unknown'),
                         "email": "",
                         "phone": "",
                         "education": "",
-                        "expertise": safe_get(person_data, 'expertise'),
+                        "expertise": safe_get(person_data, 'expertise', 'Unknown'),
                         "aum_managed": "",
                         "strategy": "",
                         "created_date": datetime.now().isoformat(),
                         "last_updated": datetime.now().isoformat(),
-                        "context_mentions": []
+                        "context_mentions": [{
+                            'id': str(uuid.uuid4()),
+                            'timestamp': datetime.now().isoformat(),
+                            'type': 'mention',
+                            'content': f"Discovered via data extraction",
+                            'source': 'Data Extraction',
+                            'date_added': datetime.now().isoformat()
+                        }]
                     }
                     
                     st.session_state.people.append(new_person)
@@ -1276,7 +1453,7 @@ with st.sidebar:
                             "id": str(uuid.uuid4()),
                             "name": company_name,
                             "firm_type": "Unknown",
-                            "location": safe_get(person_data, 'location'),
+                            "location": safe_get(person_data, 'location', 'Unknown'),
                             "headquarters": "Unknown",
                             "aum": "Unknown",
                             "founded": None,
@@ -1296,14 +1473,31 @@ with st.sidebar:
                     # Add employment record
                     add_employment_with_dates(
                         new_person_id, company_name, 
-                        safe_get(person_data, 'current_title'), 
+                        safe_get(person_data, 'current_title', 'Unknown'), 
                         date.today(), None,
-                        safe_get(person_data, 'location'), 
-                        safe_get(person_data, 'expertise')
+                        safe_get(person_data, 'location', 'Unknown'), 
+                        safe_get(person_data, 'expertise', 'Unknown')
                     )
+                    
+                    saved_count += 1
                 
                 save_data()
-                st.success("All data saved!")
+                
+                # Show detailed results
+                if saved_count > 0:
+                    st.success(f"✅ Successfully saved {saved_count} new people!")
+                
+                if blocked_count > 0:
+                    st.error(f"🚫 Blocked {blocked_count} duplicates (already exist):")
+                    with st.expander("View blocked duplicates"):
+                        for detail in blocked_details:
+                            st.write(detail)
+                
+                if invalid_count > 0:
+                    st.warning(f"⚠️ Skipped {invalid_count} invalid entries (missing name/company)")
+                
+                if len(internal_duplicates) > 0:
+                    st.info(f"🔄 Removed {len(internal_duplicates)} internal duplicates from extraction")
                 
                 # Clear results
                 st.session_state.background_processing['results'] = {'people': [], 'performance': []}
@@ -1913,43 +2107,66 @@ if st.session_state.show_add_person_modal:
         
         if submitted:
             if name and title and company:
-                new_person_id = str(uuid.uuid4())
-                new_person = {
-                    "id": new_person_id,
-                    "name": name,
-                    "current_title": title,
-                    "current_company_name": company,
-                    "location": location or "Unknown",
-                    "email": email or "",
-                    "phone": phone or "",
-                    "education": education or "",
-                    "expertise": expertise or "",
-                    "aum_managed": aum_managed or "",
-                    "strategy": strategy or "",
-                    "created_date": datetime.now().isoformat(),
-                    "last_updated": datetime.now().isoformat(),
-                    "context_mentions": []
-                }
+                # STRICT duplicate check - completely block if exists
+                existing_person = find_existing_person_strict(name, company)
                 
-                st.session_state.people.append(new_person)
-                
-                # Tag as Asia-based
-                tag_profile_as_asia(new_person, 'person')
-                
-                # Add employment record
-                success = add_employment_with_dates(
-                    new_person_id, company, title, start_date, end_date, location or "Unknown", strategy or "Unknown"
-                )
-                
-                if success:
-                    save_data()
-                    st.success(f"Added {name}!")
-                    st.session_state.show_add_person_modal = False
-                    st.rerun()
+                if existing_person:
+                    st.error(f"🚫 **DUPLICATE BLOCKED**: Person '{name}' already exists at '{company}'")
+                    st.info(f"**Existing Profile**: {safe_get(existing_person, 'name')} - {safe_get(existing_person, 'current_title')} at {safe_get(existing_person, 'current_company_name')}")
+                    st.warning("❌ **Cannot create duplicate profiles**. Use the Edit function to update existing profiles.")
+                    
+                    # Show link to existing profile
+                    if st.button(f"👁️ View Existing Profile: {safe_get(existing_person, 'name')}", key="view_existing_duplicate"):
+                        go_to_person_details(existing_person['id'])
+                        st.session_state.show_add_person_modal = False
+                        st.rerun()
+                    
                 else:
-                    st.error("Failed to add employment record")
+                    # Create new person - no duplicate exists
+                    new_person_id = str(uuid.uuid4())
+                    new_person = {
+                        "id": new_person_id,
+                        "name": name,
+                        "current_title": title,
+                        "current_company_name": company,
+                        "location": location or "Unknown",
+                        "email": email or "",
+                        "phone": phone or "",
+                        "education": education or "",
+                        "expertise": expertise or "",
+                        "aum_managed": aum_managed or "",
+                        "strategy": strategy or "",
+                        "created_date": datetime.now().isoformat(),
+                        "last_updated": datetime.now().isoformat(),
+                        "context_mentions": [{
+                            'id': str(uuid.uuid4()),
+                            'timestamp': datetime.now().isoformat(),
+                            'type': 'mention',
+                            'content': f"Profile created manually",
+                            'source': 'Manual Entry',
+                            'date_added': datetime.now().isoformat()
+                        }]
+                    }
+                    
+                    st.session_state.people.append(new_person)
+                    
+                    # Tag as Asia-based
+                    tag_profile_as_asia(new_person, 'person')
+                    
+                    # Add employment record
+                    success = add_employment_with_dates(
+                        new_person_id, company, title, start_date, end_date, location or "Unknown", strategy or "Unknown"
+                    )
+                    
+                    if success:
+                        save_data()
+                        st.success(f"✅ Successfully added {name}!")
+                        st.session_state.show_add_person_modal = False
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to add employment record")
             else:
-                st.error("Please fill required fields (*)")
+                st.error("❌ Please fill required fields (*)")
     
     if st.button("Cancel", key="cancel_add_person"):
         st.session_state.show_add_person_modal = False
