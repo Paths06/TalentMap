@@ -55,6 +55,104 @@ def safe_get(data, key, default='Unknown'):
         logger.warning(f"Error in safe_get for key {key}: {e}")
         return default
 
+# --- Asia Detection and Tagging Functions ---
+def is_asia_based(location_text):
+    """Check if a location is Asia-based (not EMEA)"""
+    if not location_text or location_text == 'Unknown':
+        return False
+    
+    location_lower = location_text.lower()
+    
+    # Asia countries and major cities
+    asia_keywords = [
+        # Major financial centers
+        'hong kong', 'singapore', 'tokyo', 'seoul', 'shanghai', 'beijing', 'mumbai', 'delhi',
+        # Other major cities
+        'shenzhen', 'guangzhou', 'taipei', 'kuala lumpur', 'jakarta', 'manila', 
+        'ho chi minh', 'hanoi', 'macau', 'osaka', 'kyoto', 'busan', 'bangalore', 'chennai',
+        'hyderabad', 'pune', 'kolkata', 'ahmedabad', 'bangkok', 'phuket', 'chiang mai',
+        'cebu', 'davao', 'surabaya', 'bandung', 'medan', 'penang', 'johor bahru',
+        # Countries
+        'china', 'japan', 'korea', 'south korea', 'north korea', 'india', 'thailand', 
+        'malaysia', 'indonesia', 'philippines', 'vietnam', 'taiwan', 'cambodia', 
+        'laos', 'myanmar', 'brunei', 'sri lanka', 'bangladesh', 'nepal', 'bhutan',
+        'maldives', 'mongolia', 'kazakhstan', 'uzbekistan', 'kyrgyzstan', 'tajikistan',
+        'turkmenistan', 'afghanistan', 'pakistan',
+        # Regions
+        'asia', 'asian', 'asia pacific', 'apac', 'southeast asia', 'east asia', 
+        'south asia', 'central asia', 'far east'
+    ]
+    
+    return any(keyword in location_lower for keyword in asia_keywords)
+
+def tag_profile_as_asia(profile, profile_type='person'):
+    """Tag a profile as Asia-based"""
+    if profile_type == 'person':
+        location = safe_get(profile, 'location', '')
+        current_company_location = safe_get(profile, 'current_company_name', '')
+        
+        # Check person's location or company mentions
+        is_asia = is_asia_based(location) or is_asia_based(current_company_location)
+        
+        # Also check employment history for Asia connections
+        if not is_asia:
+            person_employments = get_employments_by_person_id(profile['id'])
+            for emp in person_employments:
+                if is_asia_based(safe_get(emp, 'location', '')):
+                    is_asia = True
+                    break
+                if is_asia_based(safe_get(emp, 'company_name', '')):
+                    is_asia = True
+                    break
+    
+    elif profile_type == 'firm':
+        location = safe_get(profile, 'location', '')
+        headquarters = safe_get(profile, 'headquarters', '')
+        name = safe_get(profile, 'name', '')
+        
+        is_asia = (is_asia_based(location) or 
+                  is_asia_based(headquarters) or 
+                  is_asia_based(name))
+    
+    else:
+        is_asia = False
+    
+    profile['is_asia_based'] = is_asia
+    return is_asia
+
+def tag_all_existing_profiles():
+    """Tag all existing profiles for Asia classification"""
+    asia_people_count = 0
+    asia_firms_count = 0
+    
+    # Tag people
+    for person in st.session_state.people:
+        if tag_profile_as_asia(person, 'person'):
+            asia_people_count += 1
+    
+    # Tag firms
+    for firm in st.session_state.firms:
+        if tag_profile_as_asia(firm, 'firm'):
+            asia_firms_count += 1
+    
+    return asia_people_count, asia_firms_count
+
+def get_asia_people():
+    """Get all Asia-based people"""
+    return [p for p in st.session_state.people if p.get('is_asia_based', False)]
+
+def get_asia_firms():
+    """Get all Asia-based firms"""
+    return [f for f in st.session_state.firms if f.get('is_asia_based', False)]
+
+def get_non_asia_people():
+    """Get all non-Asia people"""
+    return [p for p in st.session_state.people if not p.get('is_asia_based', False)]
+
+def get_non_asia_firms():
+    """Get all non-Asia firms"""
+    return [f for f in st.session_state.firms if not f.get('is_asia_based', False)]
+
 # --- Context/News tracking functions ---
 def add_context_to_person(person_id, context_type, content, source_info=""):
     """Add context/news mention to a person"""
@@ -858,7 +956,8 @@ def export_to_csv():
                 'Location': safe_get(person, 'location'),
                 'Email': safe_get(person, 'email'),
                 'Expertise': safe_get(person, 'expertise'),
-                'AUM': safe_get(person, 'aum_managed')
+                'AUM': safe_get(person, 'aum_managed'),
+                'Asia_Based': 'Yes' if person.get('is_asia_based', False) else 'No'
             })
         
         # Export firms
@@ -871,7 +970,8 @@ def export_to_csv():
                 'Location': safe_get(firm, 'location'),
                 'Email': safe_get(firm, 'website'),
                 'Expertise': safe_get(firm, 'firm_type'),
-                'AUM': safe_get(firm, 'aum')
+                'AUM': safe_get(firm, 'aum'),
+                'Asia_Based': 'Yes' if firm.get('is_asia_based', False) else 'No'
             })
         
         df = pd.DataFrame(all_data)
@@ -883,9 +983,64 @@ def export_to_csv():
         logger.error(f"CSV export failed: {e}")
         return None, None
 
+def export_asia_csv():
+    """Export Asia-specific data to CSV"""
+    try:
+        asia_data = []
+        
+        # Export Asia people
+        asia_people = get_asia_people()
+        for person in asia_people:
+            asia_data.append({
+                'Type': 'Person',
+                'Name': safe_get(person, 'name'),
+                'Title': safe_get(person, 'current_title'),
+                'Company': safe_get(person, 'current_company_name'),
+                'Location': safe_get(person, 'location'),
+                'Email': safe_get(person, 'email'),
+                'Expertise': safe_get(person, 'expertise'),
+                'AUM': safe_get(person, 'aum_managed'),
+                'Region': 'Asia'
+            })
+        
+        # Export Asia firms
+        asia_firms = get_asia_firms()
+        for firm in asia_firms:
+            asia_data.append({
+                'Type': 'Firm',
+                'Name': safe_get(firm, 'name'),
+                'Title': safe_get(firm, 'strategy'),
+                'Company': safe_get(firm, 'name'),
+                'Location': safe_get(firm, 'location'),
+                'Email': safe_get(firm, 'website'),
+                'Expertise': safe_get(firm, 'firm_type'),
+                'AUM': safe_get(firm, 'aum'),
+                'Region': 'Asia'
+            })
+        
+        if not asia_data:
+            return None, None
+        
+        df = pd.DataFrame(asia_data)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        return df.to_csv(index=False), f"asia_hedge_fund_data_{timestamp}.csv"
+    
+    except Exception as e:
+        logger.error(f"Asia CSV export failed: {e}")
+        return None, None
+
 # Initialize session state
 try:
     initialize_session_state()
+    
+    # Tag all existing profiles for Asia classification
+    if 'asia_tagged' not in st.session_state:
+        asia_people_count, asia_firms_count = tag_all_existing_profiles()
+        save_data()  # Save the Asia tags
+        st.session_state.asia_tagged = True
+        logger.info(f"Tagged {asia_people_count} Asia people and {asia_firms_count} Asia firms")
+        
 except Exception as init_error:
     st.error(f"Initialization error: {init_error}")
     st.stop()
@@ -895,6 +1050,15 @@ col1, col2 = st.columns([3, 1])
 with col1:
     st.title("Asian Hedge Fund Talent Network")
     st.markdown("**Professional intelligence platform for Asia's financial industry**")
+    
+    # Show Asia-specific statistics
+    asia_people_count = len(get_asia_people())
+    asia_firms_count = len(get_asia_firms())
+    total_people = len(st.session_state.people)
+    total_firms = len(st.session_state.firms)
+    
+    if asia_people_count > 0 or asia_firms_count > 0:
+        st.caption(f"🌏 Asia Focus: {asia_people_count}/{total_people} people • {asia_firms_count}/{total_firms} firms")
 
 with col2:
     # CSV Export
@@ -1042,6 +1206,9 @@ with st.sidebar:
                     
                     st.session_state.people.append(new_person)
                     
+                    # Tag as Asia-based
+                    tag_profile_as_asia(new_person, 'person')
+                    
                     # Add firm if doesn't exist
                     if not get_firm_by_name(company_name):
                         new_firm = {
@@ -1061,6 +1228,9 @@ with st.sidebar:
                             "context_mentions": []
                         }
                         st.session_state.firms.append(new_firm)
+                        
+                        # Tag firm as Asia-based
+                        tag_profile_as_asia(new_firm, 'firm')
                     
                     # Add employment record
                     add_employment_with_dates(
@@ -1178,12 +1348,20 @@ with col4:
         st.rerun()
 
 with col5:
-    # Quick stats
-    col5a, col5b = st.columns(2)
+    # Quick stats with Asia breakdown
+    col5a, col5b, col5c = st.columns(3)
     with col5a:
-        st.metric("People", len(st.session_state.people))
+        asia_people = len(get_asia_people())
+        total_people = len(st.session_state.people)
+        st.metric("People", f"{total_people}", delta=f"{asia_people} Asia")
     with col5b:
-        st.metric("Firms", len(st.session_state.firms))
+        asia_firms = len(get_asia_firms())
+        total_firms = len(st.session_state.firms)
+        st.metric("Firms", f"{total_firms}", delta=f"{asia_firms} Asia")
+    with col5c:
+        if asia_people > 0:
+            asia_percentage = round((asia_people / total_people) * 100) if total_people > 0 else 0
+            st.metric("Asia %", f"{asia_percentage}%")
 
 # --- MAIN VIEWS ---
 
@@ -1194,43 +1372,94 @@ if st.session_state.current_view == 'people':
     if not st.session_state.people:
         st.info("No people added yet. Use 'Add Person' button above or extract from content.")
     else:
-        # Display people in square tile grid (3 columns)
-        people_list = st.session_state.people
-        for i in range(0, len(people_list), 3):
-            cols = st.columns(3)
-            for j, col in enumerate(cols):
-                if i + j < len(people_list):
-                    person = people_list[i + j]
-                    
-                    with col:
-                        # Square-like tile container
-                        with st.container(border=True):
-                            st.markdown(f"**{safe_get(person, 'name')}**")
-                            st.caption(f"{safe_get(person, 'current_title')}")
-                            st.caption(f"Company: {safe_get(person, 'current_company_name')}")
-                            st.caption(f"📍 {safe_get(person, 'location')}")
-                            
-                            expertise = safe_get(person, 'expertise')
-                            if expertise != 'Unknown':
-                                st.caption(f"🎯 {expertise}")
-                            
-                            # Shared work connections
-                            shared_history = get_shared_work_history(person['id'])
-                            if shared_history:
-                                strong_connections = len([c for c in shared_history if c.get('connection_strength') == 'Strong'])
-                                st.caption(f"🔗 {len(shared_history)} connections ({strong_connections} strong)")
-                            
-                            # Action buttons
-                            col_view, col_edit = st.columns(2)
-                            with col_view:
-                                if st.button("View", key=f"view_person_{person['id']}", use_container_width=True):
-                                    go_to_person_details(person['id'])
-                                    st.rerun()
-                            with col_edit:
-                                if st.button("Edit", key=f"edit_person_{person['id']}", use_container_width=True):
-                                    st.session_state.edit_person_data = person
-                                    st.session_state.show_edit_person_modal = True
-                                    st.rerun()
+        # Prioritize Asia profiles - show Asia first, then others
+        asia_people = get_asia_people()
+        non_asia_people = get_non_asia_people()
+        
+        # Show Asia section first
+        if asia_people:
+            st.subheader(f"🌏 Asia-Based Professionals ({len(asia_people)})")
+            
+            # Display Asia people in square tile grid (3 columns)
+            for i in range(0, len(asia_people), 3):
+                cols = st.columns(3)
+                for j, col in enumerate(cols):
+                    if i + j < len(asia_people):
+                        person = asia_people[i + j]
+                        
+                        with col:
+                            # Square-like tile container with Asia indicator
+                            with st.container(border=True):
+                                st.markdown(f"**{safe_get(person, 'name')}** 🌏")
+                                st.caption(f"{safe_get(person, 'current_title')}")
+                                st.caption(f"Company: {safe_get(person, 'current_company_name')}")
+                                st.caption(f"📍 {safe_get(person, 'location')}")
+                                
+                                expertise = safe_get(person, 'expertise')
+                                if expertise != 'Unknown':
+                                    st.caption(f"🎯 {expertise}")
+                                
+                                # Shared work connections
+                                shared_history = get_shared_work_history(person['id'])
+                                if shared_history:
+                                    strong_connections = len([c for c in shared_history if c.get('connection_strength') == 'Strong'])
+                                    st.caption(f"🔗 {len(shared_history)} connections ({strong_connections} strong)")
+                                
+                                # Action buttons
+                                col_view, col_edit = st.columns(2)
+                                with col_view:
+                                    if st.button("View", key=f"view_asia_person_{person['id']}", use_container_width=True):
+                                        go_to_person_details(person['id'])
+                                        st.rerun()
+                                with col_edit:
+                                    if st.button("Edit", key=f"edit_asia_person_{person['id']}", use_container_width=True):
+                                        st.session_state.edit_person_data = person
+                                        st.session_state.show_edit_person_modal = True
+                                        st.rerun()
+        
+        # Show other regions section
+        if non_asia_people:
+            if asia_people:  # Add separator if we showed Asia section
+                st.markdown("---")
+            
+            st.subheader(f"🌍 Other Regions ({len(non_asia_people)})")
+            
+            # Display non-Asia people in square tile grid (3 columns)
+            for i in range(0, len(non_asia_people), 3):
+                cols = st.columns(3)
+                for j, col in enumerate(cols):
+                    if i + j < len(non_asia_people):
+                        person = non_asia_people[i + j]
+                        
+                        with col:
+                            # Square-like tile container
+                            with st.container(border=True):
+                                st.markdown(f"**{safe_get(person, 'name')}**")
+                                st.caption(f"{safe_get(person, 'current_title')}")
+                                st.caption(f"Company: {safe_get(person, 'current_company_name')}")
+                                st.caption(f"📍 {safe_get(person, 'location')}")
+                                
+                                expertise = safe_get(person, 'expertise')
+                                if expertise != 'Unknown':
+                                    st.caption(f"🎯 {expertise}")
+                                
+                                # Shared work connections
+                                shared_history = get_shared_work_history(person['id'])
+                                if shared_history:
+                                    strong_connections = len([c for c in shared_history if c.get('connection_strength') == 'Strong'])
+                                    st.caption(f"🔗 {len(shared_history)} connections ({strong_connections} strong)")
+                                
+                                # Action buttons
+                                col_view, col_edit = st.columns(2)
+                                with col_view:
+                                    if st.button("View", key=f"view_other_person_{person['id']}", use_container_width=True):
+                                        go_to_person_details(person['id'])
+                                        st.rerun()
+                                with col_edit:
+                                    if st.button("Edit", key=f"edit_other_person_{person['id']}", use_container_width=True):
+                                        st.session_state.edit_person_data = person
+                                        st.session_state.show_edit_person_modal = True
+                                        st.rerun()
 
 elif st.session_state.current_view == 'firms':
     st.markdown("---")
@@ -1239,39 +1468,86 @@ elif st.session_state.current_view == 'firms':
     if not st.session_state.firms:
         st.info("No firms added yet. Use 'Add Firm' button above.")
     else:
-        # Display firms in square tile grid (3 columns)
-        firms_list = st.session_state.firms
-        for i in range(0, len(firms_list), 3):
-            cols = st.columns(3)
-            for j, col in enumerate(cols):
-                if i + j < len(firms_list):
-                    firm = firms_list[i + j]
-                    people_count = len(get_people_by_firm(safe_get(firm, 'name')))
-                    
-                    with col:
-                        # Square-like tile container
-                        with st.container(border=True):
-                            st.markdown(f"**{safe_get(firm, 'name')}**")
-                            st.caption(f"{safe_get(firm, 'firm_type')}")
-                            st.caption(f"📍 {safe_get(firm, 'location')}")
-                            
-                            aum = safe_get(firm, 'aum')
-                            if aum != 'Unknown':
-                                st.caption(f"💰 {aum}")
-                            
-                            st.caption(f"👥 {people_count} people")
-                            
-                            # Action buttons
-                            col_view, col_edit = st.columns(2)
-                            with col_view:
-                                if st.button("View", key=f"view_firm_{firm['id']}", use_container_width=True):
-                                    go_to_firm_details(firm['id'])
-                                    st.rerun()
-                            with col_edit:
-                                if st.button("Edit", key=f"edit_firm_{firm['id']}", use_container_width=True):
-                                    st.session_state.edit_firm_data = firm
-                                    st.session_state.show_edit_firm_modal = True
-                                    st.rerun()
+        # Prioritize Asia profiles - show Asia first, then others
+        asia_firms = get_asia_firms()
+        non_asia_firms = get_non_asia_firms()
+        
+        # Show Asia section first
+        if asia_firms:
+            st.subheader(f"🌏 Asia-Based Institutions ({len(asia_firms)})")
+            
+            # Display Asia firms in square tile grid (3 columns)
+            for i in range(0, len(asia_firms), 3):
+                cols = st.columns(3)
+                for j, col in enumerate(cols):
+                    if i + j < len(asia_firms):
+                        firm = asia_firms[i + j]
+                        people_count = len(get_people_by_firm(safe_get(firm, 'name')))
+                        
+                        with col:
+                            # Square-like tile container with Asia indicator
+                            with st.container(border=True):
+                                st.markdown(f"**{safe_get(firm, 'name')}** 🌏")
+                                st.caption(f"{safe_get(firm, 'firm_type')}")
+                                st.caption(f"📍 {safe_get(firm, 'location')}")
+                                
+                                aum = safe_get(firm, 'aum')
+                                if aum != 'Unknown':
+                                    st.caption(f"💰 {aum}")
+                                
+                                st.caption(f"👥 {people_count} people")
+                                
+                                # Action buttons
+                                col_view, col_edit = st.columns(2)
+                                with col_view:
+                                    if st.button("View", key=f"view_asia_firm_{firm['id']}", use_container_width=True):
+                                        go_to_firm_details(firm['id'])
+                                        st.rerun()
+                                with col_edit:
+                                    if st.button("Edit", key=f"edit_asia_firm_{firm['id']}", use_container_width=True):
+                                        st.session_state.edit_firm_data = firm
+                                        st.session_state.show_edit_firm_modal = True
+                                        st.rerun()
+        
+        # Show other regions section
+        if non_asia_firms:
+            if asia_firms:  # Add separator if we showed Asia section
+                st.markdown("---")
+            
+            st.subheader(f"🌍 Other Regions ({len(non_asia_firms)})")
+            
+            # Display non-Asia firms in square tile grid (3 columns)
+            for i in range(0, len(non_asia_firms), 3):
+                cols = st.columns(3)
+                for j, col in enumerate(cols):
+                    if i + j < len(non_asia_firms):
+                        firm = non_asia_firms[i + j]
+                        people_count = len(get_people_by_firm(safe_get(firm, 'name')))
+                        
+                        with col:
+                            # Square-like tile container
+                            with st.container(border=True):
+                                st.markdown(f"**{safe_get(firm, 'name')}**")
+                                st.caption(f"{safe_get(firm, 'firm_type')}")
+                                st.caption(f"📍 {safe_get(firm, 'location')}")
+                                
+                                aum = safe_get(firm, 'aum')
+                                if aum != 'Unknown':
+                                    st.caption(f"💰 {aum}")
+                                
+                                st.caption(f"👥 {people_count} people")
+                                
+                                # Action buttons
+                                col_view, col_edit = st.columns(2)
+                                with col_view:
+                                    if st.button("View", key=f"view_other_firm_{firm['id']}", use_container_width=True):
+                                        go_to_firm_details(firm['id'])
+                                        st.rerun()
+                                with col_edit:
+                                    if st.button("Edit", key=f"edit_other_firm_{firm['id']}", use_container_width=True):
+                                        st.session_state.edit_firm_data = firm
+                                        st.session_state.show_edit_firm_modal = True
+                                        st.rerun()
 
 elif st.session_state.current_view == 'person_details' and st.session_state.selected_person_id:
     person = get_person_by_id(st.session_state.selected_person_id)
@@ -1596,6 +1872,9 @@ if st.session_state.show_add_person_modal:
                 
                 st.session_state.people.append(new_person)
                 
+                # Tag as Asia-based
+                tag_profile_as_asia(new_person, 'person')
+                
                 # Add employment record
                 success = add_employment_with_dates(
                     new_person_id, company, title, start_date, end_date, location or "Unknown", strategy or "Unknown"
@@ -1671,3 +1950,25 @@ time_since_save = (current_time - st.session_state.last_auto_save).total_seconds
 if time_since_save > 30 and (st.session_state.people or st.session_state.firms):
     save_data()
     st.session_state.last_auto_save = current_time
+
+# --- ASIA-SPECIFIC EXPORT SECTION ---
+st.markdown("---")
+col1, col2, col3 = st.columns([2, 1, 2])
+
+with col2:
+    asia_csv_data, asia_filename = export_asia_csv()
+    if asia_csv_data:
+        asia_people_count = len(get_asia_people())
+        asia_firms_count = len(get_asia_firms())
+        
+        st.download_button(
+            f"🌏 Download Asia Database ({asia_people_count + asia_firms_count} records)",
+            asia_csv_data,
+            asia_filename,
+            "text/csv",
+            use_container_width=True,
+            help=f"Export {asia_people_count} Asia-based people and {asia_firms_count} Asia-based firms to CSV"
+        )
+    else:
+        st.info("🌏 No Asia-based profiles found yet")
+        st.caption("Asia-based profiles will appear here automatically when detected")
