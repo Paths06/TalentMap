@@ -31,9 +31,88 @@ try:
 except ImportError:
     GENAI_AVAILABLE = False
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure comprehensive logging
+import logging
+from logging.handlers import RotatingFileHandler
+import os
+
+# Create logs directory
+LOGS_DIR = Path("logs")
+LOGS_DIR.mkdir(exist_ok=True)
+
+# Configure main logger
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    handlers=[
+        RotatingFileHandler(
+            LOGS_DIR / 'hedge_fund_app.log',
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5
+        ),
+        logging.StreamHandler()  # Also log to console for development
+    ]
+)
+
 logger = logging.getLogger(__name__)
+
+# Create specialized loggers for different components
+extraction_logger = logging.getLogger('extraction')
+extraction_handler = RotatingFileHandler(LOGS_DIR / 'extraction.log', maxBytes=5*1024*1024, backupCount=3)
+extraction_handler.setFormatter(logging.Formatter('%(asctime)s - EXTRACTION - %(levelname)s - %(message)s'))
+extraction_logger.addHandler(extraction_handler)
+extraction_logger.setLevel(logging.INFO)
+
+database_logger = logging.getLogger('database')
+db_handler = RotatingFileHandler(LOGS_DIR / 'database.log', maxBytes=5*1024*1024, backupCount=3)
+db_handler.setFormatter(logging.Formatter('%(asctime)s - DATABASE - %(levelname)s - %(message)s'))
+database_logger.addHandler(db_handler)
+database_logger.setLevel(logging.INFO)
+
+api_logger = logging.getLogger('api')
+api_handler = RotatingFileHandler(LOGS_DIR / 'api.log', maxBytes=5*1024*1024, backupCount=3)
+api_handler.setFormatter(logging.Formatter('%(asctime)s - API - %(levelname)s - %(message)s'))
+api_logger.addHandler(api_handler)
+api_logger.setLevel(logging.INFO)
+
+user_action_logger = logging.getLogger('user_actions')
+user_handler = RotatingFileHandler(LOGS_DIR / 'user_actions.log', maxBytes=5*1024*1024, backupCount=3)
+user_handler.setFormatter(logging.Formatter('%(asctime)s - USER - %(levelname)s - %(message)s'))
+user_action_logger.addHandler(user_handler)
+user_action_logger.setLevel(logging.INFO)
+
+# Session tracking
+if 'session_id' not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())[:8]
+
+SESSION_ID = st.session_state.session_id
+
+def log_user_action(action, details=""):
+    """Log user actions with session tracking"""
+    user_action_logger.info(f"[{SESSION_ID}] {action} - {details}")
+
+def log_extraction_step(step, details="", level="INFO"):
+    """Log extraction process steps"""
+    if level == "ERROR":
+        extraction_logger.error(f"[{SESSION_ID}] {step} - {details}")
+    elif level == "WARNING":
+        extraction_logger.warning(f"[{SESSION_ID}] {step} - {details}")
+    else:
+        extraction_logger.info(f"[{SESSION_ID}] {step} - {details}")
+
+def log_database_operation(operation, details="", count=None):
+    """Log database operations"""
+    count_str = f" (count: {count})" if count is not None else ""
+    database_logger.info(f"[{SESSION_ID}] {operation}{count_str} - {details}")
+
+def log_api_call(endpoint, details="", duration=None):
+    """Log API calls with timing"""
+    duration_str = f" (duration: {duration:.2f}s)" if duration is not None else ""
+    api_logger.info(f"[{SESSION_ID}] {endpoint}{duration_str} - {details}")
+
+# Log session start
+logger.info(f"Session started: {SESSION_ID}")
+log_user_action("SESSION_START", f"New session initialized")
 
 # Configure page
 st.set_page_config(
@@ -110,34 +189,77 @@ def normalize_company(company):
     return normalized
 
 def create_person_key(name, company):
-    """Create a unique key for person identification"""
-    norm_name = normalize_name(name)
-    norm_company = normalize_company(company)
+    """Create a unique key for person identification with defensive programming"""
+    try:
+        # Handle None or empty values
+        if not name or not company:
+            return None
+        
+        # Convert to string and handle various None representations
+        name_str = str(name).strip() if name else ""
+        company_str = str(company).strip() if company else ""
+        
+        # Check for empty or 'Unknown' values
+        if (not name_str or not company_str or 
+            name_str.lower() in ['unknown', 'none', 'null', ''] or
+            company_str.lower() in ['unknown', 'none', 'null', '']):
+            return None
+        
+        norm_name = normalize_name(name_str)
+        norm_company = normalize_company(company_str)
+        
+        if not norm_name or not norm_company:
+            return None
+        
+        key = f"{norm_name}|{norm_company}"
+        return key
     
-    if not norm_name or not norm_company:
+    except Exception as e:
+        logger.error(f"Error creating person key for {name} at {company}: {e}")
         return None
-    
-    return f"{norm_name}|{norm_company}"
 
 def find_existing_person_strict(name, company):
-    """Find existing person with STRICT duplicate checking"""
-    person_key = create_person_key(name, company)
+    """Find existing person with STRICT duplicate checking and extensive logging"""
+    start_time = time.time()
     
-    if not person_key:
-        return None
-    
-    # Check against all existing people
-    for person in st.session_state.people:
-        existing_key = create_person_key(
-            safe_get(person, 'name'),
-            safe_get(person, 'current_company_name')
-        )
+    try:
+        person_key = create_person_key(name, company)
         
-        if existing_key and existing_key == person_key:
-            logger.info(f"DUPLICATE DETECTED: {name} at {company} already exists as {safe_get(person, 'name')} at {safe_get(person, 'current_company_name')}")
-            return person
-    
-    return None
+        if not person_key:
+            log_extraction_step("DUPLICATE_CHECK", f"No valid key generated for '{name}' at '{company}'")
+            return None
+        
+        log_extraction_step("DUPLICATE_CHECK_START", f"Searching for: '{name}' at '{company}' → Key: '{person_key}'")
+        
+        # Check against all existing people
+        total_people = len(st.session_state.people)
+        log_extraction_step("DUPLICATE_SCAN", f"Scanning {total_people} existing people for duplicates")
+        
+        for i, person in enumerate(st.session_state.people):
+            try:
+                existing_name = safe_get(person, 'name')
+                existing_company = safe_get(person, 'current_company_name')
+                existing_key = create_person_key(existing_name, existing_company)
+                
+                if existing_key and existing_key == person_key:
+                    duration = time.time() - start_time
+                    log_extraction_step("DUPLICATE_FOUND", 
+                        f"MATCH at index {i+1}/{total_people}: '{name}' at '{company}' matches existing '{existing_name}' at '{existing_company}' (duration: {duration:.3f}s)")
+                    logger.warning(f"[{SESSION_ID}] DUPLICATE BLOCKED: {name} at {company} → matches existing {existing_name} at {existing_company}")
+                    return person
+                    
+            except Exception as e:
+                log_extraction_step("DUPLICATE_CHECK_ERROR", f"Error checking person #{i+1}: {e}", "ERROR")
+                continue
+        
+        duration = time.time() - start_time
+        log_extraction_step("DUPLICATE_CHECK_COMPLETE", f"No duplicate found for '{name}' at '{company}' after scanning {total_people} people (duration: {duration:.3f}s)")
+        return None
+        
+    except Exception as e:
+        duration = time.time() - start_time
+        log_extraction_step("DUPLICATE_CHECK_ERROR", f"Error in duplicate check for '{name}' at '{company}': {e} (duration: {duration:.3f}s)", "ERROR")
+        return None
 
 def check_for_duplicates_in_extraction(people_data):
     """Check for duplicates within the extraction data itself"""
@@ -790,7 +912,12 @@ def setup_gemini(api_key):
 
 def extract_data_from_text(text, model):
     """Extract people and performance data from text using Gemini with paid tier optimizations"""
+    start_time = time.time()
+    
     try:
+        text_length = len(text)
+        log_api_call("GEMINI_EXTRACT_START", f"Model: {model.model_id}, Text length: {text_length} chars")
+        
         # Paid tier optimized prompt
         prompt = f"""
 Extract financial professionals and performance data from this text.
@@ -828,18 +955,28 @@ Return ONLY valid JSON with this structure:
             'max_output_tokens': 4096,
         }
         
+        log_api_call("GEMINI_REQUEST", f"Sending request to {model.model_id}")
+        api_start_time = time.time()
+        
         response = model.generate_content(prompt, generation_config=generation_config)
         
+        api_duration = time.time() - api_start_time
+        log_api_call("GEMINI_RESPONSE", f"Response received", api_duration)
+        
         if not response or not response.text:
+            log_api_call("GEMINI_EMPTY_RESPONSE", "Empty response from API", api_duration)
             return [], []
         
         response_text = response.text.strip()
+        response_length = len(response_text)
+        log_extraction_step("JSON_PARSE_START", f"Parsing response: {response_length} chars")
         
         # Extract JSON
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1
         
         if json_start == -1 or json_end <= json_start:
+            log_extraction_step("JSON_PARSE_ERROR", "No valid JSON boundaries found", "ERROR")
             return [], []
         
         json_text = response_text[json_start:json_end]
@@ -847,19 +984,25 @@ Return ONLY valid JSON with this structure:
         # Try parsing, with repair if needed
         try:
             result = json.loads(json_text)
-        except json.JSONDecodeError:
+            log_extraction_step("JSON_PARSE_SUCCESS", "JSON parsed successfully on first attempt")
+        except json.JSONDecodeError as e:
+            log_extraction_step("JSON_PARSE_REPAIR", f"Initial parse failed: {e}, attempting repair")
             repaired_json = repair_json_response(json_text)
             try:
                 result = json.loads(repaired_json)
-            except json.JSONDecodeError:
+                log_extraction_step("JSON_PARSE_SUCCESS", "JSON parsed successfully after repair")
+            except json.JSONDecodeError as repair_error:
+                log_extraction_step("JSON_PARSE_ERROR", f"Repair also failed: {repair_error}", "ERROR")
                 return [], []
         
         people = result.get('people', [])
         performance = result.get('performance', [])
         
+        log_extraction_step("RAW_EXTRACT", f"Raw extraction: {len(people)} people, {len(performance)} performance metrics")
+        
         # Validate extracted data
         valid_people = []
-        for p in people:
+        for i, p in enumerate(people):
             name = safe_get(p, 'name', '').strip()
             company = safe_get(p, 'current_company', '').strip()
             
@@ -868,9 +1011,12 @@ Return ONLY valid JSON with this structure:
                 name.lower() not in ['name', 'full name', 'unknown'] and
                 company.lower() not in ['company', 'company name', 'unknown']):
                 valid_people.append(p)
+                log_extraction_step("PERSON_VALIDATED", f"Person {i+1}: '{name}' at '{company}' - VALID")
+            else:
+                log_extraction_step("PERSON_REJECTED", f"Person {i+1}: '{name}' at '{company}' - INVALID", "WARNING")
         
         valid_performance = []
-        for perf in performance:
+        for i, perf in enumerate(performance):
             fund_name = safe_get(perf, 'fund_name', '').strip()
             metric_type = safe_get(perf, 'metric_type', '').strip()
             value = safe_get(perf, 'value', '').strip()
@@ -880,24 +1026,39 @@ Return ONLY valid JSON with this structure:
                 fund_name.lower() not in ['fund name', 'unknown'] and
                 metric_type.lower() not in ['metric type', 'unknown']):
                 valid_performance.append(perf)
+                log_extraction_step("PERFORMANCE_VALIDATED", f"Metric {i+1}: {fund_name} - {metric_type}: {value} - VALID")
+            else:
+                log_extraction_step("PERFORMANCE_REJECTED", f"Metric {i+1}: {fund_name} - {metric_type}: {value} - INVALID", "WARNING")
+        
+        total_duration = time.time() - start_time
+        log_extraction_step("EXTRACT_COMPLETE", 
+            f"Extraction complete: {len(valid_people)}/{len(people)} people validated, {len(valid_performance)}/{len(performance)} metrics validated (total duration: {total_duration:.2f}s)")
         
         return valid_people, valid_performance
         
     except Exception as e:
-        logger.error(f"Extraction failed: {e}")
+        total_duration = time.time() - start_time
+        log_extraction_step("EXTRACT_ERROR", f"Extraction failed: {e} (duration: {total_duration:.2f}s)", "ERROR")
         return [], []
 
 def process_extraction_with_rate_limiting(text, model):
     """Process extraction with automatic rate limiting for paid tier"""
+    start_time = time.time()
+    
     try:
+        text_length = len(text)
+        log_extraction_step("PROCESS_START", f"Starting extraction process with {text_length} chars")
+        
         # Split into chunks if text is too long (paid tier can handle larger chunks)
         max_chunk_size = 100000  # 100K chars for paid tier
         chunks = []
         
         if len(text) <= max_chunk_size:
             chunks = [text]
+            log_extraction_step("CHUNKING", f"Single chunk: {len(text)} chars")
         else:
             current_pos = 0
+            chunk_count = 0
             while current_pos < len(text):
                 end_pos = min(current_pos + max_chunk_size, len(text))
                 
@@ -910,38 +1071,64 @@ def process_extraction_with_rate_limiting(text, model):
                 chunk = text[current_pos:end_pos].strip()
                 if len(chunk) > 500:  # Minimum chunk size
                     chunks.append(chunk)
+                    chunk_count += 1
+                    log_extraction_step("CHUNK_CREATED", f"Chunk {chunk_count}: {len(chunk)} chars (pos: {current_pos}-{end_pos})")
                 current_pos = end_pos
+            
+            log_extraction_step("CHUNKING_COMPLETE", f"Created {len(chunks)} chunks from {text_length} chars")
         
         all_people = []
         all_performance = []
+        failed_chunks = []
         
         # Process chunks with paid tier rate limiting (2000 RPM = ~33 per second)
         delay_between_requests = 0.03  # 30ms delay for paid tier
+        log_extraction_step("RATE_LIMITING", f"Using {delay_between_requests}s delay between requests (2000 RPM)")
         
         for i, chunk in enumerate(chunks):
+            chunk_start_time = time.time()
+            
             try:
                 st.session_state.background_processing.update({
                     'progress': int((i / len(chunks)) * 100),
                     'status_message': f'Processing chunk {i+1}/{len(chunks)}...'
                 })
                 
+                log_extraction_step("CHUNK_PROCESS_START", f"Processing chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
+                
                 people, performance = extract_data_from_text(chunk, model)
+                
+                chunk_duration = time.time() - chunk_start_time
+                log_extraction_step("CHUNK_PROCESS_COMPLETE", 
+                    f"Chunk {i+1}/{len(chunks)} complete: {len(people)} people, {len(performance)} metrics (duration: {chunk_duration:.2f}s)")
                 
                 all_people.extend(people)
                 all_performance.extend(performance)
                 
                 # Rate limiting delay (except for last chunk)
                 if i < len(chunks) - 1:
+                    log_extraction_step("RATE_LIMIT_DELAY", f"Applying {delay_between_requests}s rate limit delay")
                     time.sleep(delay_between_requests)
                     
             except Exception as e:
-                logger.error(f"Error processing chunk {i+1}: {e}")
+                chunk_duration = time.time() - chunk_start_time
+                failed_chunks.append(i+1)
+                log_extraction_step("CHUNK_PROCESS_ERROR", 
+                    f"Chunk {i+1}/{len(chunks)} failed: {e} (duration: {chunk_duration:.2f}s)", "ERROR")
                 continue
+        
+        total_duration = time.time() - start_time
+        log_extraction_step("PROCESS_COMPLETE", 
+            f"Extraction process complete: {len(all_people)} people, {len(all_performance)} metrics from {len(chunks)} chunks, {len(failed_chunks)} failed (total duration: {total_duration:.2f}s)")
+        
+        if failed_chunks:
+            log_extraction_step("FAILED_CHUNKS", f"Failed chunks: {failed_chunks}", "WARNING")
         
         return all_people, all_performance
         
     except Exception as e:
-        logger.error(f"Processing failed: {e}")
+        total_duration = time.time() - start_time
+        log_extraction_step("PROCESS_ERROR", f"Processing failed: {e} (duration: {total_duration:.2f}s)", "ERROR")
         return [], []
 
 # --- Helper Functions ---
@@ -1078,27 +1265,41 @@ def add_employment_with_dates(person_id, company_name, title, start_date, end_da
         logger.error(f"Error adding employment: {e}")
         return False
 
-# --- Navigation Functions ---
+# --- Navigation Functions with Logging ---
 def go_to_firms():
+    log_user_action("NAVIGATION", "Switched to Firms view")
     st.session_state.current_view = 'firms'
     st.session_state.selected_firm_id = None
 
 def go_to_people():
+    log_user_action("NAVIGATION", "Switched to People view")
     st.session_state.current_view = 'people'
     st.session_state.selected_person_id = None
 
 def go_to_person_details(person_id):
+    person = get_person_by_id(person_id)
+    person_name = safe_get(person, 'name', 'Unknown') if person else 'Unknown'
+    log_user_action("NAVIGATION", f"Viewing person details: {person_name} (ID: {person_id})")
     st.session_state.selected_person_id = person_id
     st.session_state.current_view = 'person_details'
 
 def go_to_firm_details(firm_id):
+    firm = get_firm_by_id(firm_id)
+    firm_name = safe_get(firm, 'name', 'Unknown') if firm else 'Unknown'
+    log_user_action("NAVIGATION", f"Viewing firm details: {firm_name} (ID: {firm_id})")
     st.session_state.selected_firm_id = firm_id
     st.session_state.current_view = 'firm_details'
 
-# --- Export Functions ---
+# --- Export Functions with Logging ---
 def export_to_csv():
     """Export all data to CSV"""
+    start_time = time.time()
+    
     try:
+        people_count = len(st.session_state.people)
+        firms_count = len(st.session_state.firms)
+        log_user_action("EXPORT_START", f"Starting CSV export: {people_count} people, {firms_count} firms")
+        
         all_data = []
         
         # Export people
@@ -1131,20 +1332,31 @@ def export_to_csv():
         
         df = pd.DataFrame(all_data)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"hedge_fund_data_{timestamp}.csv"
         
-        return df.to_csv(index=False), f"hedge_fund_data_{timestamp}.csv"
+        duration = time.time() - start_time
+        log_user_action("EXPORT_SUCCESS", f"CSV export complete: {len(all_data)} records, file: {filename} (duration: {duration:.2f}s)")
+        
+        return df.to_csv(index=False), filename
     
     except Exception as e:
-        logger.error(f"CSV export failed: {e}")
+        duration = time.time() - start_time
+        log_user_action("EXPORT_ERROR", f"CSV export failed: {e} (duration: {duration:.2f}s)")
         return None, None
 
 def export_asia_csv():
     """Export Asia-specific data to CSV"""
+    start_time = time.time()
+    
     try:
+        asia_people = get_asia_people()
+        asia_firms = get_asia_firms()
+        
+        log_user_action("ASIA_EXPORT_START", f"Starting Asia CSV export: {len(asia_people)} people, {len(asia_firms)} firms")
+        
         asia_data = []
         
         # Export Asia people
-        asia_people = get_asia_people()
         for person in asia_people:
             asia_data.append({
                 'Type': 'Person',
@@ -1159,7 +1371,6 @@ def export_asia_csv():
             })
         
         # Export Asia firms
-        asia_firms = get_asia_firms()
         for firm in asia_firms:
             asia_data.append({
                 'Type': 'Firm',
@@ -1174,15 +1385,21 @@ def export_asia_csv():
             })
         
         if not asia_data:
+            log_user_action("ASIA_EXPORT_EMPTY", "No Asia-based data found for export")
             return None, None
         
         df = pd.DataFrame(asia_data)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"asia_hedge_fund_data_{timestamp}.csv"
         
-        return df.to_csv(index=False), f"asia_hedge_fund_data_{timestamp}.csv"
+        duration = time.time() - start_time
+        log_user_action("ASIA_EXPORT_SUCCESS", f"Asia CSV export complete: {len(asia_data)} records, file: {filename} (duration: {duration:.2f}s)")
+        
+        return df.to_csv(index=False), filename
     
     except Exception as e:
-        logger.error(f"Asia CSV export failed: {e}")
+        duration = time.time() - start_time
+        log_user_action("ASIA_EXPORT_ERROR", f"Asia CSV export failed: {e} (duration: {duration:.2f}s)")
         return None, None
 
 # Initialize session state
@@ -1369,11 +1586,46 @@ with st.sidebar:
         
         if people_results:
             st.markdown(f"**People ({len(people_results)})**")
-            for i, person in enumerate(people_results[:3]):  # Show first 3
+            
+            # REAL-TIME duplicate checking with visual feedback
+            valid_people = []
+            duplicate_people = []
+            
+            for i, person in enumerate(people_results[:5]):  # Show first 5
+                name = safe_get(person, 'name', '').strip()
+                company = person.get('current_company', person.get('company', '')).strip()
+                
+                # Real-time duplicate check
+                existing_person = find_existing_person_strict(name, company)
+                person_key = create_person_key(name, company)
+                
                 with st.container(border=True):
-                    st.caption(f"**{safe_get(person, 'name')}**")
-                    st.caption(f"{safe_get(person, 'current_title')}")
-                    st.caption(f"{safe_get(person, 'current_company')}")
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
+                        if existing_person:
+                            st.error(f"🚫 **DUPLICATE**: {name}")
+                            st.caption(f"❌ {safe_get(person, 'current_title')} at {company}")
+                            st.caption(f"🔑 Key: `{person_key}`")
+                            st.caption(f"Matches: {safe_get(existing_person, 'name')} at {safe_get(existing_person, 'current_company_name')}")
+                            duplicate_people.append(person)
+                        else:
+                            st.success(f"✅ **NEW**: {name}")
+                            st.caption(f"✓ {safe_get(person, 'current_title')} at {company}")
+                            st.caption(f"🔑 Key: `{person_key}`")
+                            valid_people.append(person)
+                    
+                    with col2:
+                        if existing_person:
+                            st.error("BLOCKED")
+                        else:
+                            st.success("ALLOWED")
+            
+            # Show summary
+            if len(people_results) > 5:
+                st.info(f"Showing 5 of {len(people_results)} people. Click 'Save All' to process all.")
+            
+            st.markdown(f"**Summary**: {len(valid_people)} new, {len(duplicate_people)} duplicates blocked")
         
         if performance_results:
             st.markdown(f"**Metrics ({len(performance_results)})**")
@@ -1401,19 +1653,29 @@ with st.sidebar:
                     name = safe_get(person_data, 'name', '').strip()
                     company_name = person_data.get('current_company', person_data.get('company', '')).strip()
                     
+                    # Debug logging
+                    st.write(f"🔍 **Processing**: {name} at {company_name}")
+                    
                     # Validate required fields
                     if not name or not company_name or name == 'Unknown' or company_name == 'Unknown':
                         invalid_count += 1
+                        st.write(f"  ❌ **Invalid**: Missing name or company")
                         continue
                     
                     # STRICT duplicate check - block if exists
                     existing_person = find_existing_person_strict(name, company_name)
+                    person_key = create_person_key(name, company_name)
+                    
+                    st.write(f"  🔑 **Key**: `{person_key}`")
                     
                     if existing_person:
                         blocked_count += 1
-                        blocked_details.append(f"• {name} at {company_name}")
+                        blocked_details.append(f"• {name} at {company_name} (Key: {person_key})")
+                        st.write(f"  🚫 **BLOCKED**: Duplicate found - {safe_get(existing_person, 'name')} at {safe_get(existing_person, 'current_company_name')}")
                         logger.warning(f"BLOCKED DUPLICATE: {name} at {company_name} - already exists")
                         continue
+                    
+                    st.write(f"  ✅ **CREATING**: New person")
                     
                     # Only create if no duplicate exists
                     new_person_id = str(uuid.uuid4())
@@ -1442,7 +1704,22 @@ with st.sidebar:
                         }]
                     }
                     
+                    # FINAL SAFETY CHECK before adding to database
+                    final_check = find_existing_person_strict(new_person['name'], new_person['current_company_name'])
+                    if final_check:
+                        st.write(f"  ⚠️ **FINAL CHECK BLOCKED**: Duplicate detected just before save!")
+                        blocked_count += 1
+                        continue
+                    
+                    # FINAL SAFETY CHECK before adding to database
+                    final_check = find_existing_person_strict(new_person['name'], new_person['current_company_name'])
+                    if final_check:
+                        st.error(f"🚫 **FINAL SAFETY CHECK BLOCKED**: Duplicate detected just before save!")
+                        st.error(f"Matches: {safe_get(final_check, 'name')} at {safe_get(final_check, 'current_company_name')}")
+                        return
+                    
                     st.session_state.people.append(new_person)
+                    st.write(f"  ✅ **ADDED TO DATABASE**: Successfully created")
                     
                     # Tag as Asia-based
                     tag_profile_as_asia(new_person, 'person')
@@ -2085,6 +2362,24 @@ if st.session_state.show_add_person_modal:
             title = st.text_input("Current Title*", placeholder="Portfolio Manager")
             company = st.text_input("Current Company*", placeholder="Company Name")
             location = st.text_input("Location", placeholder="Hong Kong")
+            
+            # REAL-TIME duplicate check with visual feedback
+            if name and company:
+                existing_person = find_existing_person_strict(name, company)
+                person_key = create_person_key(name, company)
+                
+                if existing_person:
+                    st.error(f"🚫 **DUPLICATE DETECTED**")
+                    st.error(f"Person already exists: {safe_get(existing_person, 'name')} at {safe_get(existing_person, 'current_company_name')}")
+                    st.info(f"🔑 Generated Key: `{person_key}`")
+                    
+                    if st.button(f"👁️ View Existing: {safe_get(existing_person, 'name')}", key="view_existing_realtime"):
+                        go_to_person_details(existing_person['id'])
+                        st.session_state.show_add_person_modal = False
+                        st.rerun()
+                else:
+                    st.success(f"✅ **NEW PERSON** - Ready to add")
+                    st.info(f"🔑 Generated Key: `{person_key}`")
         
         with col2:
             email = st.text_input("Email", placeholder="john.smith@company.com")
@@ -2250,3 +2545,63 @@ with col2:
     else:
         st.info("🌏 No Asia-based profiles found yet")
         st.caption("Asia-based profiles will appear here automatically when detected")
+
+# --- COMPREHENSIVE DEBUGGING SECTION ---
+if st.checkbox("🔧 Debug Mode - Show Database Details", help="Show detailed database information for debugging"):
+    st.markdown("---")
+    st.subheader("🔧 Database Debug Information")
+    
+    # Show all current person keys
+    st.markdown("**Current People in Database:**")
+    if st.session_state.people:
+        for i, person in enumerate(st.session_state.people):
+            name = safe_get(person, 'name')
+            company = safe_get(person, 'current_company_name')
+            key = create_person_key(name, company)
+            
+            col1, col2, col3 = st.columns([2, 2, 2])
+            with col1:
+                st.write(f"**{i+1}. {name}**")
+            with col2:
+                st.write(f"{company}")
+            with col3:
+                st.code(f"{key}")
+    else:
+        st.info("No people in database")
+    
+    # Test duplicate detection
+    st.markdown("**🧪 Test Duplicate Detection:**")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        test_name = st.text_input("Test Name:", key="debug_name")
+    with col2:
+        test_company = st.text_input("Test Company:", key="debug_company")
+    with col3:
+        if st.button("🔍 Check Duplicate", key="debug_check"):
+            if test_name and test_company:
+                existing = find_existing_person_strict(test_name, test_company)
+                test_key = create_person_key(test_name, test_company)
+                
+                st.write(f"**Generated Key:** `{test_key}`")
+                
+                if existing:
+                    st.error(f"🚫 DUPLICATE FOUND")
+                    st.write(f"Matches: {safe_get(existing, 'name')} at {safe_get(existing, 'current_company_name')}")
+                    existing_key = create_person_key(safe_get(existing, 'name'), safe_get(existing, 'current_company_name'))
+                    st.write(f"Existing Key: `{existing_key}`")
+                else:
+                    st.success(f"✅ NO DUPLICATE - Safe to add")
+    
+    # Show normalization examples
+    st.markdown("**🔄 Normalization Examples:**")
+    examples = [
+        ["John Smith", "Goldman Sachs Inc."],
+        ["john smith", "goldman sachs"],
+        ["Dr. John Smith Jr.", "Goldman Sachs Corporation"],
+        ["Li Wei Chen", "Hillhouse Capital Management Ltd"]
+    ]
+    
+    for name, company in examples:
+        key = create_person_key(name, company)
+        st.write(f"• `{name}` + `{company}` → `{key}`")
