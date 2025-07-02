@@ -55,6 +55,67 @@ def safe_get(data, key, default='Unknown'):
         logger.warning(f"Error in safe_get for key {key}: {e}")
         return default
 
+# --- Duplicate Detection Functions ---
+def normalize_name(name):
+    """Normalize name for comparison"""
+    if not name:
+        return ""
+    return name.strip().lower().replace(".", "").replace(",", "")
+
+def normalize_company(company):
+    """Normalize company name for comparison"""
+    if not company:
+        return ""
+    # Remove common company suffixes and normalize
+    company_lower = company.strip().lower()
+    suffixes = [' ltd', ' limited', ' inc', ' incorporated', ' llc', ' corp', ' corporation', ' co', ' company']
+    for suffix in suffixes:
+        if company_lower.endswith(suffix):
+            company_lower = company_lower[:-len(suffix)].strip()
+    return company_lower
+
+def find_existing_person(name, company):
+    """Find existing person with same name and company"""
+    if not name or not company:
+        return None
+    
+    norm_name = normalize_name(name)
+    norm_company = normalize_company(company)
+    
+    if not norm_name or not norm_company:
+        return None
+    
+    for person in st.session_state.people:
+        existing_name = normalize_name(safe_get(person, 'name'))
+        existing_company = normalize_company(safe_get(person, 'current_company_name'))
+        
+        if existing_name == norm_name and existing_company == norm_company:
+            return person
+    
+    return None
+
+def should_update_existing_person(existing_person, new_data):
+    """Check if existing person should be updated with new information"""
+    updates = {}
+    
+    # Fields to potentially update (only if new data is more informative)
+    update_fields = [
+        'current_title', 'location', 'email', 'phone', 'education', 
+        'expertise', 'aum_managed', 'strategy'
+    ]
+    
+    for field in update_fields:
+        existing_value = safe_get(existing_person, field, '').strip()
+        new_value = safe_get(new_data, field, '').strip()
+        
+        # Update if new value is more informative
+        if (new_value and new_value != 'Unknown' and 
+            (not existing_value or existing_value == 'Unknown' or 
+             len(new_value) > len(existing_value))):
+            updates[field] = new_value
+    
+    return updates
+
 # --- Asia Detection and Tagging Functions ---
 def is_asia_based(location_text):
     """Check if a location is Asia-based (not EMEA)"""
